@@ -1,0 +1,23 @@
+# Cloudflare Pages / Workers Configuration for CourseHub Admin V6
+name = "coursehub-admin"
+compatibility_date = "2024-09-23"
+main = "cloudflare/worker.ts"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+pages_build_output_dir = "dist"
+
+# Optional Cloudflare D1 Database Binding (if using D1 for persistence)
+# Run: npx wrangler d1 create coursehub-db
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "coursehub-db"
+# database_id = "YOUR_D1_DATABASE_UUID"
+
+# Optional Cloudflare KV Binding (for fast JSON key-value persistence)
+# [[kv_namespaces]]
+# binding = "COURSEHUB_KV"
+# id = "YOUR_KV_NAMESPACE_ID"
