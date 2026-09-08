@@ -1,29 +1,21 @@
-# Puente UserFlex v1 — base aislada, no desplegada
+# UserFlex / programaVIP — puente de pruebas v1.1
 
-Este módulo es el contrato inicial entre programaVIP (administrador) y UserFlex PC. No está montado en server.ts, no se conecta a Cloudflare/Cloud Run y no entrega cookies reales. Ejecutar las pruebas no requiere cuentas ni credenciales.
+Implementación separada para validar la comunicación entre el administrador y el cliente PC. No sustituye el servidor comercial, no está desplegada y no debe recibir cookies de producción. Las Releases originales permanecen intactas.
 
-## Contrato HTTP
+## Funcionalidad
 
-Montaje previsto: `/api/bridge/v1`. `POST /login` recibe identifier, password y deviceId; devuelve un bearer aleatorio de 15 minutos. `GET /catalog` devuelve únicamente módulos y perfiles explícitamente asignados, sin contraseñas ni cookies. `POST /session` recibe moduleId y profileId y entrega una sola sesión aprobada. `POST /heartbeat` comprueba vigencia y `POST /logout` revoca el bearer. Todas las rutas privadas requieren Authorization: Bearer y X-Device-ID. Las respuestas son no-cache y el API nativo no acepta Origin de navegadores.
+Autenticación con scrypt y contraseñas sin valores por defecto; tokens de 15 minutos almacenados como hash. Inscripción Ed25519, aprobación administrativa y firma de cada solicitud con timestamp y nonce persistente contra repetición. El HWID por sí solo no autoriza. Catálogo basado exclusivamente en asignaciones explícitas, suscripción y módulo activos. Vault SQLite cifrado AES-256-GCM, clave de 32 bytes externa, AAD ligado a cliente, módulo, perfil, versión y expiración. No se generan cookies automáticamente. Entrega de un único bundle aprobado, validación de dominios y vencimiento, revocación y auditoría sin valores secretos.
 
-El dispositivo identificado por un HWID no está criptográficamente autenticado: el identificador no es secreto. Antes de producción se necesita enrolamiento seguro, prueba de posesión de clave del dispositivo, límites de intentos y revocación. El bearer se guarda únicamente en el proceso principal del cliente, con almacenamiento del sistema operativo si se añade persistencia.
+## Pruebas locales
 
-## Adaptadores obligatorios
+Requiere Node.js 22.16 o superior. Desde la raíz del repositorio ejecute `node --test server/bridge/*.test.mjs`. El conjunto de integración adicional se encuentra en `server/bridge/durable-gateway.test.mjs`. Para iniciar el servicio, configure `BRIDGE_DB_PATH` con una ruta privada y persistente y `BRIDGE_VAULT_KEY` con una clave aleatoria de 32 bytes codificada en base64, generada y guardada fuera del repositorio. Ejecute `node server/bridge/run.mjs bootstrap-admin <usuario>` una sola vez y luego `node server/bridge/run.mjs serve`. El servicio escucha en 127.0.0.1:8788. La contraseña inicial requiere 12 caracteres o más; la entrada provisional es visible, por lo que debe utilizarse una terminal privada.
 
-`createDesktopBridge({authenticate,sessions,readData,readBundle,audit})` necesita implementaciones reales. authenticate debe verificar contraseñas con hashes resistentes y controlar intentos; nunca debe usar los PIN maestros, contraseñas de reserva ni autenticación opcional del servidor antiguo. sessions requiere almacenamiento persistente y compartido entre instancias, con put/get/revoke por hash SHA-256 y expiración. readData debe consultar el estado autorizado actual, no una semilla ni caché que ignore revocaciones. readBundle debe recuperar un registro cifrado en reposo desde un vault protegido y devolverlo solo cuando exista aprobación explícita del administrador. El proveedor debe validar propietario, módulo, perfil, origen, vigencia y versión.
+La API administrativa provisional `/api/bridge/v1/admin/` permite crear clientes, módulos y perfiles, asignar permisos, configurar credenciales, aprobar dispositivos y guardar o revocar bundles. El cliente nativo usa `/enroll`, `/login`, `/catalog`, `/session`, `/heartbeat` y `/logout`. No están montadas las rutas legadas `/api/data`, códigos maestros ni autocaptura.
 
-Un bundle autorizado contiene clientId, moduleId, profileId, url, version, approved:true, source:'admin-verified', expiresAt y cookies. No se aceptan cookies inventadas ni indicadores de verificación simulados. Los dominios padre deben estar autorizados explícitamente en profile.allowedCookieDomains; el valor predeterminado solo permite el host exacto. Nunca se deben incluir credenciales en URLs, logs o respuestas de catálogo.
+## Bloqueos de producción
 
-## Bloqueos del servidor actual
+No fusionar ni desplegar como solución estable. Falta integrar el login real del administrador con MFA y permisos, migrar solo metadatos de forma auditada, sustituir SQLite local por almacenamiento transaccional compartido para múltiples instancias, gestionar copias de seguridad y rotación de claves, implementar rate limiting distribuido y revisar dominios con una biblioteca de sufijos públicos. No utilizar el filesystem efímero de Cloud Run para la base de datos. La API administrativa provisional no debe exponerse públicamente.
 
-Antes de activar el puente hay que proteger `/api/data`, `/api/reset`, las rutas de administración, exportación, cookies y códigos; eliminar accesos maestros y contraseñas por defecto; migrar contraseñas en claro a hashes; retirar la autocaptura ficticia; y reemplazar el secreto AES fijo por una clave administrada fuera del código. Los endpoints antiguos no deben seguir ofreciendo otra ruta para obtener sesiones o cambiar permisos. No usar el almacenamiento global en memoria para datos de producción. Cloudflare necesita persistencia transaccional y un vault con cifrado y gestión de claves. No se debe publicar el archivo de seed como una sesión real.
+Antes de habilitar sesiones reales deben cerrarse las rutas antiguas que exponen el estado completo, eliminarse contraseñas maestras y por defecto y la generación de cookies simuladas, y verificarse propiedad, consentimiento y permisos de cada sesión. Las puntuaciones heurísticas y marcas de 2FA no prueban un login real. La entrega no garantiza que un proveedor acepte la sesión ni que una revocación local invalide una sesión ya establecida en el proveedor. Usar mecanismos oficiales de autenticación cuando existan y respetar las condiciones de cada servicio.
 
-## Integración pendiente
-
-Montar el handler con un parser JSON de máximo 64 KiB y el prefijo anterior, antes del middleware CORS legado, solo después de configurar los adaptadores seguros. La aplicación Electron debe obtener el catálogo desde su proceso principal, crear un identificador local estable por pestaña, usar una partición persistente independiente por usuario y perfil local, instalar las cookies antes de navegar y mantener el mismo perfil al cambiar de pestaña. Debe suspender las vistas gestionadas si se revoca el acceso y comprobar el lease periódicamente. Cerrar una pestaña no borra automáticamente su almacenamiento. Nunca se copia una partición entre clientes.
-
-Un bearer de 15 minutos no garantiza revocación instantánea de cookies que ya estén en Chromium. Se requiere política explícita de caducidad, renovación, eliminación de cookies gestionadas y prueba real de revocación; las restricciones y condiciones de cada sitio siguen aplicando. No afirmar que un contador de cookies prueba un inicio de sesión real.
-
-## Pruebas
-
-Node.js 22: `node --test server/bridge/*.test.mjs`. Son pruebas aisladas con datos ficticios, no validan la API pública, la base de datos real, un despliegue ni un EXE de Windows. El sistema original y los despliegues existentes permanecen sin cambios.
+En UserFlex falta conectar el cliente al proceso principal y al registro definitivo de pestañas, completar la suspensión y limpieza de sesiones al revocar y validar Electron y Windows. Este trabajo es una base de integración, no un EXE terminado. No incluye credenciales, perfiles ni cookies reales.
