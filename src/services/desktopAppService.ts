@@ -33,6 +33,7 @@ export interface ValidationResult {
   partitionId: string;
   validatedAt: string;
   isolatedCookiesKey: string;
+  cookiesDecrypted?: string;
   module?: { id: string; name: string };
   profile?: { id: string; name: string; url: string; username: string };
 }

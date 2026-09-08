@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Menu, RotateCcw, User, Server } from 'lucide-react';
+import { Search, Menu, RotateCcw, User, Server, X } from 'lucide-react';
 import { ViewType } from '../types';
 import { checkServerHealth, ServerHealthInfo } from '../services/api';
 
@@ -54,6 +54,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         return selectedClientName ? `Clientes / ${selectedClientName}` : 'Clientes';
       case 'modules':
         return selectedModuleName ? `Módulos / ${selectedModuleName}` : 'Módulos';
+      case 'desktop-app':
+        return 'Instalador PC & Cliente';
       case 'admins':
         return 'Administradores';
       case 'roles':
@@ -62,6 +64,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         return 'Seguridad';
       case 'system':
         return 'Sistema & Cloudflare';
+      default:
+        return 'Consola de Administración';
     }
   };
 
@@ -126,6 +130,15 @@ export const TopBar: React.FC<TopBarProps> = ({
             placeholder="Buscar perfiles, clientes..."
             className="w-full pl-9 pr-8 py-1.5 bg-slate-100/80 hover:bg-slate-100 focus:bg-white border border-transparent focus:border-indigo-400 rounded-lg text-xs text-slate-800 placeholder-slate-400 outline-none transition-all"
           />
+          {searchQuery && (
+            <button
+              onClick={() => onSearchChange('')}
+              className="absolute right-2.5 p-0.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-colors"
+              title="Limpiar búsqueda"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
         </div>
 
         {/* Reset Demo button */}

@@ -29,7 +29,8 @@ import { DesktopClientHubView } from './components/DesktopClientHubView';
 import { ClientStandaloneApp } from './components/ClientStandaloneApp';
 import { AdminLoginGuard } from './components/AdminLoginGuard';
 import { Modal } from './components/Modal';
-import { Upload, Link as LinkIcon, Check, Sparkles } from 'lucide-react';
+import { CookieVaultModal } from './components/CookieVaultModal';
+import { Upload, Link as LinkIcon, Check, Sparkles, Cookie, Key, Laptop, Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 const STORAGE_KEY = 'coursehub-v6-demo';
 
@@ -116,6 +117,7 @@ export default function App() {
   const [modalType, setModalType] = useState<
     | null
     | 'new-client'
+    | 'edit-client'
     | 'edit-sub'
     | 'new-module'
     | 'edit-module'
@@ -138,6 +140,54 @@ export default function App() {
   const [profileFormImageUrl, setProfileFormImageUrl] = useState('');
   const [profileFormImagePreview, setProfileFormImagePreview] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Client Credential Form States (for PC App Access)
+  const [newClientUsername, setNewClientUsername] = useState('');
+  const [newClientPassword, setNewClientPassword] = useState('cliente123');
+  const [showNewClientPassword, setShowNewClientPassword] = useState(false);
+
+  const [editClientUsername, setEditClientUsername] = useState('');
+  const [editClientPassword, setEditClientPassword] = useState('');
+  const [showEditClientPassword, setShowEditClientPassword] = useState(false);
+
+  const generateRandomPassword = () => {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%';
+    let pass = '';
+    for (let i = 0; i < 9; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return pass;
+  };
+
+  // Master Cookie Vault Modal State
+  const [cookieVaultProfile, setCookieVaultProfile] = useState<Profile | null>(null);
+  const [cookieVaultModule, setCookieVaultModule] = useState<ModuleItem | null>(null);
+  const [isCookieVaultOpen, setIsCookieVaultOpen] = useState<boolean>(false);
+
+  const openCookieVaultModal = (moduleItem: ModuleItem, profile: Profile) => {
+    setCookieVaultModule(moduleItem);
+    setCookieVaultProfile(profile);
+    setIsCookieVaultOpen(true);
+  };
+
+  const handleCookiesUpdated = (moduleId: string, profileId: string, updatedProfile: Profile) => {
+    setData((prev) => ({
+      ...prev,
+      modules: prev.modules.map((m) => {
+        if (m.id === moduleId) {
+          return {
+            ...m,
+            profiles: m.profiles.map((p) => (p.id === profileId ? updatedProfile : p)),
+          };
+        }
+        return m;
+      }),
+    }));
+    setCookieVaultProfile(updatedProfile);
+    if (activeProfileForModal && activeProfileForModal.id === profileId) {
+      setActiveProfileForModal(updatedProfile);
+    }
+  };
 
   // Save to backend API and local storage on any data change
   useEffect(() => {
@@ -389,6 +439,8 @@ export default function App() {
     const form = new FormData(e.currentTarget);
     const name = form.get('name') as string;
     const email = form.get('email') as string;
+    const username = ((form.get('username') as string) || newClientUsername || email.split('@')[0] || 'cliente').trim();
+    const password = ((form.get('password') as string) || newClientPassword || 'cliente123').trim();
     const phone = (form.get('phone') as string) || '';
     const plan = form.get('plan') as string;
     const start = form.get('start') as string;
@@ -398,6 +450,8 @@ export default function App() {
       id: 'c_' + Math.random().toString(36).substring(2, 9),
       name,
       email,
+      username,
+      password,
       phone,
       status: 'active',
       subscription: {
@@ -409,7 +463,7 @@ export default function App() {
       modules: Object.fromEntries(data.modules.map((m) => [m.id, false])),
       profileIds: [],
       devices: [],
-      history: [{ at: new Date().toISOString(), action: 'Cliente creado' }],
+      history: [{ at: new Date().toISOString(), action: 'Cliente creado con credenciales de acceso a PC' }],
     };
 
     setData((prev) => ({
@@ -418,7 +472,7 @@ export default function App() {
     }));
 
     setModalType(null);
-    showToast('Cliente registrado con éxito');
+    showToast(`Cliente registrado con éxito. Usuario PC: ${username}`);
   };
 
   const handleEditSubscription = (e: React.FormEvent<HTMLFormElement>) => {
@@ -496,6 +550,234 @@ export default function App() {
         return c;
       }),
     }));
+  };
+
+  // Delete client
+  const handleDeleteClient = (clientId: string) => {
+    setData((prev) => ({
+      ...prev,
+      clients: prev.clients.filter((c) => c.id !== clientId),
+    }));
+    if (selectedClientId === clientId) {
+      setSelectedClientId(null);
+    }
+    showToast('Cliente eliminado');
+  };
+
+  // Open edit client info modal
+  const handleEditClientInfo = (client: Client) => {
+    setActiveClientForModal(client);
+    setEditClientUsername(client.username || client.email.split('@')[0] || '');
+    setEditClientPassword(client.password || 'cliente123');
+    setShowEditClientPassword(false);
+    setModalType('edit-client');
+  };
+
+  // Save edit client info modal
+  const handleSaveClientInfo = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!activeClientForModal) return;
+    const form = new FormData(e.currentTarget);
+    const name = form.get('name') as string;
+    const email = form.get('email') as string;
+    const username = ((form.get('username') as string) || editClientUsername || activeClientForModal.username || email.split('@')[0]).trim();
+    const password = ((form.get('password') as string) || editClientPassword || activeClientForModal.password || 'cliente123').trim();
+    const phone = (form.get('phone') as string) || '';
+    const status = (form.get('status') as 'active' | 'suspended' | 'cancelled') || 'active';
+
+    setData((prev) => ({
+      ...prev,
+      clients: prev.clients.map((c) => {
+        if (c.id === activeClientForModal.id) {
+          return {
+            ...c,
+            name,
+            email,
+            username,
+            password,
+            phone,
+            status,
+            history: [
+              { at: new Date().toISOString(), action: 'Datos y credenciales de acceso a PC actualizados' },
+              ...c.history,
+            ],
+          };
+        }
+        return c;
+      }),
+    }));
+
+    setModalType(null);
+    showToast('Datos y credenciales del cliente actualizados');
+  };
+
+  // Bulk toggle modules for client
+  const handleBulkAssignModules = (clientId: string, enableAll: boolean) => {
+    setData((prev) => ({
+      ...prev,
+      clients: prev.clients.map((c) => {
+        if (c.id === clientId) {
+          const updatedModules = Object.fromEntries(
+            prev.modules.map((m) => [m.id, enableAll])
+          );
+          // If disabling all, clear profile assignments too
+          return {
+            ...c,
+            modules: updatedModules,
+            profileIds: enableAll ? c.profileIds : [],
+            history: [
+              {
+                at: new Date().toISOString(),
+                action: enableAll ? 'Todos los módulos habilitados' : 'Todos los módulos desmarcados',
+              },
+              ...c.history,
+            ],
+          };
+        }
+        return c;
+      }),
+    }));
+    showToast(enableAll ? 'Todos los módulos han sido habilitados' : 'Todos los módulos han sido desmarcados');
+  };
+
+  // Bulk assign profiles for client
+  const handleBulkAssignProfiles = (clientId: string, enableAll: boolean) => {
+    setData((prev) => ({
+      ...prev,
+      clients: prev.clients.map((c) => {
+        if (c.id === clientId) {
+          if (!enableAll) {
+            return {
+              ...c,
+              profileIds: [],
+              history: [
+                { at: new Date().toISOString(), action: 'Todos los perfiles desasignados' },
+                ...c.history,
+              ],
+            };
+          }
+          // Collect all profiles from modules that are currently enabled for this client
+          const allEligibleProfileIds = prev.modules
+            .filter((m) => c.modules[m.id])
+            .flatMap((m) => m.profiles.map((p) => p.id));
+
+          return {
+            ...c,
+            profileIds: Array.from(new Set(allEligibleProfileIds)),
+            history: [
+              { at: new Date().toISOString(), action: 'Todos los perfiles disponibles asignados' },
+              ...c.history,
+            ],
+          };
+        }
+        return c;
+      }),
+    }));
+    showToast(enableAll ? 'Perfiles de módulos activos asignados' : 'Todos los perfiles desasignados');
+  };
+
+  // Toggle device status (active / revoked)
+  const handleToggleDeviceStatus = (clientId: string, deviceId: string) => {
+    setData((prev) => ({
+      ...prev,
+      clients: prev.clients.map((c) => {
+        if (c.id === clientId) {
+          const updatedDevices = c.devices.map((d) => {
+            if (d.id === deviceId) {
+              const nextStatus: 'active' | 'revoked' = d.status === 'active' ? 'revoked' : 'active';
+              return { ...d, status: nextStatus };
+            }
+            return d;
+          });
+          const targetDev = c.devices.find((d) => d.id === deviceId);
+          const wasActive = targetDev?.status === 'active';
+          return {
+            ...c,
+            devices: updatedDevices,
+            history: [
+              {
+                at: new Date().toISOString(),
+                action: wasActive
+                  ? `Dispositivo ${targetDev?.name || ''} revocado`
+                  : `Dispositivo ${targetDev?.name || ''} reactivado`,
+              },
+              ...c.history,
+            ],
+          };
+        }
+        return c;
+      }),
+    }));
+    showToast('Estado del dispositivo actualizado');
+  };
+
+  // Delete module
+  const handleDeleteModule = (moduleId: string) => {
+    setData((prev) => {
+      const targetMod = prev.modules.find((m) => m.id === moduleId);
+      const modProfileIds = targetMod ? targetMod.profiles.map((p) => p.id) : [];
+
+      return {
+        ...prev,
+        modules: prev.modules.filter((m) => m.id !== moduleId),
+        clients: prev.clients.map((c) => {
+          const { [moduleId]: _, ...restModules } = c.modules;
+          return {
+            ...c,
+            modules: restModules,
+            profileIds: c.profileIds.filter((pid) => !modProfileIds.includes(pid)),
+          };
+        }),
+      };
+    });
+    if (selectedModuleId === moduleId) {
+      setSelectedModuleId(null);
+    }
+    showToast('Módulo eliminado');
+  };
+
+  // Toggle module enabled status
+  const handleToggleModuleEnabled = (moduleId: string) => {
+    setData((prev) => ({
+      ...prev,
+      modules: prev.modules.map((m) => {
+        if (m.id === moduleId) {
+          return { ...m, enabled: !m.enabled };
+        }
+        return m;
+      }),
+    }));
+    showToast('Estado del módulo modificado');
+  };
+
+  // Delete profile
+  const handleDeleteProfile = (moduleId: string, profileId: string) => {
+    setData((prev) => ({
+      ...prev,
+      modules: prev.modules.map((m) => {
+        if (m.id === moduleId) {
+          return {
+            ...m,
+            profiles: m.profiles.filter((p) => p.id !== profileId),
+          };
+        }
+        return m;
+      }),
+      clients: prev.clients.map((c) => ({
+        ...c,
+        profileIds: c.profileIds.filter((id) => id !== profileId),
+      })),
+    }));
+    showToast('Perfil eliminado');
+  };
+
+  // Delete admin
+  const handleDeleteAdmin = (adminId: string) => {
+    setData((prev) => ({
+      ...prev,
+      admins: prev.admins.filter((a) => a.id !== adminId),
+    }));
+    showToast('Administrador eliminado');
   };
 
   // New admin / New role stubs
@@ -619,13 +901,23 @@ export default function App() {
               data={data}
               selectedClientId={selectedClientId}
               onSelectClient={setSelectedClientId}
-              onNewClient={() => setModalType('new-client')}
+              onNewClient={() => {
+                setNewClientUsername('');
+                setNewClientPassword(generateRandomPassword());
+                setShowNewClientPassword(false);
+                setModalType('new-client');
+              }}
+              onEditClientInfo={handleEditClientInfo}
+              onDeleteClient={handleDeleteClient}
               onEditSubscription={(c) => {
                 setActiveClientForModal(c);
                 setModalType('edit-sub');
               }}
               onToggleModule={handleToggleModuleForClient}
               onToggleProfile={handleToggleProfileForClient}
+              onToggleDeviceStatus={handleToggleDeviceStatus}
+              onBulkAssignModules={handleBulkAssignModules}
+              onBulkAssignProfiles={handleBulkAssignProfiles}
               searchQuery={searchQuery}
             />
           )}
@@ -640,9 +932,13 @@ export default function App() {
                 setActiveModuleForModal(m);
                 setModalType('edit-module');
               }}
+              onDeleteModule={handleDeleteModule}
+              onToggleModuleEnabled={handleToggleModuleEnabled}
               onNewProfile={openNewProfileModal}
               onEditProfile={openEditProfileModal}
+              onDeleteProfile={handleDeleteProfile}
               onFixCredential={openFixCredentialModal}
+              onManageCookies={openCookieVaultModal}
               searchQuery={searchQuery}
             />
           )}
@@ -655,7 +951,11 @@ export default function App() {
           )}
 
           {currentView === 'admins' && (
-            <AdminsView data={data} onNewAdmin={() => setModalType('new-admin')} />
+            <AdminsView
+              data={data}
+              onNewAdmin={() => setModalType('new-admin')}
+              onDeleteAdmin={handleDeleteAdmin}
+            />
           )}
 
           {currentView === 'roles' && (
@@ -680,7 +980,7 @@ export default function App() {
         isOpen={modalType === 'new-client'}
         onClose={() => setModalType(null)}
         title="Nuevo cliente"
-        subtitle="Crea la ficha de cliente y su suscripción inicial."
+        subtitle="Crea la ficha del cliente, su suscripción inicial y credenciales para el programa en PC."
         eyebrow="Customer"
       >
         <form onSubmit={handleCreateClient} className="space-y-4">
@@ -701,6 +1001,12 @@ export default function App() {
                 name="email"
                 required
                 placeholder="admin@empresa.com"
+                onChange={(e) => {
+                  if (!newClientUsername) {
+                    const candidate = e.target.value.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+                    setNewClientUsername(candidate);
+                  }
+                }}
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
               />
             </div>
@@ -713,6 +1019,80 @@ export default function App() {
               />
             </div>
           </div>
+
+          {/* CREDENCIALES PARA ACCESO AL PROGRAMA EN LA PC */}
+          <div className="p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-xs">
+                <Laptop className="w-4 h-4" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
+                  <span>Credenciales de Acceso a la PC</span>
+                  <span className="px-1.5 py-0.2 text-[10px] font-bold bg-indigo-200/60 text-indigo-900 rounded">Programa Desktop</span>
+                </h4>
+                <p className="text-[11px] text-indigo-800/90 mt-0.5 leading-snug">
+                  Estas son las credenciales con las que el cliente iniciará sesión en la aplicación instalada en su computadora para acceder a sus perfiles.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-indigo-100">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                  <Key className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Usuario para la PC</span>
+                </label>
+                <input
+                  name="username"
+                  value={newClientUsername}
+                  onChange={(e) => setNewClientUsername(e.target.value)}
+                  placeholder="ej. empresa_abc o admin_vip"
+                  required
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500 bg-white font-mono"
+                />
+                <p className="text-[10px] text-slate-500">Usuario de inicio de sesión en Windows / PC.</p>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Key className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Contraseña</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setNewClientPassword(generateRandomPassword())}
+                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>Generar clave</span>
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showNewClientPassword ? 'text' : 'password'}
+                    name="password"
+                    value={newClientPassword}
+                    onChange={(e) => setNewClientPassword(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    required
+                    className="w-full px-3 py-2 pr-9 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500 bg-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewClientPassword(!showNewClientPassword)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    title={showNewClientPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showNewClientPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500">Clave de acceso al software desktop.</p>
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">Plan contratado</label>
             <input
@@ -764,6 +1144,154 @@ export default function App() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* MODAL: Edit Client Information */}
+      <Modal
+        isOpen={modalType === 'edit-client'}
+        onClose={() => setModalType(null)}
+        title="Editar información del cliente"
+        subtitle="Actualiza los datos de contacto, estado de cuenta y credenciales de acceso a la PC."
+        eyebrow="Customer"
+      >
+        {activeClientForModal && (
+          <form onSubmit={handleSaveClientInfo} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700">Nombre o Empresa</label>
+              <input
+                name="name"
+                defaultValue={activeClientForModal.name}
+                required
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700">Correo Electrónico</label>
+              <input
+                type="email"
+                name="email"
+                defaultValue={activeClientForModal.email}
+                required
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">Teléfono / WhatsApp</label>
+                <input
+                  name="phone"
+                  defaultValue={activeClientForModal.phone || ''}
+                  placeholder="+51 987 654 321"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">Estado de la cuenta</label>
+                <select
+                  name="status"
+                  defaultValue={activeClientForModal.status || 'active'}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500"
+                >
+                  <option value="active">Activo</option>
+                  <option value="suspended">Suspendido</option>
+                  <option value="cancelled">Cancelado</option>
+                </select>
+              </div>
+            </div>
+
+            {/* CREDENCIALES PARA ACCESO AL PROGRAMA EN LA PC */}
+            <div className="p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-3">
+              <div className="flex items-start gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 mt-0.5 shadow-xs">
+                  <Laptop className="w-4 h-4" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-xs font-black text-indigo-950 flex items-center gap-1.5">
+                    <span>Credenciales de Acceso a la PC</span>
+                    <span className="px-1.5 py-0.2 text-[10px] font-bold bg-indigo-200/60 text-indigo-900 rounded">Programa Desktop</span>
+                  </h4>
+                  <p className="text-[11px] text-indigo-800/90 mt-0.5 leading-snug">
+                    Modifica el usuario o la contraseña que el cliente utiliza para iniciar sesión en la computadora.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-indigo-100">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Key className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Usuario para la PC</span>
+                  </label>
+                  <input
+                    name="username"
+                    value={editClientUsername}
+                    onChange={(e) => setEditClientUsername(e.target.value)}
+                    placeholder="ej. empresa_abc"
+                    required
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500 bg-white font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500">Usuario de inicio de sesión en Windows / PC.</p>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                      <Key className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Contraseña</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setEditClientPassword(generateRandomPassword())}
+                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Generar nueva</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showEditClientPassword ? 'text' : 'password'}
+                      name="password"
+                      value={editClientPassword}
+                      onChange={(e) => setEditClientPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      className="w-full px-3 py-2 pr-9 text-xs border border-slate-300 rounded-lg outline-none focus:border-indigo-500 bg-white font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowEditClientPassword(!showEditClientPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      title={showEditClientPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                    >
+                      {showEditClientPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Clave de acceso al software desktop.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setModalType(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+              >
+                Guardar cambios
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* MODAL: Edit Subscription */}
@@ -1071,6 +1599,32 @@ export default function App() {
             </span>
           </div>
 
+          {/* Master Cookies & First Login Banner in edit-profile */}
+          {modalType === 'edit-profile' && activeProfileForModal && activeModuleForModal && (
+            <div className="p-3.5 bg-linear-to-r from-indigo-50 to-slate-50 border border-indigo-200/80 rounded-xl flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Cookie className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Bóveda de Cookies Maestras (HWID)</span>
+                </span>
+                <p className="text-[11px] text-slate-600">
+                  {activeProfileForModal.cookies && activeProfileForModal.cookies.length > 0
+                    ? `✓ ${activeProfileForModal.cookies.length} cookies listas para ser entregadas con cifrado de hardware.`
+                    : '⚡ Requiere primer ingreso para capturar cookies de sesión para la PC.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  openCookieVaultModal(activeModuleForModal, activeProfileForModal);
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-lg text-xs font-bold shrink-0 cursor-pointer shadow-xs transition-all flex items-center gap-1"
+              >
+                <span>Gestionar Cookies</span>
+              </button>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <button
               type="button"
@@ -1253,6 +1807,17 @@ export default function App() {
           </div>
         </form>
       </Modal>
+
+      {/* Master Cookie Vault & First Login Modal */}
+      <CookieVaultModal
+        isOpen={isCookieVaultOpen}
+        onClose={() => setIsCookieVaultOpen(false)}
+        moduleItem={cookieVaultModule}
+        profile={cookieVaultProfile}
+        clients={data.clients}
+        onCookiesUpdated={handleCookiesUpdated}
+        showToast={showToast}
+      />
 
       {/* Toast Notification */}
       {toastMessage && (

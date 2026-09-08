@@ -11,6 +11,16 @@ import {
   Edit,
   Check,
   ShieldCheck,
+  Trash2,
+  CheckSquare,
+  Square,
+  UserCheck,
+  ShieldAlert,
+  ShieldX,
+  Copy,
+  Eye,
+  EyeOff,
+  Send,
 } from 'lucide-react';
 import { Client, ClientTabType, CourseHubData } from '../types';
 import { getSubscriptionState, formatDate } from '../utils/helpers';
@@ -20,9 +30,14 @@ interface ClientsViewProps {
   selectedClientId: string | null;
   onSelectClient: (id: string | null) => void;
   onNewClient: () => void;
+  onEditClientInfo?: (client: Client) => void;
+  onDeleteClient?: (clientId: string) => void;
   onEditSubscription: (client: Client) => void;
   onToggleModule: (clientId: string, moduleId: string, checked: boolean) => void;
   onToggleProfile: (clientId: string, profileId: string, checked: boolean) => void;
+  onToggleDeviceStatus?: (clientId: string, deviceId: string) => void;
+  onBulkAssignModules?: (clientId: string, enableAll: boolean) => void;
+  onBulkAssignProfiles?: (clientId: string, enableAll: boolean) => void;
   searchQuery: string;
 }
 
@@ -31,12 +46,29 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   selectedClientId,
   onSelectClient,
   onNewClient,
+  onEditClientInfo,
+  onDeleteClient,
   onEditSubscription,
   onToggleModule,
   onToggleProfile,
+  onToggleDeviceStatus,
+  onBulkAssignModules,
+  onBulkAssignProfiles,
   searchQuery,
 }) => {
   const [activeTab, setActiveTab] = useState<ClientTabType>('info');
+  const [showSelectedPassword, setShowSelectedPassword] = useState(false);
+  const [copiedFeedback, setCopiedFeedback] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, label: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedFeedback(label);
+      setTimeout(() => setCopiedFeedback(null), 2500);
+    } catch {
+      // fallback
+    }
+  };
 
   const selectedClient = data.clients.find((c) => c.id === selectedClientId);
 
@@ -47,6 +79,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     return (
       c.name.toLowerCase().includes(q) ||
       c.email.toLowerCase().includes(q) ||
+      (c.username && c.username.toLowerCase().includes(q)) ||
       c.subscription.plan.toLowerCase().includes(q)
     );
   });
@@ -113,6 +146,32 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
               >
                 {subState.label}
               </span>
+
+              {onEditClientInfo && (
+                <button
+                  id="btn-edit-client-info"
+                  onClick={() => onEditClientInfo(selectedClient)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 shadow-xs transition-colors"
+                >
+                  <Edit className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Editar datos</span>
+                </button>
+              )}
+
+              {onDeleteClient && (
+                <button
+                  id="btn-delete-client"
+                  onClick={() => {
+                    if (window.confirm(`¿Estás seguro de que deseas eliminar al cliente "${selectedClient.name}"? Esta acción removerá sus accesos y suscripciones.`)) {
+                      onDeleteClient(selectedClient.id);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg text-xs font-bold text-rose-700 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Eliminar</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -142,51 +201,185 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
         {/* Tab Contents */}
         {activeTab === 'info' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-              <h3 className="font-bold text-sm text-slate-900">Información de contacto</h3>
-              <div className="divide-y divide-slate-100 text-xs">
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Nombre completo</span>
-                  <strong className="text-slate-900">{selectedClient.name}</strong>
+          <div className="space-y-6">
+            {/* CARD: Credenciales de Acceso al Software en la PC */}
+            <div className="bg-gradient-to-br from-indigo-50/90 via-white to-indigo-50/40 p-5 rounded-2xl border border-indigo-200/80 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-xs">
+                    <Laptop className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-sm text-indigo-950">
+                        Credenciales de Acceso al Software en PC
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        Login Desktop
+                      </span>
+                    </div>
+                    <p className="text-xs text-indigo-700/90 mt-0.5">
+                      Datos que el cliente debe ingresar en la aplicación instalada en su computadora para acceder a sus perfiles.
+                    </p>
+                  </div>
                 </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Correo electrónico</span>
-                  <strong className="text-slate-900">{selectedClient.email}</strong>
+
+                {onEditClientInfo && (
+                  <button
+                    onClick={() => onEditClientInfo(selectedClient)}
+                    className="self-start sm:self-auto px-3 py-1.5 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                    <span>Cambiar credenciales</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Usuario PC */}
+                <div className="p-3.5 bg-white rounded-xl border border-indigo-100/90 shadow-2xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Key className="w-3 h-3 text-indigo-600" />
+                      <span>Usuario para la PC</span>
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(selectedClient.username || selectedClient.email.split('@')[0], 'usuario')}
+                      className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
+                      title="Copiar usuario"
+                    >
+                      {copiedFeedback === 'usuario' ? (
+                        <span className="text-emerald-600 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Copiado
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <Copy className="w-3 h-3" /> Copiar
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                  <div className="text-sm font-mono font-bold text-slate-900 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 break-all">
+                    {selectedClient.username || selectedClient.email.split('@')[0]}
+                  </div>
                 </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Teléfono</span>
-                  <strong className="text-slate-900">{selectedClient.phone || '—'}</strong>
+
+                {/* Contraseña PC */}
+                <div className="p-3.5 bg-white rounded-xl border border-indigo-100/90 shadow-2xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                      <Key className="w-3 h-3 text-indigo-600" />
+                      <span>Contraseña de acceso</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowSelectedPassword(!showSelectedPassword)}
+                        className="text-[11px] text-slate-500 hover:text-slate-800"
+                        title={showSelectedPassword ? 'Ocultar' : 'Ver'}
+                      >
+                        {showSelectedPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => copyToClipboard(selectedClient.password || 'cliente123', 'password')}
+                        className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
+                        title="Copiar contraseña"
+                      >
+                        {copiedFeedback === 'password' ? (
+                          <span className="text-emerald-600 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Copiado
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <Copy className="w-3 h-3" /> Copiar
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-sm font-mono font-bold text-slate-900 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                    <span>
+                      {showSelectedPassword ? (selectedClient.password || 'cliente123') : '••••••••••••'}
+                    </span>
+                  </div>
                 </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Estado de cuenta</span>
-                  <span className="text-emerald-700 font-bold">Activo</span>
+
+                {/* Enviar al cliente por WhatsApp / Email */}
+                <div className="p-3.5 bg-white rounded-xl border border-indigo-100/90 shadow-2xs flex flex-col justify-between space-y-2">
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Entrega al cliente
+                    </span>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Copia el mensaje completo con usuario y clave para enviarlo por WhatsApp o correo.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const msg = `¡Hola ${selectedClient.name}! Aquí tienes tus credenciales de acceso a tu aplicación en la PC:\n\n💻 Usuario: ${selectedClient.username || selectedClient.email.split('@')[0]}\n🔑 Contraseña: ${selectedClient.password || 'cliente123'}\n📅 Plan: ${selectedClient.subscription.plan}\n\nIngresa estos datos en la pantalla de inicio de sesión del programa en tu computadora.`;
+                      copyToClipboard(msg, 'mensaje');
+                    }}
+                    className="w-full py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    {copiedFeedback === 'mensaje' ? (
+                      <span className="text-emerald-600 flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" /> ¡Mensaje copiado!
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5">
+                        <Send className="w-3.5 h-3.5" /> Copiar mensaje completo
+                      </span>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-              <h3 className="font-bold text-sm text-slate-900">Resumen de acceso</h3>
-              <div className="divide-y divide-slate-100 text-xs">
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Plan actual</span>
-                  <strong className="text-indigo-600 font-bold">
-                    {selectedClient.subscription.plan}
-                  </strong>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <h3 className="font-bold text-sm text-slate-900">Información de contacto</h3>
+                <div className="divide-y divide-slate-100 text-xs">
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Nombre completo</span>
+                    <strong className="text-slate-900">{selectedClient.name}</strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Correo electrónico</span>
+                    <strong className="text-slate-900">{selectedClient.email}</strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Teléfono</span>
+                    <strong className="text-slate-900">{selectedClient.phone || '—'}</strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Estado de cuenta</span>
+                    <span className="text-emerald-700 font-bold">Activo</span>
+                  </div>
                 </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Estado suscripción</span>
-                  <strong className={subState.cls === 'ok' ? 'text-emerald-600' : 'text-amber-600'}>
-                    {subState.label}
-                  </strong>
-                </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Módulos contratados</span>
-                  <strong className="text-slate-900">{activeModuleCount} activos</strong>
-                </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="text-slate-500">Perfiles asignados</span>
-                  <strong className="text-slate-900">{selectedClient.profileIds.length} perfiles</strong>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <h3 className="font-bold text-sm text-slate-900">Resumen de acceso</h3>
+                <div className="divide-y divide-slate-100 text-xs">
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Plan actual</span>
+                    <strong className="text-indigo-600 font-bold">
+                      {selectedClient.subscription.plan}
+                    </strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Estado suscripción</span>
+                    <strong className={subState.cls === 'ok' ? 'text-emerald-600' : 'text-amber-600'}>
+                      {subState.label}
+                    </strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Módulos contratados</span>
+                    <strong className="text-slate-900">{activeModuleCount} activos</strong>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500">Perfiles asignados</span>
+                    <strong className="text-slate-900">{selectedClient.profileIds.length} perfiles</strong>
+                  </div>
                 </div>
               </div>
             </div>
@@ -276,11 +469,31 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
         {activeTab === 'modules' && (
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">Módulos Habilitados</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Selecciona qué secciones de catálogo estarán disponibles para este cliente.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Módulos Habilitados</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Selecciona qué secciones de catálogo estarán disponibles para este cliente.
+                </p>
+              </div>
+              {onBulkAssignModules && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => onBulkAssignModules(selectedClient.id, true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Habilitar todos</span>
+                  </button>
+                  <button
+                    onClick={() => onBulkAssignModules(selectedClient.id, false)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    <span>Desmarcar todos</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-2">
@@ -326,11 +539,31 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
         {activeTab === 'profiles' && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Perfiles Asignados</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Marca las credenciales de acceso específicas que este cliente puede utilizar.
-              </p>
+            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Perfiles Asignados</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Marca las credenciales de acceso específicas que este cliente puede utilizar.
+                </p>
+              </div>
+              {onBulkAssignProfiles && availableProfiles.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => onBulkAssignProfiles(selectedClient.id, true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Asignar todos</span>
+                  </button>
+                  <button
+                    onClick={() => onBulkAssignProfiles(selectedClient.id, false)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    <span>Desasignar todos</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {availableProfiles.length === 0 ? (
@@ -436,6 +669,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                       <th className="py-3 px-4">Sistema Operativo</th>
                       <th className="py-3 px-4">Estado</th>
                       <th className="py-3 px-4">Último contacto</th>
+                      {onToggleDeviceStatus && <th className="py-3 px-4 text-right">Acción</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -455,6 +689,20 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-500">{formatDate(d.last)}</td>
+                        {onToggleDeviceStatus && (
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              onClick={() => onToggleDeviceStatus(selectedClient.id, d.id)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                                d.status === 'active'
+                                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                              }`}
+                            >
+                              {d.status === 'active' ? 'Revocar acceso' : 'Autorizar equipo'}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -560,7 +808,11 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                           <strong className="block font-bold text-slate-900 text-xs">
                             {c.name}
                           </strong>
-                          <span className="text-[11px] text-slate-400">{c.email}</span>
+                          <span className="text-[11px] text-slate-400 block">{c.email}</span>
+                          <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded bg-indigo-50/80 text-indigo-700 text-[10px] font-mono border border-indigo-100">
+                            <Laptop className="w-2.5 h-2.5 text-indigo-600" />
+                            <span>PC: {c.username || c.email.split('@')[0]}</span>
+                          </span>
                         </div>
                       </td>
                       <td className="py-3 px-4 font-semibold text-slate-700">

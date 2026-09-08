@@ -1,3 +1,14 @@
+export interface StoredCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expirationDate?: number;
+  sameSite?: 'lax' | 'strict' | 'no_restriction' | 'unspecified';
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -6,6 +17,18 @@ export interface Profile {
   credentialOk: boolean;
   lastCheck: string | null;
   image?: string;
+  cookies?: StoredCookie[];
+  cookiesUpdatedAt?: string;
+  cookiesExpiration?: string;
+  hwidEncrypted?: boolean;
+  loginVerificationStatus?: 'fully_logged_in' | 'pending_verification' | 'unverified';
+  verificationDetails?: {
+    verifiedAt?: string;
+    authCookieNames?: string[];
+    notes?: string;
+    finalUrl?: string;
+    has2faCompleted?: boolean;
+  };
 }
 
 export interface ModuleItem {
@@ -42,7 +65,8 @@ export interface Client {
   id: string;
   name: string;
   email: string;
-  password?: string;
+  username?: string; // Nombre de usuario para iniciar sesión en la PC
+  password?: string; // Contraseña para iniciar sesión en la PC
   phone: string;
   status: 'active' | 'suspended';
   subscription: ClientSubscription;

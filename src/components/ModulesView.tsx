@@ -9,6 +9,15 @@ import {
   Layers,
   Image as ImageIcon,
   Key,
+  Trash2,
+  CheckCircle2,
+  XCircle,
+  Lock,
+  Cookie,
+  Sparkles,
+  Cpu,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { CourseHubData, ModuleItem, Profile } from '../types';
 
@@ -18,9 +27,13 @@ interface ModulesViewProps {
   onSelectModule: (id: string | null) => void;
   onNewModule: () => void;
   onEditModule: (module: ModuleItem) => void;
+  onDeleteModule?: (moduleId: string) => void;
+  onToggleModuleEnabled?: (moduleId: string) => void;
   onNewProfile: (module: ModuleItem) => void;
   onEditProfile: (module: ModuleItem, profile: Profile) => void;
+  onDeleteProfile?: (moduleId: string, profileId: string) => void;
   onFixCredential: (profile: Profile, moduleName: string) => void;
+  onManageCookies?: (module: ModuleItem, profile: Profile) => void;
   searchQuery: string;
 }
 
@@ -30,9 +43,13 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
   onSelectModule,
   onNewModule,
   onEditModule,
+  onDeleteModule,
+  onToggleModuleEnabled,
   onNewProfile,
   onEditProfile,
+  onDeleteProfile,
   onFixCredential,
+  onManageCookies,
   searchQuery,
 }) => {
   const selectedModule = data.modules.find((m) => m.id === selectedModuleId);
@@ -93,6 +110,20 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
               >
                 Editar módulo
               </button>
+              {onDeleteModule && (
+                <button
+                  id="btn-delete-current-module"
+                  onClick={() => {
+                    if (window.confirm(`¿Estás seguro de que deseas eliminar el módulo "${selectedModule.name}" y todos sus perfiles asociados?`)) {
+                      onDeleteModule(selectedModule.id);
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Eliminar</span>
+                </button>
+              )}
               <button
                 id="btn-new-profile"
                 onClick={() => onNewProfile(selectedModule)}
@@ -152,7 +183,29 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
                         </span>
                       </div>
                     )}
-                    <div className="absolute top-2.5 right-2.5">
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 flex-wrap justify-end">
+                      {p.loginVerificationStatus === 'fully_logged_in' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-700/95 text-white border border-emerald-400/40 shadow-xs backdrop-blur-xs flex items-center gap-1">
+                          <ShieldCheck className="w-2.5 h-2.5 text-emerald-200" />
+                          <span>Bien Logueado</span>
+                        </span>
+                      ) : p.loginVerificationStatus === 'pending_verification' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/95 text-white shadow-xs backdrop-blur-xs flex items-center gap-1">
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          <span>2FA Pendiente</span>
+                        </span>
+                      ) : p.cookies && p.cookies.length > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-900/90 text-emerald-300 border border-emerald-500/40 shadow-xs backdrop-blur-xs flex items-center gap-1">
+                          <Lock className="w-2.5 h-2.5 text-emerald-400" />
+                          <span>HWID Cifrado ({p.cookies.length})</span>
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/90 text-white shadow-xs backdrop-blur-xs flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5" />
+                          <span>1er Ingreso Pendiente</span>
+                        </span>
+                      )}
+
                       {p.credentialOk ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/90 text-white shadow-xs backdrop-blur-xs">
                           ✓ Válido
@@ -187,6 +240,16 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
                         {p.username || 'Sin usuario'}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
+                        {onManageCookies && (
+                          <button
+                            onClick={() => onManageCookies(selectedModule, p)}
+                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Gestionar cookies maestras y primer ingreso con blindaje HWID"
+                          >
+                            <Cookie className="w-3 h-3 text-indigo-600" />
+                            <span>Cookies & Sesión</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => onEditProfile(selectedModule, p)}
                           className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-colors"
@@ -199,6 +262,19 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
                             className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition-colors"
                           >
                             Actualizar
+                          </button>
+                        )}
+                        {onDeleteProfile && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`¿Eliminar el perfil "${p.name}"?`)) {
+                                onDeleteProfile(selectedModule.id, p.id);
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Eliminar perfil"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
@@ -260,15 +336,18 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
                 <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center font-bold text-sm shadow-xs">
                   {m.icon}
                 </div>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                <button
+                  type="button"
+                  onClick={() => onToggleModuleEnabled && onToggleModuleEnabled(m.id)}
+                  title="Haz clic para alternar estado"
+                  className={`px-2 py-0.5 rounded-full text-[9px] font-bold cursor-pointer transition-all hover:scale-105 ${
                     m.enabled
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-slate-100 text-slate-500 border border-slate-200'
+                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200'
                   }`}
                 >
-                  {m.enabled ? 'Activo' : 'Inactivo'}
-                </span>
+                  {m.enabled ? '✓ Activo' : '× Inactivo'}
+                </button>
               </div>
 
               <h3 className="font-bold text-sm text-slate-900 line-clamp-1">{m.name}</h3>
@@ -283,20 +362,33 @@ export const ModulesView: React.FC<ModulesViewProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => onEditModule(m)}
-                  className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[11px] font-bold transition-colors"
+                  className="flex-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[11px] font-bold transition-colors text-center"
                 >
                   Editar
                 </button>
                 <button
                   id={`manage-module-${m.id}`}
                   onClick={() => onSelectModule(m.id)}
-                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold shadow-xs transition-colors text-center"
+                  className="flex-1 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold shadow-xs transition-colors text-center"
                 >
-                  Administrar
+                  Perfiles
                 </button>
+                {onDeleteModule && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`¿Eliminar el módulo "${m.name}"?`)) {
+                        onDeleteModule(m.id);
+                      }
+                    }}
+                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded-lg transition-colors"
+                    title="Eliminar módulo"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           </div>

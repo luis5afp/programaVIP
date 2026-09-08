@@ -147,42 +147,77 @@ exit
 `;
 }
 
-// Download Windows Batch 1-Click Installer (.bat)
-export function downloadBatchInstaller(filename: string, meta: ExeMetadata) {
-  const content = generateWindowsBatchInstaller(meta);
-  const targetFileName = filename.endsWith('.bat') ? filename : `${filename}.bat`;
+// Universal Hard Drive Downloader: Bypasses iframe sandbox by triggering top-level HTTP download
+export function triggerHardDriveDownload(endpointUrl: string, fallbackFileName: string, fallbackContent?: string, mimeType?: string) {
+  const fullUrl = endpointUrl.startsWith('http') 
+    ? endpointUrl 
+    : `${window.location.origin}${endpointUrl.startsWith('/') ? '' : '/'}${endpointUrl}`;
 
+  // Method 1: Open direct download URL in top-level window/tab.
+  // With Content-Disposition: attachment, the browser automatically saves it to the hard drive Downloads folder.
+  let openedWindow: Window | null = null;
   try {
-    const blob = new Blob([content], { type: 'application/x-bat;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+    openedWindow = window.open(fullUrl, '_blank');
+  } catch (e) {
+    console.warn('window.open blocked, attempting anchor fallback:', e);
+  }
+
+  // Method 2: HTML Anchor element with download and target="_blank" attributes
+  try {
     const a = document.createElement('a');
-    a.href = url;
-    a.download = targetFileName;
-    a.style.display = 'none';
+    a.href = fullUrl;
+    a.download = fallbackFileName;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
       if (document.body.contains(a)) document.body.removeChild(a);
-      URL.revokeObjectURL(url);
     }, 2000);
   } catch (e) {
-    console.warn('Blob download failed, using Data URI fallback:', e);
-    try {
-      const encodedData = encodeURIComponent(content);
-      const dataUri = `data:text/plain;charset=utf-8,${encodedData}`;
-      const link = document.createElement('a');
-      link.setAttribute('href', dataUri);
-      link.setAttribute('download', targetFileName);
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (document.body.contains(link)) document.body.removeChild(link);
-      }, 1000);
-    } catch (e2) {
-      console.error('All download methods failed:', e2);
-    }
+    console.warn('Direct anchor download failed:', e);
   }
+
+  // Method 3: Offline Blob fallback if window.open was suppressed
+  if (!openedWindow && fallbackContent) {
+    try {
+      const blob = new Blob([fallbackContent], { type: mimeType || 'text/plain;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fallbackFileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        if (document.body.contains(a)) document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      }, 2000);
+    } catch (_) {}
+  }
+}
+
+// Download Windows EXE Installer (.exe) directly to hard drive
+export function downloadWindowsExeInstaller(filename = 'CourseHub-VIP-Setup-v6.2.0.exe') {
+  triggerHardDriveDownload('/api/download/installer-exe', filename);
+}
+
+// Download Windows ZIP Ready Package (.zip) directly to hard drive
+export function downloadZipInstaller(filename = 'CourseHub-VIP-Instalador-Windows.zip') {
+  triggerHardDriveDownload('/api/download/installer-zip', filename);
+}
+
+// Download Windows MSI Installer Package (.msi / deployment package)
+export function downloadWindowsMsiInstaller(filename: string, meta: ExeMetadata) {
+  const version = meta.version || '6.2.0';
+  const targetFileName = filename.endsWith('.msi') ? filename : `${filename}.msi`;
+  triggerHardDriveDownload('/api/download/installer-msi', targetFileName);
+}
+
+// Download Windows Batch 1-Click Installer (.bat)
+export function downloadBatchInstaller(filename: string, meta: ExeMetadata) {
+  const content = generateWindowsBatchInstaller(meta);
+  const targetFileName = filename.endsWith('.bat') ? filename : `${filename}.bat`;
+  triggerHardDriveDownload('/api/download/installer-bat', targetFileName, content, 'application/x-bat;charset=utf-8');
 }
 
 // Generate Electron Source Package files for manual copy or zip
@@ -237,23 +272,23 @@ export function getElectronPackageFiles(meta: ExeMetadata) {
             },
           ],
           artifactName: 'CourseHub-VIP-Setup-${version}.${ext}',
+          requestedExecutionLevel: 'asInvoker',
         },
         nsis: {
-          oneClick: false,
+          oneClick: false, // Asistente de instalación guiado paso a paso
           perMachine: false,
-          allowToChangeInstallationDirectory: true,
+          allowToChangeInstallationDirectory: true, // El usuario puede elegir la ruta en su PC
           allowElevation: true,
-          createDesktopShortcut: true,
-          createStartMenuShortcut: true,
+          createDesktopShortcut: true, // Acceso directo en el Escritorio de Windows
+          createStartMenuShortcut: true, // Entrada en el Menú Inicio de Windows
           shortcutName: 'CourseHub VIP',
-          installerIcon: 'icon.ico',
-          uninstallerIcon: 'icon.ico',
-          installerHeaderTitle: 'CourseHub VIP - Instalador Oficial',
+          installerHeaderTitle: 'CourseHub VIP - Instalador Oficial de Windows',
           installerLanguages: ['es_ES', 'en_US'],
           language: '3082',
-          deleteAppDataOnUninstall: false,
+          deleteAppDataOnUninstall: false, // Preserva cookies y sesiones locales si reinstala
           runAfterFinish: true,
           displayLanguageSelector: false,
+          uninstallDisplayName: 'CourseHub VIP (Desinstalador Oficial)',
         },
       },
     },
@@ -269,36 +304,68 @@ const { autoUpdater } = require('electron-updater');
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
-let mainWindow;
+let mainWindow = null;
+const activeProfileWindows = new Map();
 
+// 1. Configuración de Ventana Principal (Dashboard del Alumno)
 function createWindow() {
+  // Partición persistente global para el catálogo y login del cliente
+  const mainSession = session.fromPartition('persist:coursehub_main_vault', {
+    cache: true, // Guarda en disco local la caché web y recursos pesados
+  });
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: 1320,
+    height: 860,
     minWidth: 1024,
     minHeight: 680,
-    title: 'CourseHub VIP - Cliente de Escritorio v${version}',
+    title: 'CourseHub VIP - Software Oficial de Escritorio v${version}',
     backgroundColor: '#020617',
     webPreferences: {
+      session: mainSession,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       preload: path.join(__dirname, 'preload.js'),
-      partition: 'persist:coursehub_client_vip',
     },
   });
 
-  // Ocultar barra de menús tradicional para apariencia de app nativa
+  // Ocultar barra de menús tradicional para máxima inmersión
   mainWindow.setMenuBarVisibility(false);
+
+  // Protección nativa de Windows contra capturas de pantalla y grabadores (OBS / Camtasia)
+  try {
+    mainWindow.setContentProtection(true);
+  } catch (e) {
+    console.warn('Protección de contenido no compatible en este entorno:', e);
+  }
 
   // Cargar URL del servidor con modo cliente y aislamiento de sesión
   mainWindow.loadURL('${clientAppUrl}');
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // Cerrar también las ventanas hijas de perfiles si el alumno cierra la app principal
+    for (const [key, win] of activeProfileWindows.entries()) {
+      if (win && !win.isDestroyed()) {
+        win.close();
+      }
+    }
+    activeProfileWindows.clear();
   });
 
-  // Verificar actualizaciones de GitHub al iniciar
+  // Bloquear atajos de inspección técnica en la ventana principal
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (
+      (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+      input.key === 'F12' ||
+      (input.control && input.key.toLowerCase() === 'u')
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  // Verificar actualizaciones de GitHub al iniciar (solo en versión empaquetada instalada)
   if (app.isPackaged) {
     autoUpdater.checkForUpdatesAndNotify().catch((err) => {
       console.log('Verificación de actualización omitida:', err.message);
@@ -306,9 +373,134 @@ function createWindow() {
   }
 }
 
+// 2. MOTOR DE PERFILES INDEPENDIENTES CON ALMACENAMIENTO LOCAL DE COOKIES Y CACHÉ
+// Cada curso, IA o plataforma abre en una partición física independiente en el disco duro de la PC:
+// Ruta local: %APPDATA%\\CourseHub VIP\\Partitions\\client_XXX_mod_YYY_prof_ZZZ\\
+ipcMain.handle('profile:open', async (event, params) => {
+  const { clientId = 'c1', moduleId = 'm1', profileId = 'p1', targetUrl, title = 'CourseHub VIP Workspace', credentials } = params;
+  const partitionKey = \`persist:client_\${clientId}_mod_\${moduleId}_prof_\${profileId}\`;
+
+  // Si ya hay una ventana abierta para este perfil, la enfocamos en primer plano
+  if (activeProfileWindows.has(partitionKey)) {
+    const existingWin = activeProfileWindows.get(partitionKey);
+    if (existingWin && !existingWin.isDestroyed()) {
+      existingWin.focus();
+      return { success: true, partition: partitionKey, reloaded: false };
+    }
+  }
+
+  // Crear partición Chromium persistente con caché en disco local (evita sobrecargar el servidor)
+  const profileSession = session.fromPartition(partitionKey, {
+    cache: true, // ✅ Guarda imágenes, videos y caché local en el disco de la PC
+  });
+
+  // Inyectar cookies o credenciales en segundo plano si vienen provistas
+  if (credentials && credentials.cookies && Array.isArray(credentials.cookies)) {
+    for (const ck of credentials.cookies) {
+      try {
+        await profileSession.cookies.set({
+          url: targetUrl,
+          name: ck.name,
+          value: ck.value,
+          domain: ck.domain,
+          path: ck.path || '/',
+          secure: ck.secure ?? true,
+          httpOnly: ck.httpOnly ?? true,
+          expirationDate: ck.expirationDate || Math.floor(Date.now() / 1000) + 86400 * 365,
+        });
+      } catch (err) {
+        console.warn('Error inyectando cookie en perfil:', err.message);
+      }
+    }
+  }
+
+  // Crear ventana aislada para este perfil
+  const profileWin = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    title: \`\${title} - [Sesión Aislada en PC]\`,
+    backgroundColor: '#0f172a',
+    webPreferences: {
+      session: profileSession, // ✅ Cada perfil tiene su propio SQLite de cookies y LocalStorage en la PC
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: false, // Bloquear consola para no exponer credenciales
+    },
+  });
+
+  profileWin.setMenuBarVisibility(false);
+
+  // Blindaje anticopia para el reproductor de cursos o herramienta
+  try {
+    profileWin.setContentProtection(true);
+  } catch (e) {}
+
+  // Bloquear atajos de desarrollador (F12, Ctrl+Shift+I, etc.)
+  profileWin.webContents.on('before-input-event', (event, input) => {
+    if (
+      (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+      input.key === 'F12' ||
+      (input.control && input.key.toLowerCase() === 'u')
+    ) {
+      event.preventDefault();
+    }
+  });
+
+  // Registrar ventana activa
+  activeProfileWindows.set(partitionKey, profileWin);
+
+  profileWin.on('closed', () => {
+    activeProfileWindows.delete(partitionKey);
+  });
+
+  // Inyección automática de credenciales en formularios de login si aplica
+  if (credentials && (credentials.username || credentials.password)) {
+    profileWin.webContents.on('did-finish-load', () => {
+      const u = credentials.username || '';
+      const p = credentials.password || '';
+      if (u || p) {
+        const injectScript = \`
+          (function() {
+            try {
+              const userInput = document.querySelector('input[type="email"], input[type="text"], input[name*="user"], input[name*="email"]');
+              const passInput = document.querySelector('input[type="password"]');
+              if (userInput && '\${u}' && !userInput.value) {
+                userInput.value = '\${u}';
+                userInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+              if (passInput && '\${p}' && !passInput.value) {
+                passInput.value = '\${p}';
+                passInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+            } catch (e) {}
+          })();
+        \`;
+        profileWin.webContents.executeJavaScript(injectScript).catch(() => {});
+      }
+    });
+  }
+
+  await profileWin.loadURL(targetUrl);
+  return { success: true, partition: partitionKey, launched: true };
+});
+
+// 3. Limpiar partición o cookies de un perfil específico (si el admin lo solicita)
+ipcMain.handle('profile:clear', async (event, partitionKey) => {
+  try {
+    const targetSession = session.fromPartition(partitionKey);
+    await targetSession.clearStorageData({
+      storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers'],
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // Eventos del Auto-Updater
 autoUpdater.on('update-available', (info) => {
-  if (mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-available', info.version);
   }
 });
@@ -317,8 +509,8 @@ autoUpdater.on('update-downloaded', (info) => {
   dialog
     .showMessageBox({
       type: 'info',
-      title: 'Actualización Lista',
-      message: 'Una nueva versión de CourseHub VIP se ha descargado. ¿Deseas reiniciar ahora para aplicarla?',
+      title: 'Actualización Instalada',
+      message: 'Una nueva versión de CourseHub VIP se ha descargado silenciosamente en su PC. ¿Desea reiniciar ahora para aplicarla?',
       buttons: ['Reiniciar y Actualizar', 'Más Tarde'],
     })
     .then((result) => {
@@ -348,6 +540,11 @@ app.on('activate', () => {
 contextBridge.exposeInMainWorld('courseHubDesktop', {
   isDesktopApp: true,
   version: '${version}',
+  // Abrir curso o herramienta en una partición física independiente con almacenamiento local de cookies
+  openProfile: (params) => ipcRenderer.invoke('profile:open', params),
+  // Limpiar datos o cookies de una partición específica
+  clearProfile: (partitionKey) => ipcRenderer.invoke('profile:clear', partitionKey),
+  // Notificaciones de auto-actualización
   onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, ver) => callback(ver)),
 });
 `;
@@ -392,46 +589,75 @@ dist/
 `;
 
   const buildBat = `@echo off
+setlocal EnableDelayedExpansion
 title Compilador CourseHub VIP Desktop (.EXE)
 color 0A
 cls
 echo ================================================================
 echo   COMPILADOR OFICIAL DE COURSEHUB VIP DESKTOP (.EXE)
+echo   Version: v${version} (Windows 10 / Windows 11 x64)
 echo ================================================================
 echo.
-echo Verificando instalacion de Node.js...
-node -v >nul 2>&1
+echo [Paso 1/3] Verificando instalacion de Node.js en su sistema...
+where node >nul 2>nul
 if %errorlevel% neq 0 (
     echo.
-    echo [ERROR] Node.js no esta instalado en este equipo.
-    echo Por favor descargue e instale Node.js desde: https://nodejs.org
+    echo ================================================================
+    echo [AVISO IMPORTANTE]
+    echo Node.js no esta instalado en su equipo (o no se encuentra en el PATH).
+    echo.
+    echo Para compilar el archivo .EXE en su PC:
+    echo 1. Descargue e instale Node.js gratis desde: https://nodejs.org
+    echo 2. Reinicie esta ventana y vuelva a hacer doble clic aqui.
+    echo.
+    echo ALTERNATIVA INMEDIATA:
+    echo Si desea enviar la app a sus alumnos SIN compilar nada,
+    echo puede enviarles directamente el archivo:
+    echo   "2-INSTALAR-ACCESO-ESCRITORIO.bat"
+    echo (Ese archivo instala el icono en el escritorio y abre la app al instante).
+    echo ================================================================
     echo.
     pause
     exit /b 1
 )
 
-echo [OK] Node.js detectado.
+for /f "tokens=*" %%i in ('node -v') do set NODE_VER=%%i
+echo [+] Node.js detectado: %NODE_VER%
 echo.
-echo [1/2] Instalando dependencias de Electron (esto toma unos segundos)...
-call npm install
+
+echo [Paso 2/3] Instalando dependencias de Electron...
+call npm install --no-audit --no-fund
 if %errorlevel% neq 0 (
-    echo [ERROR] Fallo npm install. Verifique su conexion a internet.
-    pause
-    exit /b 1
+    echo [!] Fallo npm install normal. Continuando empaquetado con npx...
 )
 
 echo.
-echo [2/2] Compilando instalador .EXE para Windows x64...
-call npm run build:win
+echo [Paso 3/3] Compilando e instalando empaquetador .EXE para Windows...
+call npx --yes electron-builder@24.13.3 --win --x64
+if %errorlevel% neq 0 (
+    echo.
+    echo ================================================================
+    echo   [ERROR EN LA COMPILACION]
+    echo ================================================================
+    echo Por favor revise los errores que aparecen en la parte superior.
+    echo.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ================================================================
 echo   [OK] COMPILACION TERMINADA EXITOSAMENTE!
 echo ================================================================
-echo   El archivo instalador .EXE esta listo dentro de la carpeta:
-echo   .\\dist\\CourseHub-VIP-Setup-${version}.exe
+echo   El archivo instalador .EXE ha sido creado en:
+echo   Carpeta: %CD%\\dist\\
+echo   Archivo: CourseHub-VIP-Setup-${version}.exe
 echo ================================================================
 echo.
+if exist "dist\\CourseHub-VIP-Setup-${version}.exe" (
+    echo Abriendo la carpeta con el instalador .EXE...
+    explorer "dist"
+)
 pause
 `;
 
@@ -513,55 +739,6 @@ exit
 // Generate Electron Source Package as a real .ZIP archive for 1-click self-compilation
 export async function downloadElectronSourcePackage(meta: ExeMetadata): Promise<void> {
   const targetZipName = `CourseHub-VIP-Desktop-Repo-v${meta.version || '6.2.0'}.zip`;
-
-  // Method: Pure client-side JSZip Blob generation (standard valid ZIP file format)
-  try {
-    const files = getElectronPackageFiles(meta);
-    const zip = new JSZip();
-    zip.file('.github/workflows/build-release.yml', files.githubWorkflowYml);
-    zip.file('.gitignore', files.gitignore);
-    zip.file('1-INICIAR-APP-DIRECTO.bat', files.startAppBat);
-    zip.file('2-INSTALAR-ACCESO-ESCRITORIO.bat', files.installShortcutBat);
-    zip.file('3-COMPILAR-INSTALADOR-EXE.bat', files.buildBat);
-    zip.file('package.json', files.packageJson);
-    zip.file('main.js', files.mainJs);
-    zip.file('preload.js', files.preloadJs);
-    zip.file('LEEME-INSTRUCCIONES.txt', files.readmeMd);
-    zip.file('README.md', files.readmeMd);
-
-    const zipBlob = await zip.generateAsync({
-      type: 'blob',
-      mimeType: 'application/zip',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    });
-
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = targetZipName;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      if (document.body.contains(a)) document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 3000);
-  } catch (e) {
-    console.warn('Client JSZip generation failed, falling back to server route:', e);
-    try {
-      const link = document.createElement('a');
-      link.href = '/api/download/electron-package-zip';
-      link.download = targetZipName;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (document.body.contains(link)) document.body.removeChild(link);
-      }, 1000);
-    } catch (e2) {
-      console.error('Server zip fallback failed:', e2);
-    }
-  }
+  triggerHardDriveDownload('/api/download/electron-package-zip', targetZipName);
 }
 

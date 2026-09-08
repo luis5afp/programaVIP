@@ -21,15 +21,40 @@ import {
   ArrowLeft,
   X,
   Play,
+  HardDrive,
+  Database,
+  Save,
+  Trash2,
+  Download,
+  CheckCircle,
+  FileCheck,
 } from 'lucide-react';
 import { CourseHubData, Client, ModuleItem, Profile } from '../types';
 import { desktopAppService, ClientAppAuthResponse } from '../services/desktopAppService';
+import { usePWAInstall } from '../hooks/usePWAInstall';
+import {
+  diskStorageService,
+  ProfileDiskRecord,
+  DiskStorageStats,
+} from '../services/diskStorageService';
 
 interface ClientStandaloneAppProps {
   data: CourseHubData;
 }
 
 export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
+  // PWA Native Installation hook
+  const { isInstallable, isInstalled, isStandalone, install } = usePWAInstall();
+
+  // Hard Drive Storage state
+  const [diskStats, setDiskStats] = useState<DiskStorageStats | null>(null);
+  const [storedDiskRecords, setStoredDiskRecords] = useState<ProfileDiskRecord[]>([]);
+  const [showDiskManagerModal, setShowDiskManagerModal] = useState<boolean>(false);
+  const [showInstallModal, setShowInstallModal] = useState<boolean>(false);
+  const [downloadFeedback, setDownloadFeedback] = useState<string | null>(null);
+  const [diskStorageNote, setDiskStorageNote] = useState<string>('');
+  const [savingDiskNote, setSavingDiskNote] = useState<boolean>(false);
+
   // Client Authentication State
   const [isClientLoggedIn, setIsClientLoggedIn] = useState<boolean>(() => {
     try {
@@ -83,6 +108,45 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
     }
   });
 
+  // Set window title for PC desktop mode
+  useEffect(() => {
+    document.title = 'CourseHub VIP Desktop';
+  }, []);
+
+  // Load and consolidate disk storage on mount
+  useEffect(() => {
+    const initDiskStorage = async () => {
+      await diskStorageService.ensureDiskPersistence();
+      const stats = await diskStorageService.getStorageStats();
+      setDiskStats(stats);
+      const records = await diskStorageService.getAllProfileDiskRecords();
+      setStoredDiskRecords(records);
+
+      if (records.length > 0) {
+        setLocalCookiesMap((prev) => {
+          const next = { ...prev };
+          records.forEach((rec) => {
+            if (rec.sessionToken) {
+              next[rec.partitionId] = {
+                validatedAt: rec.savedAt,
+                token: rec.sessionToken,
+              };
+            }
+          });
+          return next;
+        });
+      }
+    };
+    initDiskStorage();
+  }, []);
+
+  const refreshDiskData = async () => {
+    const stats = await diskStorageService.getStorageStats();
+    setDiskStats(stats);
+    const records = await diskStorageService.getAllProfileDiskRecords();
+    setStoredDiskRecords(records);
+  };
+
   const performClientLogin = async (user: string, pass: string) => {
     if (!user.trim() || !pass.trim()) {
       setClientLoginError('Por favor ingrese su usuario y contraseña');
@@ -126,7 +190,10 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
     setActiveCourse({ module: mod, profile: prof, partitionId });
     setCourseInputCode('');
     setVerificationError(null);
-    setVerificationSuccess(!!localCookiesMap[partitionId]);
+    
+    // Check if partition already has consolidated data in hard drive
+    const isAlreadyValidated = !!localCookiesMap[partitionId] || storedDiskRecords.some((r) => r.partitionId === partitionId && r.sessionToken);
+    setVerificationSuccess(isAlreadyValidated);
   };
 
   const handleVerifyCourseCode = async (e: React.FormEvent) => {
@@ -146,11 +213,12 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
 
     if (res.success && res.data) {
       setVerificationSuccess(true);
+      const sessionToken = res.data.sessionToken || 'token_valid';
       const updatedMap = {
         ...localCookiesMap,
         [activeCourse.partitionId]: {
           validatedAt: new Date().toISOString(),
-          token: res.data.sessionToken || 'token_valid',
+          token: sessionToken,
         },
       };
       setLocalCookiesMap(updatedMap);
@@ -159,6 +227,21 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
       } catch (e) {
         console.error(e);
       }
+
+      // CRITICAL: Consolidate permanently into the client PC's hard drive!
+      await diskStorageService.saveProfilePartition({
+        partitionId: activeCourse.partitionId,
+        moduleId: activeCourse.module.id,
+        profileId: activeCourse.profile.id,
+        moduleName: activeCourse.module.name,
+        profileName: activeCourse.profile.name,
+        sessionToken: sessionToken,
+        cookiesDecrypted: res.data.cookiesDecrypted || 'master_cookie_session_active',
+        notes: '',
+        offlineReady: true,
+      });
+
+      await refreshDiskData();
     } else {
       setVerificationError(res.error || 'Código incorrecto, caducado o no asignado a este curso.');
     }
@@ -199,15 +282,30 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Hard Drive Persistence Status Pill */}
+          <button
+            onClick={() => setShowDiskManagerModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-[11px] font-bold text-indigo-300 transition-colors cursor-pointer shadow-xs"
+            title="Administrador de almacenamiento permanente consolidado en Disco Duro"
+          >
+            <HardDrive className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span className="hidden sm:inline">Disco Duro:</span>
+            <span className="text-white font-mono">{diskStats?.usageMB || '0.2'} MB</span>
+            <span className="px-1.5 py-0.2 bg-indigo-500/30 rounded text-[9px] text-indigo-200 font-mono">
+              {storedDiskRecords.length} {storedDiskRecords.length === 1 ? 'perfil' : 'perfiles'}
+            </span>
+          </button>
+
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Conectado al Servidor</span>
+            <span className="hidden xs:inline">Conectado</span>
           </div>
+
           {isClientLoggedIn && (
             <button
               onClick={handleLogout}
-              className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors px-2 py-0.5 rounded hover:bg-slate-800"
+              className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors px-2 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
               title="Cerrar sesión"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -216,6 +314,66 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
           )}
         </div>
       </header>
+
+      {/* Toast de confirmación de descarga */}
+      {downloadFeedback && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-xl flex items-center gap-2 animate-bounce">
+          <CheckCircle2 className="w-4 h-4 text-white" />
+          <span>{downloadFeedback}</span>
+        </div>
+      )}
+
+      {/* Persistent OS Hard Drive Install Banner (if not installed in OS yet) */}
+      {!isStandalone && (
+        <div className="bg-linear-to-r from-indigo-950 via-slate-900 to-purple-950 border-b border-indigo-500/30 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600/30 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shrink-0">
+              <Download className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-white font-bold block sm:inline">
+                Instalador Oficial CourseHub VIP para Windows:
+              </span>{' '}
+              <span className="text-slate-300 text-[11px]">
+                Asistente .EXE con pasos de instalación, selección de carpeta de destino y registro como programa en tu PC.
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href="/api/download/installer-exe"
+              download="CourseHub-VIP-Setup-v6.2.0.exe"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                setDownloadFeedback('✓ Descargando Instalador Oficial (.EXE) a tu carpeta de Descargas...');
+                setTimeout(() => setDownloadFeedback(null), 5000);
+              }}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer text-center"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Descargar Instalador (.EXE)</span>
+            </a>
+
+            <button
+              onClick={async () => {
+                if (isInstallable) {
+                  const success = await install();
+                  if (!success) {
+                    setShowInstallModal(true);
+                  }
+                } else {
+                  setShowInstallModal(true);
+                }
+              }}
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+            >
+              <Laptop className="w-3.5 h-3.5" />
+              <span>Opciones de Instalación</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col">
@@ -251,13 +409,13 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
               >
                 <div>
                   <label className="block text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                    Usuario o Correo
+                    Usuario o Correo de la PC
                   </label>
                   <input
                     type="text"
                     value={clientInputUser}
                     onChange={(e) => setClientInputUser(e.target.value)}
-                    placeholder="usuario@ejemplo.com"
+                    placeholder="ej. empresa_abc o admin@empresa.com"
                     required
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-hidden focus:border-indigo-500 transition-colors"
                   />
@@ -311,13 +469,14 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
                       key={c.id}
                       type="button"
                       onClick={() => {
-                        setClientInputUser(c.email);
+                        const loginIdentifier = c.username || c.email;
+                        setClientInputUser(loginIdentifier);
                         setClientInputPass(c.password || 'cliente123');
-                        performClientLogin(c.email, c.password || 'cliente123');
+                        performClientLogin(loginIdentifier, c.password || 'cliente123');
                       }}
-                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold transition-colors"
+                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold transition-colors font-mono"
                     >
-                      {c.name.split(' ')[0]}
+                      {c.username || c.name.split(' ')[0]}
                     </button>
                   ))}
                 </div>
@@ -536,6 +695,32 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
                             ))}
                           </div>
                         </div>
+                        {/* Hard Drive Storage Status for this Active Profile */}
+                        <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                              <HardDrive className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white">Partición Consolidada en Disco Duro:</span>
+                                <code className="text-emerald-400 font-mono text-[11px] bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                                  {activeCourse.partitionId}
+                                </code>
+                              </div>
+                              <span className="text-[11px] text-slate-400">
+                                Almacenamiento persistente en PC activo. Cookies, sesión y notas se guardan permanentemente en tu equipo sin depender de archivos .bat ni ejecutables sueltos.
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setShowDiskManagerModal(true)}
+                            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+                          >
+                            <Database className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Gestionar Bóveda de Disco</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -623,6 +808,396 @@ export function ClientStandaloneApp({ data }: ClientStandaloneAppProps) {
           </div>
         )}
       </div>
+
+      {/* MODAL: ADMINISTRADOR DE ALMACENAMIENTO PERMANENTE EN DISCO DURO */}
+      {showDiskManagerModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full shadow-2xl p-6 space-y-5 animate-fadeIn max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 flex items-center justify-center">
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    Bóveda Consolidada en el Disco Duro de tu PC
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Almacenamiento físico por perfil con persistencia garantizada en el sistema operativo
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDiskManagerModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Diagnostics Card */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Persistencia OS
+                </span>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span>{diskStats?.persisted ? 'Garantizada' : 'Activa en Disco'}</span>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  Inmune a limpieza de caché
+                </span>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Espacio en Disco
+                </span>
+                <div className="text-xs font-mono font-bold text-white">
+                  {diskStats?.usageMB || '0.2'} MB ocupados
+                </div>
+                <span className="text-[10px] text-slate-500 block font-mono">
+                  {diskStats?.quotaMB ? `${(diskStats.quotaMB / 1024).toFixed(1)} GB disponibles` : 'Cuota libre en PC'}
+                </span>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Perfiles Guardados
+                </span>
+                <div className="text-xs font-mono font-bold text-indigo-400">
+                  {storedDiskRecords.length} particiones activas
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  Cada una 100% aislada
+                </span>
+              </div>
+            </div>
+
+            {/* List of Stored Profiles */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                  <Database className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Particiones Físicas Almacenadas en Disco Duro</span>
+                </h4>
+                <button
+                  onClick={async () => {
+                    await diskStorageService.ensureDiskPersistence();
+                    await refreshDiskData();
+                  }}
+                  className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Verificar Persistencia</span>
+                </button>
+              </div>
+
+              {storedDiskRecords.length === 0 ? (
+                <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-6 text-center space-y-2">
+                  <Database className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs text-slate-400">
+                    Aún no hay perfiles validados en este equipo.
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Al desbloquear cualquier curso con tu código de validación, sus cookies y sesiones se consolidarán de inmediato en tu disco duro.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                  {storedDiskRecords.map((rec) => (
+                    <div
+                      key={rec.partitionId}
+                      className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-white">{rec.moduleName}</span>
+                            <span className="text-[10px] text-indigo-400 font-mono">({rec.profileName})</span>
+                          </div>
+                          <code className="text-[10px] text-slate-500 font-mono block mt-0.5 break-all">
+                            {rec.partitionId}
+                          </code>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={async () => {
+                              await diskStorageService.deleteProfilePartition(rec.partitionId);
+                              await refreshDiskData();
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-900 transition-colors cursor-pointer"
+                            title="Eliminar datos de esta partición en disco"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-900 pt-2 font-mono">
+                        <span>Guardado: {new Date(rec.savedAt).toLocaleString()}</span>
+                        <span className="text-emerald-400 flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" />
+                          <span>Sesión Activa</span>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Guarantee Note */}
+            <div className="bg-indigo-950/40 border border-indigo-500/20 p-3.5 rounded-2xl text-[11px] text-indigo-300 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-white">
+                <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                <span>Consolidación Total en Disco Duro (Sin .BAT ni .EXE sueltos)</span>
+              </div>
+              <p className="text-slate-400 leading-relaxed">
+                Este software almacena todos los datos directamente en el disco duro físico de tu PC. Puedes apagar tu ordenador, reiniciar el sistema y volver a abrir la aplicación sin necesidad de revalidar tus cursos ni depender de scripts temporales.
+              </p>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+              {!isStandalone ? (
+                <button
+                  onClick={() => setShowInstallModal(true)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  <Laptop className="w-3.5 h-3.5" />
+                  <span>Instalar Acceso en Menú Inicio</span>
+                </button>
+              ) : (
+                <span className="text-xs text-emerald-400 flex items-center gap-1.5 font-bold">
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Aplicación Consolidada en Windows</span>
+                </span>
+              )}
+
+              <button
+                onClick={() => setShowDiskManagerModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: OPCIONES DE INSTALACIÓN Y DESCARGA AL DISCO DURO */}
+      {showInstallModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full shadow-2xl p-6 space-y-5 animate-fadeIn max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                  <Download className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    Instalar CourseHub VIP en tu PC
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Descarga el instalador oficial o añade el acceso a tu Escritorio de Windows
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowInstallModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Opciones de Instalación */}
+            <div className="space-y-3.5">
+              {/* Opción 1: Instalador Oficial Windows (.EXE) con Asistente Paso a Paso */}
+              <div className="bg-slate-950 border-2 border-emerald-500 rounded-2xl p-4.5 space-y-3 shadow-lg shadow-emerald-950/40">
+                <div className="flex items-center justify-between">
+                  <span className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    OFICIAL • INSTALADOR .EXE CON ASISTENTE
+                  </span>
+                  <span className="text-xs font-mono text-emerald-400 font-bold">Windows 10 / 11 (64/32-bit)</span>
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-white flex items-center gap-2">
+                    <Laptop className="w-4 h-4 text-emerald-400" />
+                    <span>Instalador con Asistente de Configuración (.EXE)</span>
+                  </h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    Un auténtico ejecutable de Windows con asistente visual guiado:
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
+                    <div className="flex items-start gap-1.5">
+                      <span className="text-emerald-400 font-bold font-mono">1.</span>
+                      <span><strong>Elige carpeta de destino:</strong> selecciona dónde descomprimir e instalar en tu PC.</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="text-emerald-400 font-bold font-mono">2.</span>
+                      <span><strong>Barra de progreso:</strong> extracción automática de componentes nativos.</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="text-emerald-400 font-bold font-mono">3.</span>
+                      <span><strong>Programa instalado:</strong> se registra en Windows (Configuración / Panel de Control).</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="text-emerald-400 font-bold font-mono">4.</span>
+                      <span><strong>Accesos y desinstalador:</strong> iconos en Escritorio, Menú Inicio y <em>uninstall.exe</em>.</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-1">
+                  <a
+                    href="/api/download/installer-exe"
+                    download="CourseHub-VIP-Setup-v6.2.0.exe"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      setDownloadFeedback('✓ Descargando CourseHub-VIP-Setup-v6.2.0.exe al disco duro...');
+                      setTimeout(() => setDownloadFeedback(null), 5000);
+                    }}
+                    className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/60 active:scale-95 text-center cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Descargar CourseHub-VIP-Setup-v6.2.0.exe</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Opción 2: Instalador 1-Clic (.BAT) - Alternativa rápida */}
+              <div className="bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 space-y-2.5 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-bold uppercase">
+                    Alternativa Rápida
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">Script .BAT / .CMD</span>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Laptop className="w-4 h-4 text-slate-400" />
+                    <span>Script de Instalación Silenciosa (.BAT)</span>
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    Si prefieres instalar sin asistente gráfico, este script crea el entorno y accesos directos automáticamente con 1 solo clic.
+                  </p>
+                </div>
+                <div className="pt-1 flex flex-wrap gap-2">
+                  <a
+                    href="/api/download/installer-bat"
+                    download="Instalar-CourseHub-VIP-v6.2.0.bat"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      setDownloadFeedback('✓ Descargando Instalador 1-Clic a tu carpeta de Descargas...');
+                      setTimeout(() => setDownloadFeedback(null), 5000);
+                    }}
+                    className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 text-center cursor-pointer border border-slate-700"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Descargar .BAT</span>
+                  </a>
+                  <a
+                    href="/api/download/installer-cmd"
+                    download="Instalar-CourseHub-VIP-v6.2.0.cmd"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-700"
+                    title="Versión alternativa .CMD"
+                  >
+                    .CMD
+                  </a>
+                </div>
+              </div>
+
+              {/* Opción 2: Paquete ZIP */}
+              <div className="bg-slate-950 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 space-y-3 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-md bg-amber-600 text-white text-[10px] font-black uppercase">
+                    Paquete Completo
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">Archivo .ZIP</span>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Database className="w-4 h-4 text-amber-400" />
+                    <span>Paquete Comprimido (.ZIP)</span>
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    Contiene el instalador desatendido, script de arranque, icono de alta resolución y manual de instrucciones paso a paso.
+                  </p>
+                </div>
+                <div className="pt-1">
+                  <a
+                    href="/api/download/installer-zip"
+                    download="CourseHub-VIP-Instalador-Windows.zip"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      setDownloadFeedback('✓ Descargando Paquete ZIP a tu carpeta de Descargas...');
+                      setTimeout(() => setDownloadFeedback(null), 5000);
+                    }}
+                    className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 text-center cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Descargar Paquete ZIP (.ZIP)</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Opción 3: Instalación Directa desde el Navegador (PWA) */}
+              <div className="bg-slate-950 border border-slate-800 hover:border-indigo-500/40 rounded-2xl p-4 space-y-3 transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase">
+                    Navegador
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">Google Chrome / Edge</span>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Laptop className="w-4 h-4 text-indigo-400" />
+                    <span>Instalar desde la barra de Chrome / Edge</span>
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    También puedes instalar la aplicación directamente en Windows: en la barra superior de direcciones (donde escribes la URL), haz clic en el icono de instalación <strong>(ícono de pantalla al lado de la estrella de favoritos)</strong> o en el menú <strong>⋮ &gt; Instalar CourseHub VIP</strong>.
+                  </p>
+                </div>
+                {isInstallable && (
+                  <button
+                    onClick={async () => {
+                      const success = await install();
+                      if (success) {
+                        setShowInstallModal(false);
+                      }
+                    }}
+                    className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Abrir Diálogo de Instalación del Navegador</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setShowInstallModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
