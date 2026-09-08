@@ -26,7 +26,7 @@ export function publicCatalog(data, clientId, now = Date.now()) {
     modules: (data.modules || []).filter(m => m.enabled === true && client.modules?.[m.id] === true).map(m => ({
       id: m.id, name: m.name, icon: m.icon || '', category: m.category || 'web',
       profiles: (m.profiles || []).filter(p => client.profileIds?.includes(p.id) && p.credentialOk === true).map(p => ({
-        id: p.id, name: p.name, url: cleanUrl(p.url).href, sessionAvailable: true,
+        id: p.id, name: p.name, url: cleanUrl(p.url).href,
       })),
     })).filter(m => m.profiles.length > 0),
   };
