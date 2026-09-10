@@ -1,7 +1,0 @@
-{
-  "name": "CourseHub Admin Console",
-  "description": "Consola administrativa exclusiva y servidor API adjunto con soporte para cliente de escritorio PC (instalador), validación por código de 6 dígitos, particiones y cookies aisladas por curso/perfil, y compatibilidad con Cloudflare D1/Workers.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
-
