@@ -1,170 +1,140 @@
-export interface StoredCookie {
-  name: string;
-  value: string;
-  domain: string;
-  path?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-  expirationDate?: number;
-  sameSite?: 'lax' | 'strict' | 'no_restriction' | 'unspecified';
-}
+export type ClientStatus = 'active' | 'suspended';
+export type SubscriptionStatus = 'active' | 'suspended' | 'cancelled';
+export type DeviceStatus = 'active' | 'revoked';
+export type SessionMode = 'manual-login' | 'managed-first-party';
 
-export interface Profile {
-  id: string;
-  name: string;
-  url: string;
+export interface AdminSession {
   username: string;
-  credentialOk: boolean;
-  lastCheck: string | null;
-  image?: string;
-  cookies?: StoredCookie[];
-  cookiesUpdatedAt?: string;
-  cookiesExpiration?: string;
-  hwidEncrypted?: boolean;
-  loginVerificationStatus?: 'fully_logged_in' | 'pending_verification' | 'unverified';
-  verificationDetails?: {
-    verifiedAt?: string;
-    authCookieNames?: string[];
-    notes?: string;
-    finalUrl?: string;
-    has2faCompleted?: boolean;
-  };
 }
 
-export interface ModuleItem {
+export interface Plan {
   id: string;
   name: string;
-  icon: string;
-  desc: string;
-  category?: 'courses' | 'ai' | 'web';
+  duration_days: number | null;
+  max_devices: number;
+  max_profiles: number;
   enabled: boolean;
-  profiles: Profile[];
-}
-
-export interface ClientDevice {
-  id: string;
-  name: string;
-  os: string;
-  status: 'active' | 'revoked';
-  last: string;
-}
-
-export interface ClientHistory {
-  at: string;
-  action: string;
-}
-
-export interface ClientSubscription {
-  plan: string;
-  start: string;
-  end: string;
-  renewal: 'manual' | 'automatic';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Client {
   id: string;
   name: string;
   email: string;
-  username?: string; // Nombre de usuario para iniciar sesión en la PC
-  password?: string; // Contraseña para iniciar sesión en la PC
-  phone: string;
-  status: 'active' | 'suspended';
-  subscription: ClientSubscription;
-  modules: Record<string, boolean>;
-  profileIds: string[];
-  devices: ClientDevice[];
-  history: ClientHistory[];
+  phone: string | null;
+  status: ClientStatus;
+  created_at: string;
+  updated_at: string;
+  credential?: {
+    username: string;
+    has_password: boolean;
+  } | null;
+  subscription?: Subscription | null;
 }
 
-export interface AdminUser {
+export interface Subscription {
+  id: string;
+  client_id: string;
+  plan_id: string;
+  starts_at: string;
+  expires_at: string;
+  status: SubscriptionStatus;
+  offline_grace_minutes: number;
+  created_at: string;
+  updated_at: string;
+  plan?: Plan | null;
+}
+
+export interface Profile {
   id: string;
   name: string;
-  email: string;
-  username: string;
-  role: string;
-  status: 'active' | 'inactive';
-  last: string;
+  url: string;
+  platform: string | null;
+  image_url: string | null;
+  tags: string[];
+  enabled: boolean;
+  session_mode: SessionMode;
+  session_ready: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface RolePermission {
-  name: string;
-  permissions: string[];
-}
-
-export interface CourseHubData {
-  modules: ModuleItem[];
-  clients: Client[];
-  admins: AdminUser[];
-  roles: RolePermission[];
-}
-
-export interface AuditLogEntry {
+export interface ProxyRecord {
   id: string;
-  timestamp: string;
-  user: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string | null;
+  enabled: boolean;
+  has_password: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Assignment {
+  id: string;
+  client_id: string;
+  profile_id: string;
+  proxy_id: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  client?: Pick<Client, 'id' | 'name' | 'email'>;
+  profile?: Pick<Profile, 'id' | 'name' | 'url'>;
+  proxy?: Pick<ProxyRecord, 'id' | 'name' | 'host' | 'port'> | null;
+}
+
+export interface Device {
+  id: string;
+  client_id: string;
+  name: string;
+  os: string | null;
+  status: DeviceStatus;
+  last_seen_at: string | null;
+  created_at: string;
+  client?: Pick<Client, 'id' | 'name' | 'email'>;
+}
+
+export interface AuditLog {
+  id: string;
+  actor_type: 'admin' | 'client' | 'system';
+  actor_id: string | null;
   action: string;
-  category: 'auth' | 'client' | 'module' | 'system' | 'security';
-  ip?: string;
-  details?: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  ip_hash: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
 }
 
-export interface SecurityStats {
-  totalClients: number;
+export interface DashboardStats {
+  clients: number;
   activeClients: number;
-  totalDevices: number;
-  revokedDevices: number;
-  validCredentials: number;
-  invalidCredentials: number;
-  activeAdmins: number;
-  mfaEnforced: boolean;
+  plans: number;
+  profiles: number;
+  proxies: number;
+  devices: number;
+  activeDevices: number;
+  assignments: number;
 }
 
-export interface ApiResponse<T = any> {
-  success: boolean;
-  message?: string;
-  error?: string;
-  data?: T;
-  timestamp?: string;
+export interface HealthInfo {
+  ok: boolean;
+  service: string;
+  version: string;
+  supabaseConfigured: boolean;
+  proxyEncryptionConfigured: boolean;
+  timestamp: string;
 }
 
-export interface ServerHealthInfo {
-  status: 'online' | 'offline' | 'error';
-  service?: string;
-  version?: string;
-  latencyMs?: number;
-  edgeRuntime?: string;
-  error?: string;
-  timestamp?: string;
-}
-
-export interface ValidationCode {
-  code: string;
-  clientId: string;
-  clientName?: string;
-  moduleId: string;
-  moduleName?: string;
-  profileId: string;
-  profileName?: string;
-  expiresAt: string;
-  used: boolean;
-  usedAt?: string;
-  hwid?: string;
-  createdAt: string;
-  status: 'active' | 'used' | 'expired' | 'revoked';
-}
-
-export interface ClientAppSession {
-  clientId: string;
-  moduleId: string;
-  profileId: string;
-  sessionPartition: string;
-  cookiesSaved: boolean;
-  validatedAt: string;
-  lastAccessed: string;
-}
-
-export type ViewType = 'dashboard' | 'clients' | 'modules' | 'desktop-app' | 'admins' | 'roles' | 'security' | 'system';
-export type ClientTabType = 'info' | 'subscription' | 'modules' | 'profiles' | 'devices' | 'history';
-export type ReviewFilterType = 'all' | 'valid' | 'invalid';
-
-
+export type ViewKey =
+  | 'dashboard'
+  | 'clients'
+  | 'plans'
+  | 'profiles'
+  | 'proxies'
+  | 'assignments'
+  | 'devices'
+  | 'audit'
+  | 'system';
