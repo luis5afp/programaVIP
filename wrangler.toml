@@ -12,5 +12,6 @@ run_worker_first = true
 enabled = true
 
 [vars]
+SUPABASE_URL = "https://lbvxnbbglkjnwphaomyx.supabase.co"
 CREATORTOOLS_AUTH_ORIGIN = "https://creatortools-reconstruction-lab.luis5afp.workers.dev"
 USERFLEX_PROXY_KEY_VERSION = "v1"
