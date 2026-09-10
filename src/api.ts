@@ -84,7 +84,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       }),
-    subscription: (id: string, input: { planId: string; startsAt: string; expiresAt: string; status?: string }) =>
+    subscription: (id: string, input: { planId: string; startsAt: string; expiresAt: string }) =>
       request<{ ok: true }>(`/api/clients/${id}/subscription`, {
         method: 'POST',
         body: JSON.stringify(input),
@@ -111,10 +111,26 @@ export const api = {
 
   proxies: {
     list: () => request<ProxyRecord[]>('/api/proxies'),
-    create: (input: { name: string; host: string; port: number; username?: string; password?: string; enabled?: boolean }) =>
-      request<ProxyRecord>('/api/proxies', { method: 'POST', body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<{ name: string; host: string; port: number; username: string; password: string; enabled: boolean }>) =>
-      request<ProxyRecord>(`/api/proxies/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    create: (input: {
+      name: string;
+      host: string;
+      port: number;
+      username?: string;
+      password?: string;
+      enabled?: boolean;
+    }) => request<ProxyRecord>('/api/proxies', { method: 'POST', body: JSON.stringify(input) }),
+    update: (
+      id: string,
+      input: Partial<{
+        name: string;
+        host: string;
+        port: number;
+        username: string | null;
+        password: string;
+        clearPassword: boolean;
+        enabled: boolean;
+      }>,
+    ) => request<ProxyRecord>(`/api/proxies/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     remove: (id: string) => request<{ ok: true }>(`/api/proxies/${id}`, { method: 'DELETE' }),
   },
 
@@ -123,13 +139,17 @@ export const api = {
     create: (input: { clientId: string; profileId: string; proxyId?: string | null; enabled?: boolean }) =>
       request<Assignment>('/api/assignments', { method: 'POST', body: JSON.stringify(input) }),
     update: (id: string, input: Partial<{ proxyId: string | null; enabled: boolean }>) =>
-      request<Assignment>(`/api/assignments/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+      request<Assignment>(`/api/assignments/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }),
     remove: (id: string) => request<{ ok: true }>(`/api/assignments/${id}`, { method: 'DELETE' }),
   },
 
   devices: {
     list: () => request<Device[]>('/api/devices'),
     revoke: (id: string) => request<Device>(`/api/devices/${id}/revoke`, { method: 'POST' }),
+    reactivate: (id: string) => request<Device>(`/api/devices/${id}/reactivate`, { method: 'POST' }),
   },
 
   audit: {
