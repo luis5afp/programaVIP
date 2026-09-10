@@ -2,6 +2,10 @@ name: Deploy userFLEX Admin to Cloudflare
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["userFLEX Admin CI"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -12,6 +16,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -21,6 +26,8 @@ jobs:
       USERFLEX_PROXY_MASTER_KEY: ${{ secrets.USERFLEX_PROXY_MASTER_KEY }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-node@v4
         with:
