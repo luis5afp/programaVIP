@@ -181,6 +181,19 @@ begin
 end;
 $$;
 
+-- Cover userFLEX foreign keys used by joins and cascading lifecycle operations.
+create index if not exists userflex_assignment_profile_idx
+  on public.userflex_assignments(profile_id);
+create index if not exists userflex_assignment_proxy_idx
+  on public.userflex_assignments(proxy_id)
+  where proxy_id is not null;
+create index if not exists userflex_client_session_client_idx
+  on public.userflex_client_sessions(client_id);
+create index if not exists userflex_client_session_device_idx
+  on public.userflex_client_sessions(device_id);
+create index if not exists userflex_subscription_plan_idx
+  on public.userflex_subscriptions(plan_id);
+
 revoke all on function public.userflex_create_client(text,text,text,uuid,text,text,timestamptz,timestamptz)
   from public, anon, authenticated;
 grant execute on function public.userflex_create_client(text,text,text,uuid,text,text,timestamptz,timestamptz)
