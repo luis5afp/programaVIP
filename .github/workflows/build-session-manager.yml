@@ -1,0 +1,56 @@
+name: Build userFLEX Session Manager
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'session-manager/**'
+      - '.github/workflows/build-session-manager.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: session-manager
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Session Manager dependencies
+        run: npm install
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: userFLEX-Session-Manager-Windows
+          path: session-manager/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish installer release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = "session-manager-v$version"
+          $asset = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          if (-not $asset) { throw "No Windows installer was generated." }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Session Manager v$version" --notes "Instalador de Windows para abrir capturas de sesión userFLEX mediante el protocolo userflex-session:// y lanzar el Chromium aislado del perfil."
+          }
