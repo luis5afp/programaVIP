@@ -2,6 +2,10 @@ name: Build userFLEX Session Manager
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'session-manager/**'
+      - '.github/workflows/build-session-manager.yml'
   push:
     branches: [main]
     paths:
@@ -39,6 +43,7 @@ jobs:
           retention-days: 30
 
       - name: Publish installer release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
