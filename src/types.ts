@@ -60,6 +60,12 @@ export interface Profile {
   updated_at: string;
 }
 
+export interface ProfileProxyDefault {
+  profile_id: string;
+  proxy_id: string;
+  updated_at: string;
+}
+
 export interface ProxyRecord {
   id: string;
   name: string;

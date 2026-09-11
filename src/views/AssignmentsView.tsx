@@ -1,31 +1,38 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api';
-import type { Assignment, Client, Profile, ProxyRecord } from '../types';
+import type { Assignment, Client, Profile, ProfileProxyDefault, ProxyRecord } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Assignment | 'new' | null;
+
+function profileLabel(profile: Profile) {
+  return profile.tags?.[0] || profile.name;
+}
 
 export function AssignmentsView() {
   const [items, setItems] = useState<Assignment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [proxies, setProxies] = useState<ProxyRecord[]>([]);
+  const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
-      const [assignmentRows, clientRows, profileRows, proxyRows] = await Promise.all([
+      const [assignmentRows, clientRows, profileRows, proxyRows, defaultRows] = await Promise.all([
         api.assignments.list(),
         api.clients.list(),
         api.profiles.list(),
         api.proxies.list(),
+        api.profileProxyDefaults.list(),
       ]);
       setItems(assignmentRows);
       setClients(clientRows);
       setProfiles(profileRows);
       setProxies(proxyRows);
+      setProxyDefaults(defaultRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -70,6 +77,11 @@ export function AssignmentsView() {
     }
   }
 
+  function defaultProxy(profileId: string) {
+    const proxyId = proxyDefaults.find((item) => item.profile_id === profileId)?.proxy_id;
+    return proxyId ? proxies.find((proxy) => proxy.id === proxyId) || null : null;
+  }
+
   const canCreate = clients.length > 0 && profiles.length > 0;
   const current = editor && editor !== 'new' ? editor : null;
 
@@ -77,7 +89,7 @@ export function AssignmentsView() {
     <>
       <PageHead
         title="Asignaciones"
-        description="Relaciona Cliente → Perfil/Web → Proxy. El Client solo recibe asignaciones activas con suscripción vigente."
+        description="Relaciona Cliente → Perfil/Web. El proxy de la asignación es opcional y, si existe, reemplaza el proxy predeterminado del perfil."
         actions={
           <button className="button primary" onClick={() => setEditor('new')} disabled={!canCreate}>
             <Plus size={14} />
@@ -96,47 +108,57 @@ export function AssignmentsView() {
                 <tr>
                   <th>Cliente</th>
                   <th>Perfil</th>
-                  <th>Proxy</th>
+                  <th>Proxy efectivo</th>
                   <th>Estado</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <div className="table-primary">{item.client?.name || item.client_id}</div>
-                      <div className="table-secondary">{item.client?.email}</div>
-                    </td>
-                    <td>
-                      <div className="table-primary">{item.profile?.name || item.profile_id}</div>
-                      <div className="table-secondary">{item.profile?.url}</div>
-                    </td>
-                    <td>
-                      {item.proxy ? (
-                        <>
-                          <div className="table-primary">{item.proxy.name}</div>
-                          <div className="table-secondary mono">{item.proxy.host}:{item.proxy.port}</div>
-                        </>
-                      ) : (
-                        <Badge>Directo</Badge>
-                      )}
-                    </td>
-                    <td><Badge tone={item.enabled ? 'ok' : 'bad'}>{item.enabled ? 'Activa' : 'Inactiva'}</Badge></td>
-                    <td>
-                      <div className="toolbar" style={{ margin: 0 }}>
-                        <button className="button secondary small" onClick={() => setEditor(item)}>
-                          <Pencil size={12} />
-                          Editar
-                        </button>
-                        <button className="button danger small" onClick={() => void remove(item)}>
-                          <Trash2 size={12} />
-                          Quitar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((item) => {
+                  const inheritedProxy = item.proxy ? null : defaultProxy(item.profile_id);
+                  const effectiveProxy = item.proxy || inheritedProxy;
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <div className="table-primary">{item.client?.name || item.client_id}</div>
+                        <div className="table-secondary">{item.client?.email}</div>
+                      </td>
+                      <td>
+                        <div className="table-primary">
+                          {profiles.find((profile) => profile.id === item.profile_id)
+                            ? profileLabel(profiles.find((profile) => profile.id === item.profile_id)!)
+                            : item.profile?.name || item.profile_id}
+                        </div>
+                        <div className="table-secondary">{item.profile?.url}</div>
+                      </td>
+                      <td>
+                        {effectiveProxy ? (
+                          <>
+                            <div className="table-primary">{effectiveProxy.name}</div>
+                            <div className="table-secondary mono">
+                              {effectiveProxy.host}:{effectiveProxy.port} · {item.proxy ? 'asignación' : 'perfil'}
+                            </div>
+                          </>
+                        ) : (
+                          <Badge>Directo</Badge>
+                        )}
+                      </td>
+                      <td><Badge tone={item.enabled ? 'ok' : 'bad'}>{item.enabled ? 'Activa' : 'Inactiva'}</Badge></td>
+                      <td>
+                        <div className="toolbar" style={{ margin: 0 }}>
+                          <button className="button secondary small" onClick={() => setEditor(item)}>
+                            <Pencil size={12} />
+                            Editar
+                          </button>
+                          <button className="button danger small" onClick={() => void remove(item)}>
+                            <Trash2 size={12} />
+                            Quitar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -162,12 +184,12 @@ export function AssignmentsView() {
             </Field>
             <Field label="Perfil / Web" className="span-2">
               <select className="select" name="profileId" required disabled={Boolean(current)} defaultValue={current?.profile_id || profiles[0]?.id}>
-                {profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}
+                {profiles.map((profile) => <option value={profile.id} key={profile.id}>{profileLabel(profile)}</option>)}
               </select>
             </Field>
-            <Field label="Proxy">
+            <Field label="Proxy de la asignación" help="Opcional. Vacío = usar el proxy del perfil; si el perfil tampoco tiene proxy, la conexión será directa.">
               <select className="select" name="proxyId" defaultValue={current?.proxy_id || ''}>
-                <option value="">Conexión directa</option>
+                <option value="">Usar configuración del perfil</option>
                 {proxies.filter((proxy) => proxy.enabled).map((proxy) => (
                   <option value={proxy.id} key={proxy.id}>{proxy.name} · {proxy.host}:{proxy.port}</option>
                 ))}
