@@ -1,5 +1,5 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
-import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
@@ -17,6 +17,13 @@ const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/re
 
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
+}
+
+function normalizeSearchValue(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es');
 }
 
 function launchSessionManager(launchUrl: string) {
@@ -42,6 +49,7 @@ export function ProfilesView() {
   const [imageObjectUrl, setImageObjectUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [sessionAction, setSessionAction] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   async function load() {
     try {
@@ -242,6 +250,15 @@ export function ProfilesView() {
   const previewUrl = imageObjectUrl || imageUrl.trim() || null;
   const currentProxyId = current ? defaultProxyId(current.id) : null;
   const currentState = current ? stateFor(current.id) : null;
+  const normalizedSearch = normalizeSearchValue(searchQuery.trim());
+  const filteredProfiles = normalizedSearch
+    ? profiles.filter((profile) => {
+        const proxyName = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id))?.name || '';
+        const searchable = [profileLabel(profile), profile.name, profile.url, proxyName, ...(profile.tags || [])]
+          .join(' ');
+        return normalizeSearchValue(searchable).includes(normalizedSearch);
+      })
+    : profiles;
 
   return (
     <>
@@ -249,10 +266,25 @@ export function ProfilesView() {
         title="Perfiles / Webs"
         description="Cada perfil puede mantener una sesión Chromium administrada. El proxy es opcional: si se configura, fija la salida de red del perfil; sin proxy se usa conexión directa."
         actions={
-          <button className="button primary" onClick={() => openEditor('new')}>
-            <Plus size={14} />
-            Nuevo perfil
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <Search size={15} style={{ position: 'absolute', left: 11, color: '#94a3b8', pointerEvents: 'none' }} />
+              <input
+                className="input"
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Buscar perfil..."
+                aria-label="Buscar perfiles"
+                autoComplete="off"
+                style={{ width: 270, paddingLeft: 34 }}
+              />
+            </label>
+            <button className="button primary" onClick={() => openEditor('new')}>
+              <Plus size={14} />
+              Nuevo perfil
+            </button>
+          </div>
         }
       />
       <ErrorBanner message={error} />
@@ -261,9 +293,13 @@ export function ProfilesView() {
         <Card>
           <Empty title="No hay perfiles" description="Agrega la primera web o perfil que quieras administrar." />
         </Card>
+      ) : filteredProfiles.length === 0 ? (
+        <Card>
+          <Empty title="No se encontraron perfiles" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre o URL.`} />
+        </Card>
       ) : (
         <div className="grid three">
-          {profiles.map((profile) => {
+          {filteredProfiles.map((profile) => {
             const selectedProxy = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id));
             const session = stateFor(profile.id);
             const managed = profile.session_mode === 'managed-first-party';
