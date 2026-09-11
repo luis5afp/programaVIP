@@ -1,6 +1,7 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
+import { uploadProfileImage } from './lib/profile-images';
 import {
   Env,
   HttpError,
@@ -62,6 +63,9 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
 
   requireSameOriginWrite(request);
+  if (path === '/api/profile-images' && method === 'POST') {
+    return uploadProfileImage(request, env, admin);
+  }
   return adminRoutes(request, env, admin);
 }
 

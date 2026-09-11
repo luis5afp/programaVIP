@@ -25,7 +25,8 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
+  if (init.body && !isFormData && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   const response = await fetch(path, {
     ...init,
@@ -107,6 +108,14 @@ export const api = {
     update: (id: string, input: Partial<Omit<Profile, 'id' | 'created_at' | 'updated_at'>>) =>
       request<Profile>(`/api/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     remove: (id: string) => request<{ ok: true }>(`/api/profiles/${id}`, { method: 'DELETE' }),
+    uploadImage: (file: File) => {
+      const body = new FormData();
+      body.append('image', file, file.name || 'profile-image');
+      return request<{ ok: true; url: string; path: string; mime: string; size: number }>('/api/profile-images', {
+        method: 'POST',
+        body,
+      });
+    },
   },
 
   proxies: {
