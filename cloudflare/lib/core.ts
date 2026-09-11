@@ -221,8 +221,8 @@ export async function sha(value: string) {
 }
 
 export async function passwordHash(password: string) {
-  if (password.length < 10 || password.length > 256) {
-    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 10 caracteres.');
+  if (password.length < 6 || password.length > 256) {
+    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 6 caracteres.');
   }
   return `uf-plain-v1$${password}`;
 }
