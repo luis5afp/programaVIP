@@ -1,7 +1,7 @@
 {
   "name": "userflex-session-manager",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "userFLEX managed Chromium session capture helper",
   "type": "module",
   "main": "main.js",
@@ -20,7 +20,7 @@
     "asar": true,
     "files": [
       "main.js",
-      "preload.js",
+      "preload.cjs",
       "package.json"
     ],
     "protocols": [

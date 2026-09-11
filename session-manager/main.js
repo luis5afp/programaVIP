@@ -4,18 +4,51 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let active = null;
+let readyWindow = null;
 let pendingProtocolUrl = null;
+let protocolRegistered = false;
 
 function protocolUrlFromArgs(args) {
   return args.find((arg) => typeof arg === 'string' && arg.startsWith('userflex-session://')) || null;
 }
 
 function registerProtocol() {
-  if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('userflex-session', process.execPath, [path.resolve(process.argv[1])]);
-  } else {
-    app.setAsDefaultProtocolClient('userflex-session');
+  try {
+    const registered = process.defaultApp && process.argv.length >= 2
+      ? app.setAsDefaultProtocolClient('userflex-session', process.execPath, [path.resolve(process.argv[1])])
+      : app.setAsDefaultProtocolClient('userflex-session');
+    return registered || app.isDefaultProtocolClient('userflex-session');
+  } catch {
+    return false;
   }
+}
+
+function showReadyWindow() {
+  if (readyWindow && !readyWindow.isDestroyed()) {
+    readyWindow.show();
+    readyWindow.focus();
+    return;
+  }
+
+  const status = protocolRegistered
+    ? 'El protocolo userflex-session:// está registrado correctamente.'
+    : 'Windows no confirmó el registro del protocolo. Reinstala userFLEX Session Manager si Cargar sesión no abre Chromium.';
+  const tone = protocolRegistered ? '#166534' : '#9a3412';
+  const background = protocolRegistered ? '#f0fdf4' : '#fff7ed';
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX Session Manager</title><body style="margin:0;background:#f8fafc;font-family:system-ui;color:#0f172a"><main style="max-width:620px;margin:56px auto;padding:0 24px"><div style="background:white;border:1px solid #e2e8f0;border-radius:18px;padding:28px;box-shadow:0 16px 45px rgba(15,23,42,.08)"><h2 style="margin:0 0 10px">userFLEX Session Manager</h2><p style="color:#475569;line-height:1.55">El componente local está instalado y listo para abrir el Chromium aislado de un perfil.</p><div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:${background};color:${tone};font-weight:700">${status}</div><ol style="color:#475569;line-height:1.7;padding-left:20px"><li>Vuelve al panel userFLEX.</li><li>En un perfil con sesión administrada pulsa <b>Cargar sesión</b>.</li><li>Si el navegador pregunta si deseas abrir userFLEX Session Manager, acepta.</li></ol><p style="margin-bottom:0;color:#64748b;font-size:13px">Después se abrirá Chromium con el perfil aislado para completar el primer inicio de sesión y guardarlo.</p></div></main></body>`;
+
+  readyWindow = new BrowserWindow({
+    width: 720,
+    height: 520,
+    minWidth: 620,
+    minHeight: 420,
+    title: 'userFLEX Session Manager',
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
+  });
+  readyWindow.on('closed', () => {
+    readyWindow = null;
+  });
+  void readyWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
 async function apiPost(endpoint, pathName, body) {
@@ -67,6 +100,7 @@ async function startCapture(rawUrl) {
     throw new Error('Configuración incompleta.');
   }
 
+  if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
   if (active?.window && !active.window.isDestroyed()) active.window.close();
 
   const partition = `persist:userflex-profile-${profile.id}`;
@@ -76,14 +110,22 @@ async function startCapture(rawUrl) {
     minWidth: 900,
     minHeight: 650,
     title: `userFLEX · ${profile.name}`,
+    show: false,
     webPreferences: {
       partition,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
       devTools: false,
     },
+  });
+
+  browserWindow.once('ready-to-show', () => {
+    if (!browserWindow.isDestroyed()) {
+      browserWindow.show();
+      browserWindow.focus();
+    }
   });
 
   const browserSession = browserWindow.webContents.session;
@@ -214,10 +256,15 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (_event, argv) => {
     const protocolUrl = protocolUrlFromArgs(argv);
-    if (protocolUrl) void startCapture(protocolUrl).catch(showFatalError);
+    if (protocolUrl) {
+      void startCapture(protocolUrl).catch(showFatalError);
+      return;
+    }
     if (active?.window && !active.window.isDestroyed()) {
       if (active.window.isMinimized()) active.window.restore();
       active.window.focus();
+    } else {
+      showReadyWindow();
     }
   });
 
@@ -228,16 +275,22 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    registerProtocol();
+    protocolRegistered = registerProtocol();
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
     pendingProtocolUrl = null;
     if (protocolUrl) await startCapture(protocolUrl).catch(showFatalError);
+    else showReadyWindow();
+  });
+
+  app.on('activate', () => {
+    if (active?.window && !active.window.isDestroyed()) active.window.focus();
+    else showReadyWindow();
   });
 }
 
 function showFatalError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  const win = new BrowserWindow({ width: 620, height: 260, webPreferences: { sandbox: true } });
-  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel.</p></body>`;
+  const win = new BrowserWindow({ width: 620, height: 300, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el problema continúa, reinstala userFLEX Session Manager.</p></body>`;
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
