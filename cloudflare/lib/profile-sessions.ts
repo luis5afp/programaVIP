@@ -147,8 +147,7 @@ export async function adminProfileSessionRoutes(
     const credentials = await credentialRow(env, profileId);
     if (!credentials) throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'Guarda correo/usuario y contraseña primero.');
     const proxy = await defaultProxy(env, profileId);
-    if (!proxy) throw new HttpError(409, 'PROFILE_PROXY_REQUIRED', 'La sesión administrada necesita un proxy fijo del perfil.');
-    if (proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
+    if (proxy && proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
 
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
@@ -168,7 +167,8 @@ export async function adminProfileSessionRoutes(
     await audit(env, request, 'admin', admin.userId, 'profile.session.capture.request', 'profile', profileId, {
       jobId: jobs?.[0]?.id || null,
       expiresAt,
-      proxyId: proxy.id,
+      proxyId: proxy?.id || null,
+      networkMode: proxy ? 'proxy' : 'direct',
     });
     return json({ ok: true, launch_url: launchUrl, expires_at: expiresAt });
   }
@@ -224,8 +224,11 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await defaultProxy(env, job.profile_id);
-    if (!credentials || !proxy || proxy.enabled !== true) {
-      throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil ya no tiene credenciales y proxy activos.');
+    if (!credentials) {
+      throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil ya no tiene credenciales guardadas.');
+    }
+    if (proxy && proxy.enabled !== true) {
+      throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
     }
     return json({
       ok: true,
@@ -235,14 +238,14 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
       },
-      proxy: {
+      proxy: proxy ? {
         id: proxy.id,
         name: proxy.name,
         host: proxy.host,
         port: proxy.port,
         username: proxy.username || null,
         password: proxy.password_ciphertext ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv) : null,
-      },
+      } : null,
     });
   }
 
