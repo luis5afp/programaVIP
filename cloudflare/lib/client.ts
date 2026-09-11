@@ -30,7 +30,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     ),
     sb(
       env,
-      `userflex_profile_sessions?select=profile_id,version,status,public_ip&profile_id=in.(${ids})`,
+      `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip&profile_id=in.(${ids})`,
     ),
   ]);
 
@@ -54,10 +54,10 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
           ? Boolean(defaultProxyMap.get(profile.id))
           : Boolean(assignment.proxy_id || defaultProxyMap.get(profile.id)),
         sessionMode: profile.session_mode,
-        sessionReady: profile.session_ready === true && (!managed || session?.status === 'active'),
-        sessionVersion: Number(session?.version || 0),
+        sessionReady: profile.session_ready === true && (!managed || session?.status === 'ready'),
+        sessionVersion: Number(session?.session_version || 0),
         networkIdentity: managed
-          ? { locked: true, publicIp: session?.public_ip || null }
+          ? { locked: true, publicIp: session?.expected_egress_ip || null }
           : { locked: false, publicIp: null },
       };
     })
