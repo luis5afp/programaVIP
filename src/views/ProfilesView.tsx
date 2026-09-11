@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { Profile } from '../types';
+import type { Profile, ProfileProxyDefault, ProxyRecord } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -9,8 +9,14 @@ type Editor = Profile | 'new' | null;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+function profileLabel(profile: Profile) {
+  return profile.tags?.[0] || profile.name;
+}
+
 export function ProfilesView() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [proxies, setProxies] = useState<ProxyRecord[]>([]);
+  const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [error, setError] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -20,7 +26,14 @@ export function ProfilesView() {
 
   async function load() {
     try {
-      setProfiles(await api.profiles.list());
+      const [profileRows, proxyRows, defaultRows] = await Promise.all([
+        api.profiles.list(),
+        api.proxies.list(),
+        api.profileProxyDefaults.list(),
+      ]);
+      setProfiles(profileRows);
+      setProxies(proxyRows);
+      setProxyDefaults(defaultRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -102,14 +115,15 @@ export function ProfilesView() {
     }
   }
 
+  function defaultProxyId(profileId: string) {
+    return proxyDefaults.find((item) => item.profile_id === profileId)?.proxy_id || null;
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const tags = String(form.get('tags') || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .slice(0, 20);
+    const label = String(form.get('label') || '').trim();
+    const proxyId = String(form.get('proxyId') || '') || null;
 
     try {
       setSaving(true);
@@ -121,17 +135,20 @@ export function ProfilesView() {
       }
 
       const input = {
-        name: String(form.get('name') || '').trim(),
+        name: label,
         url: String(form.get('url') || '').trim(),
-        platform: String(form.get('platform') || '').trim() || null,
+        platform: null,
         image_url: finalImageUrl,
-        tags,
+        tags: [label],
         enabled: String(form.get('enabled')) === 'true',
         session_mode: String(form.get('sessionMode')) as Profile['session_mode'],
       };
 
-      if (editor && editor !== 'new') await api.profiles.update(editor.id, input);
-      else await api.profiles.create(input);
+      const savedProfile = editor && editor !== 'new'
+        ? await api.profiles.update(editor.id, input)
+        : await api.profiles.create(input);
+
+      await api.profileProxyDefaults.set(savedProfile.id, proxyId);
       closeEditor();
       await load();
     } catch (submitError: any) {
@@ -142,7 +159,7 @@ export function ProfilesView() {
   }
 
   async function remove(profile: Profile) {
-    if (!confirm(`¿Eliminar el perfil ${profile.name}?`)) return;
+    if (!confirm(`¿Eliminar el perfil ${profileLabel(profile)}?`)) return;
     try {
       await api.profiles.remove(profile.id);
       await load();
@@ -153,12 +170,13 @@ export function ProfilesView() {
 
   const current = editor && editor !== 'new' ? editor : null;
   const previewUrl = imageObjectUrl || imageUrl.trim() || null;
+  const currentProxyId = current ? defaultProxyId(current.id) : null;
 
   return (
     <>
       <PageHead
         title="Perfiles / Webs"
-        description="Catálogo administrado de sitios asignables a clientes. El panel nunca muestra secretos de sesión."
+        description="Catálogo administrado de sitios asignables a clientes. Cada perfil usa una etiqueta visible y puede tener un proxy predeterminado opcional."
         actions={
           <button className="button primary" onClick={() => openEditor('new')}>
             <Plus size={14} />
@@ -174,44 +192,52 @@ export function ProfilesView() {
         </Card>
       ) : (
         <div className="grid three">
-          {profiles.map((profile) => (
-            <Card className="profile-card" key={profile.id}>
-              <div className="profile-image">
-                {profile.image_url ? (
-                  <img src={profile.image_url} alt="" referrerPolicy="no-referrer" />
-                ) : (
-                  <Globe2 size={28} />
-                )}
-              </div>
-              <div className="profile-body">
-                <h3>{profile.name}</h3>
-                <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
-                <div className="profile-tags">
-                  {profile.platform && <Badge>{profile.platform}</Badge>}
-                  {profile.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
+          {profiles.map((profile) => {
+            const selectedProxy = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id));
+            return (
+              <Card className="profile-card" key={profile.id}>
+                <div className="profile-image">
+                  {profile.image_url ? (
+                    <img src={profile.image_url} alt="" referrerPolicy="no-referrer" />
+                  ) : (
+                    <Globe2 size={28} />
+                  )}
                 </div>
-                <div className="profile-actions">
-                  <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
-                  <div className="toolbar" style={{ margin: 0 }}>
-                    <button className="button secondary small" onClick={() => openEditor(profile)}>
-                      <Pencil size={12} />
-                      Editar
-                    </button>
-                    <button className="button danger small" onClick={() => void remove(profile)}>
-                      <Trash2 size={12} />
-                      Eliminar
-                    </button>
+                <div className="profile-body">
+                  <h3>{profileLabel(profile)}</h3>
+                  <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
+                  <div className="profile-tags">
+                    {selectedProxy ? (
+                      <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>
+                        Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
+                      </Badge>
+                    ) : (
+                      <Badge>Conexión directa</Badge>
+                    )}
+                  </div>
+                  <div className="profile-actions">
+                    <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
+                    <div className="toolbar" style={{ margin: 0 }}>
+                      <button className="button secondary small" onClick={() => openEditor(profile)}>
+                        <Pencil size={12} />
+                        Editar
+                      </button>
+                      <button className="button danger small" onClick={() => void remove(profile)}>
+                        <Trash2 size={12} />
+                        Eliminar
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
 
       {editor && (
         <Modal
-          title={current ? `Editar perfil · ${current.name}` : 'Nuevo perfil / web'}
+          title={current ? `Editar perfil · ${profileLabel(current)}` : 'Nuevo perfil / web'}
           onClose={closeEditor}
           actions={
             <>
@@ -223,11 +249,15 @@ export function ProfilesView() {
           }
         >
           <form id="profile-form" onSubmit={submit} className="form-grid">
-            <Field label="Nombre">
-              <input className="input" name="name" defaultValue={current?.name || ''} required maxLength={100} />
-            </Field>
-            <Field label="Plataforma">
-              <input className="input" name="platform" defaultValue={current?.platform || ''} maxLength={80} placeholder="Ej. Plataforma interna" />
+            <Field label="Etiqueta" className="span-2" help="Nombre visible del perfil, por ejemplo: chatgpt #1">
+              <input
+                className="input"
+                name="label"
+                defaultValue={current ? profileLabel(current) : ''}
+                required
+                maxLength={100}
+                placeholder="chatgpt #1"
+              />
             </Field>
             <Field label="URL HTTPS" className="span-2">
               <input className="input" name="url" type="url" defaultValue={current?.url || ''} required placeholder="https://..." />
@@ -308,9 +338,18 @@ export function ProfilesView() {
                 placeholder="https://.../imagen.jpg"
               />
             </Field>
-            <Field label="Etiquetas" className="span-2" help="Separadas por coma">
-              <input className="input" name="tags" defaultValue={current?.tags.join(', ') || ''} placeholder="ventas, equipo-a" />
+
+            <Field label="Proxy (opcional)" className="span-2" help="Se usará por defecto. Si una asignación tiene otro proxy, el proxy de la asignación tendrá prioridad.">
+              <select className="select" name="proxyId" defaultValue={currentProxyId || ''}>
+                <option value="">Sin proxy · conexión directa</option>
+                {proxies.map((proxy) => (
+                  <option value={proxy.id} key={proxy.id}>
+                    {proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}
+                  </option>
+                ))}
+              </select>
             </Field>
+
             <Field label="Modo de sesión">
               <select className="select" name="sessionMode" defaultValue={current?.session_mode || 'manual-login'}>
                 <option value="manual-login">Login manual en el Client</option>
