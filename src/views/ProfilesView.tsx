@@ -143,7 +143,6 @@ export function ProfilesView() {
       setSaving(true);
       setError(null);
       if (sessionMode === 'managed-first-party') {
-        if (!proxyId) throw new Error('La sesión administrada requiere un proxy fijo para que todos los clientes usen la misma IP de salida.');
         if (!loginUsername) throw new Error('Ingresa el correo o usuario de la cuenta.');
         if (!currentState?.has_credentials && !loginPassword) throw new Error('Ingresa la contraseña para preparar la sesión administrada.');
       }
@@ -227,7 +226,7 @@ export function ProfilesView() {
     <>
       <PageHead
         title="Perfiles / Webs"
-        description="Cada perfil puede mantener una sesión Chromium administrada y una identidad de red fija. En modo administrado el Client nunca hace fallback a su conexión directa."
+        description="Cada perfil puede mantener una sesión Chromium administrada. El proxy es opcional: si se configura, fija la salida de red del perfil; sin proxy se usa conexión directa."
         actions={
           <button className="button primary" onClick={() => openEditor('new')}>
             <Plus size={14} />
@@ -265,14 +264,14 @@ export function ProfilesView() {
                         Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
                       </Badge>
                     ) : (
-                      <Badge tone={managed ? 'bad' : 'neutral'}>{managed ? 'Proxy requerido' : 'Conexión directa'}</Badge>
+                      <Badge tone="neutral">{managed ? 'Sin proxy · IP del cliente' : 'Conexión directa'}</Badge>
                     )}
                     {managed && (
                       <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
                         Sesión: {session?.status === 'active' ? `activa · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
                       </Badge>
                     )}
-                    {managed && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
+                    {managed && selectedProxy && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
                   </div>
                   {managed && (
                     <div className="toolbar" style={{ margin: '10px 0 0' }}>
@@ -352,8 +351,14 @@ export function ProfilesView() {
               <input className="input" name="imageUrl" type="url" value={imageUrl} onChange={(event) => changeImageUrl(event.target.value)} placeholder="https://.../imagen.jpg" />
             </Field>
 
-            <Field label="Proxy del perfil" className="span-2" help={sessionMode === 'managed-first-party' ? 'Obligatorio en sesión administrada. Todos los clientes usarán esta salida y no habrá fallback directo.' : 'Opcional para perfiles con login manual.'}>
-              <select className="select" name="proxyId" defaultValue={currentProxyId || ''} required={sessionMode === 'managed-first-party'}>
+            <Field
+              label="Proxy (opcional)"
+              className="span-2"
+              help={sessionMode === 'managed-first-party'
+                ? 'Opcional. Si eliges uno, todos los clientes de este perfil usarán esa salida y no habrá fallback directo. Sin proxy, cada cliente usará su propia IP pública.'
+                : 'Opcional. Si no eliges uno, el perfil puede usar conexión directa o la configuración de la asignación.'}
+            >
+              <select className="select" name="proxyId" defaultValue={currentProxyId || ''}>
                 <option value="">Sin proxy · conexión directa</option>
                 {proxies.map((proxy) => (
                   <option value={proxy.id} key={proxy.id}>{proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}</option>
@@ -372,7 +377,7 @@ export function ProfilesView() {
               <>
                 <div className="span-2" style={{ padding: 12, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12, display: 'flex', gap: 10 }}>
                   <ShieldCheck size={18} />
-                  <div className="help">El correo y la contraseña se cifran para preparar o renovar la sesión. No se entregan al cliente. El cliente recibe el estado de sesión y debe usar obligatoriamente el proxy fijo de este perfil.</div>
+                  <div className="help">El correo y la contraseña se cifran para preparar o renovar la sesión y no se entregan al cliente. Si eliges un proxy, el cliente deberá usar ese proxy; sin proxy, la sesión funciona por conexión directa.</div>
                 </div>
                 <Field label="Correo / usuario de acceso" className="span-2">
                   <input className="input" name="loginUsername" autoComplete="off" defaultValue={currentState?.login_username || ''} required placeholder="correo@dominio.com" />
