@@ -1,0 +1,13 @@
+{
+  "name": "userflex-session-manager",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  }
+}
