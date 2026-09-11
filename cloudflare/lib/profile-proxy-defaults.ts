@@ -38,10 +38,8 @@ export async function profileProxyDefaultRoutes(
     return json({ ok: true, profile_id: profileId, proxy_id: null });
   }
 
-  const proxyRows = await sb(env, `userflex_proxies?select=id,enabled&id=eq.${proxyId}&limit=1`);
-  const proxy = proxyRows?.[0];
-  if (!proxy) throw new HttpError(404, 'PROXY_NOT_FOUND');
-  if (proxy.enabled !== true) throw new HttpError(409, 'PROXY_INACTIVE', 'El proxy seleccionado está inactivo.');
+  const proxyRows = await sb(env, `userflex_proxies?select=id&id=eq.${proxyId}&limit=1`);
+  if (!proxyRows?.[0]) throw new HttpError(404, 'PROXY_NOT_FOUND');
 
   const rows = await sb(env, 'userflex_profile_proxy_defaults?on_conflict=profile_id', {
     method: 'POST',
