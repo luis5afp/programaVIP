@@ -8,6 +8,7 @@ import type {
   HealthInfo,
   Plan,
   Profile,
+  ProfileProxyDefault,
   ProxyRecord,
 } from './types';
 
@@ -116,6 +117,15 @@ export const api = {
         body,
       });
     },
+  },
+
+  profileProxyDefaults: {
+    list: () => request<ProfileProxyDefault[]>('/api/profile-proxy-defaults'),
+    set: (profileId: string, proxyId: string | null) =>
+      request<{ ok: true; profile_id: string; proxy_id: string | null }>(`/api/profiles/${profileId}/default-proxy`, {
+        method: 'POST',
+        body: JSON.stringify({ proxyId }),
+      }),
   },
 
   proxies: {
