@@ -255,7 +255,7 @@ export function ClientsView() {
             <Field label="Inicio"><input className="input" name="startsAt" type="date" defaultValue={defaultStart} required /></Field>
             <Field label="Vencimiento"><input className="input" name="expiresAt" type="date" defaultValue={endDate()} required /></Field>
             <Field label="Usuario para PC"><input className="input" name="username" required minLength={3} maxLength={80} autoComplete="off" /></Field>
-            <Field label="Contraseña para PC" help="Mínimo 10 caracteres; nunca se vuelve a mostrar."><input className="input" name="password" type="password" required minLength={10} autoComplete="new-password" /></Field>
+            <Field label="Contraseña para PC" help="Mínimo 6 caracteres; nunca se vuelve a mostrar."><input className="input" name="password" type="password" required minLength={6} autoComplete="new-password" /></Field>
           </form>
         </Modal>
       )}
@@ -298,7 +298,7 @@ export function ClientsView() {
         >
           <form id="credentials-form" onSubmit={resetCredentials} className="form-grid">
             <Field label="Usuario" className="span-2"><input className="input" name="username" defaultValue={credentialsClient.credential?.username || ''} required minLength={3} autoComplete="off" /></Field>
-            <Field label="Nueva contraseña" className="span-2" help="Al cambiarla se revocan las sesiones activas del Client."><input className="input" name="password" type="password" required minLength={10} autoComplete="new-password" /></Field>
+            <Field label="Nueva contraseña" className="span-2" help="Al cambiarla se revocan las sesiones activas del Client."><input className="input" name="password" type="password" required minLength={6} autoComplete="new-password" /></Field>
           </form>
         </Modal>
       )}
