@@ -2,6 +2,7 @@ import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } fro
 import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { uploadProfileImage } from './lib/profile-images';
+import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import {
   Env,
   HttpError,
@@ -66,6 +67,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path === '/api/profile-images' && method === 'POST') {
     return uploadProfileImage(request, env, admin);
   }
+  const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
+  if (profileProxyResponse) return profileProxyResponse;
   return adminRoutes(request, env, admin);
 }
 
