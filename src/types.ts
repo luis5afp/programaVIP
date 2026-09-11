@@ -2,6 +2,7 @@ export type ClientStatus = 'active' | 'suspended';
 export type SubscriptionStatus = 'active' | 'suspended' | 'cancelled';
 export type DeviceStatus = 'active' | 'revoked';
 export type SessionMode = 'manual-login' | 'managed-first-party';
+export type ManagedSessionStatus = 'empty' | 'active' | 'needs_auth' | 'expired';
 
 export interface AdminSession {
   username: string;
@@ -64,6 +65,18 @@ export interface ProfileProxyDefault {
   profile_id: string;
   proxy_id: string;
   updated_at: string;
+}
+
+export interface ProfileSessionState {
+  profile_id: string;
+  has_credentials: boolean;
+  login_username: string | null;
+  status: ManagedSessionStatus;
+  version: number;
+  public_ip: string | null;
+  captured_at: string | null;
+  validated_at: string | null;
+  updated_at: string | null;
 }
 
 export interface ProxyRecord {
