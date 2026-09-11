@@ -1,0 +1,24 @@
+.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) {
+  flex-wrap: nowrap;
+  margin-bottom: 0;
+}
+
+.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) > div {
+  flex-wrap: nowrap !important;
+  align-items: center;
+}
+
+.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) label,
+.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) .button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 560px) {
+  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) {
+    width: 100%;
+  }
+
+  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) > div {
+    flex-wrap: wrap !important;
+  }
+}
