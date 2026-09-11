@@ -5,12 +5,27 @@ import type { Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, Se
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
+type CaptureLaunch = {
+  profileName: string;
+  launchUrl: string;
+  expiresAt: string | null;
+} | null;
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.1.2/userFLEX-Session-Manager-0.1.2-Setup.exe';
 
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
+}
+
+function launchSessionManager(launchUrl: string) {
+  const anchor = document.createElement('a');
+  anchor.href = launchUrl;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 export function ProfilesView() {
@@ -19,6 +34,7 @@ export function ProfilesView() {
   const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
+  const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
   const [sessionMode, setSessionMode] = useState<SessionMode>('manual-login');
   const [error, setError] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -185,7 +201,12 @@ export function ProfilesView() {
       setSessionAction(profile.id);
       setError(null);
       const result = await api.profileSessions.capture(profile.id);
-      window.location.assign(result.launch_url);
+      setCaptureLaunch({
+        profileName: profileLabel(profile),
+        launchUrl: result.launch_url,
+        expiresAt: result.expires_at || null,
+      });
+      launchSessionManager(result.launch_url);
       window.setTimeout(() => void load(), 2500);
     } catch (captureError: any) {
       setError(captureError.message);
@@ -395,6 +416,29 @@ export function ProfilesView() {
               </select>
             </Field>
           </form>
+        </Modal>
+      )}
+
+      {captureLaunch && (
+        <Modal
+          title={`Abrir Chromium · ${captureLaunch.profileName}`}
+          onClose={() => setCaptureLaunch(null)}
+          actions={<button className="button secondary" onClick={() => setCaptureLaunch(null)}>Cerrar</button>}
+        >
+          <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ padding: 14, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12 }}>
+              <strong>userFLEX intentó abrir el Chromium automáticamente.</strong>
+              <div className="help" style={{ marginTop: 6 }}>Si Windows o el navegador no mostró nada, usa el botón siguiente. Este segundo clic conserva el permiso del navegador para abrir la aplicación local.</div>
+            </div>
+            <button className="button primary" onClick={() => launchSessionManager(captureLaunch.launchUrl)}>
+              <Globe2 size={14} />
+              Abrir Chromium ahora
+            </button>
+            <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+              Instalar / actualizar Session Manager v0.1.2
+            </a>
+            <div className="help">Al abrirse Chromium, completa el primer inicio de sesión, 2FA o CAPTCHA si aparece y pulsa <b>Guardar sesión</b> en el panel flotante de userFLEX. El enlace de captura es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.</div>
+          </div>
         </Modal>
       )}
     </>
