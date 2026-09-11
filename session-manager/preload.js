@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron';
+const { ipcRenderer } = require('electron');
 
 let credentials = null;
 let saved = false;
