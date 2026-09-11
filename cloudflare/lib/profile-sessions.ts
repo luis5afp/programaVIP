@@ -23,11 +23,11 @@ function safeState(profileId: string, credential: any, session: any) {
     profile_id: profileId,
     has_credentials: Boolean(credential),
     login_username: credential?.login_username || null,
-    status: session?.status || 'empty',
-    version: Number(session?.version || 0),
-    public_ip: session?.public_ip || null,
-    captured_at: session?.captured_at || null,
-    validated_at: session?.validated_at || null,
+    status: session?.status === 'ready' ? 'active' : session?.status === 'unconfigured' ? 'empty' : session?.status || 'empty',
+    version: Number(session?.session_version || 0),
+    public_ip: session?.expected_egress_ip || null,
+    captured_at: session?.last_captured_at || null,
+    validated_at: session?.last_validated_at || null,
     updated_at: session?.updated_at || credential?.updated_at || null,
   };
 }
@@ -67,7 +67,7 @@ async function credentialRow(env: Env, profileId: string) {
 async function sessionRow(env: Env, profileId: string) {
   const rows = await sb(
     env,
-    `userflex_profile_sessions?select=profile_id,version,status,material_ciphertext,material_iv,key_version,public_ip,captured_at,validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
+    `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
   return rows?.[0] || null;
 }
@@ -84,7 +84,7 @@ export async function adminProfileSessionRoutes(
   if (path === '/api/profile-session-states' && method === 'GET') {
     const [credentials, sessions] = await Promise.all([
       sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
-      sb(env, 'userflex_profile_sessions?select=profile_id,version,status,public_ip,captured_at,validated_at,updated_at'),
+      sb(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
     ]);
     const profileIds = new Set<string>();
     for (const row of credentials || []) profileIds.add(row.profile_id);
@@ -260,7 +260,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     }
     const encrypted = await encryptProxy(env, serialized);
     const existing = await sessionRow(env, job.profile_id);
-    const version = Number(existing?.version || 0) + 1;
+    const version = Number(existing?.session_version || 0) + 1;
     const now = new Date().toISOString();
     const publicIp = optional(body.publicIp, 64);
     await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
@@ -268,14 +268,14 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({
         profile_id: job.profile_id,
-        version,
-        status: 'active',
+        session_version: version,
+        status: 'ready',
         material_ciphertext: encrypted.ciphertext,
         material_iv: encrypted.iv,
-        key_version: encrypted.keyVersion,
-        public_ip: publicIp,
-        captured_at: now,
-        validated_at: now,
+        material_key_version: encrypted.keyVersion,
+        expected_egress_ip: publicIp,
+        last_captured_at: now,
+        last_validated_at: now,
         updated_at: now,
       }),
     });
@@ -297,7 +297,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
 
 export async function managedSessionMaterial(env: Env, profileId: string) {
   const row = await sessionRow(env, profileId);
-  if (!row || row.status !== 'active' || !row.material_ciphertext || !row.material_iv) return null;
+  if (!row || row.status !== 'ready' || !row.material_ciphertext || !row.material_iv) return null;
   const raw = await decryptProxy(env, row.material_ciphertext, row.material_iv);
   let material: unknown;
   try {
@@ -306,11 +306,11 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
     throw new HttpError(502, 'SESSION_MATERIAL_INVALID');
   }
   return {
-    version: Number(row.version || 0),
-    status: row.status,
-    publicIp: row.public_ip || null,
-    capturedAt: row.captured_at || null,
-    validatedAt: row.validated_at || null,
+    version: Number(row.session_version || 0),
+    status: 'active',
+    publicIp: row.expected_egress_ip || null,
+    capturedAt: row.last_captured_at || null,
+    validatedAt: row.last_validated_at || null,
     material,
   };
 }
