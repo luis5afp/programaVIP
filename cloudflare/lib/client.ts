@@ -43,6 +43,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       if (!profile) return null;
       const managed = profile.session_mode === 'managed-first-party';
       const session: any = sessionMap.get(profile.id);
+      const profileProxyId = defaultProxyMap.get(profile.id) || null;
       return {
         id: profile.id,
         name: profile.name,
@@ -51,13 +52,13 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         imageUrl: profile.image_url,
         tags: profile.tags || [],
         managedConnection: managed
-          ? Boolean(defaultProxyMap.get(profile.id))
-          : Boolean(assignment.proxy_id || defaultProxyMap.get(profile.id)),
+          ? Boolean(profileProxyId)
+          : Boolean(assignment.proxy_id || profileProxyId),
         sessionMode: profile.session_mode,
         sessionReady: profile.session_ready === true && (!managed || session?.status === 'ready'),
         sessionVersion: Number(session?.session_version || 0),
         networkIdentity: managed
-          ? { locked: true, publicIp: session?.expected_egress_ip || null }
+          ? { locked: Boolean(profileProxyId), publicIp: profileProxyId ? session?.expected_egress_ip || null : null }
           : { locked: false, publicIp: null },
       };
     })
@@ -100,12 +101,10 @@ export async function clientLaunch(
   const managed = profile.session_mode === 'managed-first-party';
   const defaultProxyId = defaults?.[0]?.proxy_id || null;
   const effectiveProxyId = managed ? defaultProxyId : (assignment.proxy_id || defaultProxyId);
-  const proxySource = managed ? 'profile-locked' : assignment.proxy_id ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
-  let connection: any = { mode: 'direct' };
-
-  if (managed && !effectiveProxyId) {
-    throw new HttpError(409, 'MANAGED_PROXY_REQUIRED', 'Este perfil requiere su proxy fijo para proteger la identidad de red.');
-  }
+  const proxySource = managed
+    ? (defaultProxyId ? 'profile-locked' : 'direct')
+    : assignment.proxy_id ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
+  let connection: any = { mode: 'direct', locked: false };
 
   if (effectiveProxyId) {
     const rows = await sb(
@@ -113,8 +112,8 @@ export async function clientLaunch(
       `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv&enabled=eq.true&id=eq.${effectiveProxyId}&limit=1`,
     );
     const proxy = rows?.[0];
-    if (!proxy && managed) {
-      throw new HttpError(409, 'MANAGED_PROXY_UNAVAILABLE', 'El proxy fijo del perfil no está disponible. Se bloqueó la salida directa.');
+    if (!proxy && managed && defaultProxyId) {
+      throw new HttpError(409, 'MANAGED_PROXY_UNAVAILABLE', 'El proxy del perfil no está disponible. Se bloqueó la salida directa para proteger la IP.');
     }
     if (proxy) {
       connection = {
@@ -139,19 +138,18 @@ export async function clientLaunch(
   };
 
   if (managed) {
-    if (connection.mode !== 'proxy') {
-      throw new HttpError(409, 'MANAGED_NETWORK_LOCKED', 'No se permite conexión directa para este perfil.');
-    }
     const session = await managedSessionMaterial(env, profileId);
     if (!session || profile.session_ready !== true) {
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'La sesión administrada todavía no está lista.');
     }
+    const lockedNetwork = connection.mode === 'proxy' && defaultProxyId !== null;
     sessionDelivery = {
       ready: true,
       mode: profile.session_mode,
       materialIncluded: true,
       version: session.version,
-      expectedPublicIp: session.publicIp,
+      expectedPublicIp: lockedNetwork ? session.publicIp : null,
+      networkLocked: lockedNetwork,
       capturedAt: session.capturedAt,
       validatedAt: session.validatedAt,
       material: session.material,
@@ -163,6 +161,7 @@ export async function clientLaunch(
     usesProxy: connection.mode === 'proxy',
     proxySource,
     managed,
+    networkLocked: connection.locked === true,
     sessionVersion: sessionDelivery.version || 0,
   });
 
