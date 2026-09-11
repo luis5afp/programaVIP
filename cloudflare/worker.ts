@@ -3,6 +3,7 @@ import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { uploadProfileImage } from './lib/profile-images';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
+import { profileSessionAdminRoutes, sessionManagerRoutes } from './lib/profile-sessions';
 import {
   Env,
   HttpError,
@@ -12,7 +13,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -58,6 +59,9 @@ async function api(request: Request, env: Env): Promise<Response> {
     throw new HttpError(404, 'NOT_FOUND');
   }
 
+  const sessionManagerResponse = await sessionManagerRoutes(request, env);
+  if (sessionManagerResponse) return sessionManagerResponse;
+
   const admin = await requireAdmin(request, env);
   if (path === '/api/auth/session' && method === 'GET') {
     return json({ ok: true, user: { username: admin.username } });
@@ -69,6 +73,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
   const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
   if (profileProxyResponse) return profileProxyResponse;
+  const profileSessionResponse = await profileSessionAdminRoutes(request, env, admin);
+  if (profileSessionResponse) return profileSessionResponse;
   return adminRoutes(request, env, admin);
 }
 
