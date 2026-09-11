@@ -1,5 +1,39 @@
 import { ClientIdentity } from './auth';
 import { Env, HttpError, audit, decryptProxy, json, sb } from './core';
+import { managedSessionForClient } from './profile-sessions';
+
+async function profileDefaultProxyId(env: Env, profileId: string) {
+  const rows = await sb(
+    env,
+    `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
+  );
+  return rows?.[0]?.proxy_id || null;
+}
+
+async function proxyConnection(env: Env, proxyId: string, strict = false, expectedEgressIp: string | null = null) {
+  const rows = await sb(
+    env,
+    `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv&enabled=eq.true&id=eq.${proxyId}&limit=1`,
+  );
+  const proxy = rows?.[0];
+  if (!proxy) {
+    if (strict) throw new HttpError(409, 'MANAGED_PROXY_UNAVAILABLE', 'El proxy fijo del perfil no está disponible.');
+    return { mode: 'direct' as const };
+  }
+  return {
+    mode: 'proxy' as const,
+    strict,
+    expectedEgressIp,
+    proxy: {
+      host: proxy.host,
+      port: proxy.port,
+      username: proxy.username || null,
+      password: proxy.password_ciphertext
+        ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv)
+        : null,
+    },
+  };
+}
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
   const assignments = await sb(
@@ -18,7 +52,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   const limited = assignments.slice(0, id.plan.max_profiles);
   const profileIds = limited.map((assignment: any) => assignment.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults] = await Promise.all([
+  const [profiles, defaults, managedSessions] = await Promise.all([
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready&id=in.(${ids})&enabled=eq.true`,
@@ -27,24 +61,36 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       env,
       `userflex_profile_proxy_defaults?select=profile_id,proxy_id&profile_id=in.(${ids})`,
     ),
+    sb(
+      env,
+      `userflex_profile_sessions?select=profile_id,status,session_version,expected_egress_ip&profile_id=in.(${ids})`,
+    ),
   ]);
 
   const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
+  const managedSessionMap = new Map((managedSessions || []).map((row: any) => [row.profile_id, row]));
   const result = limited
     .map((assignment: any) => {
       const profile: any = profileMap.get(assignment.profile_id);
       if (!profile) return null;
+      const managed = profile.session_mode === 'managed-first-party';
+      const defaultProxyId = defaultProxyMap.get(assignment.profile_id) || null;
+      const session: any = managedSessionMap.get(assignment.profile_id);
       return {
         id: profile.id,
-        name: profile.name,
+        name: profile.tags?.[0] || profile.name,
         url: profile.url,
         platform: profile.platform,
         imageUrl: profile.image_url,
         tags: profile.tags || [],
-        managedConnection: Boolean(assignment.proxy_id || defaultProxyMap.get(assignment.profile_id)),
+        managedConnection: managed ? Boolean(defaultProxyId) : Boolean(assignment.proxy_id || defaultProxyId),
+        connectionPolicy: managed ? 'strict-profile-proxy' : 'assignment-or-profile',
         sessionMode: profile.session_mode,
-        sessionReady: profile.session_ready === true,
+        sessionReady: managed
+          ? profile.session_ready === true && session?.status === 'ready' && Number(session?.session_version || 0) > 0
+          : profile.session_ready === true,
+        sessionVersion: managed ? Number(session?.session_version || 0) : 0,
       };
     })
     .filter(Boolean);
@@ -70,49 +116,50 @@ export async function clientLaunch(
   const assignment = assignments?.[0];
   if (!assignment) throw new HttpError(403, 'PROFILE_NOT_ASSIGNED');
 
-  const [profiles, defaults] = await Promise.all([
-    sb(
-      env,
-      `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready&id=eq.${profileId}&enabled=eq.true&limit=1`,
-    ),
-    sb(
-      env,
-      `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
-    ),
-  ]);
+  const profiles = await sb(
+    env,
+    `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready&id=eq.${profileId}&enabled=eq.true&limit=1`,
+  );
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 
-  const defaultProxyId = defaults?.[0]?.proxy_id || null;
-  const effectiveProxyId = assignment.proxy_id || defaultProxyId;
-  const proxySource = assignment.proxy_id ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
+  const defaultProxyId = await profileDefaultProxyId(env, profileId);
+  const managed = profile.session_mode === 'managed-first-party';
+  let proxySource: 'assignment' | 'profile' | 'direct' = 'direct';
   let connection: any = { mode: 'direct' };
+  let sessionDelivery: any = {
+    ready: profile.session_ready === true,
+    mode: profile.session_mode,
+    materialIncluded: false,
+  };
 
-  if (effectiveProxyId) {
-    const rows = await sb(
-      env,
-      `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv&enabled=eq.true&id=eq.${effectiveProxyId}&limit=1`,
-    );
-    const proxy = rows?.[0];
-    if (proxy) {
-      connection = {
-        mode: 'proxy',
-        proxy: {
-          host: proxy.host,
-          port: proxy.port,
-          username: proxy.username || null,
-          password: proxy.password_ciphertext
-            ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv)
-            : null,
-        },
-      };
+  if (managed) {
+    if (!defaultProxyId) {
+      throw new HttpError(409, 'MANAGED_PROXY_REQUIRED', 'Este perfil administrado no tiene un proxy fijo configurado.');
     }
+    const managedSession = await managedSessionForClient(env, profileId);
+    connection = await proxyConnection(env, defaultProxyId, true, managedSession.expectedEgressIp);
+    proxySource = 'profile';
+    sessionDelivery = {
+      ready: true,
+      mode: profile.session_mode,
+      materialIncluded: true,
+      version: managedSession.version,
+      expectedEgressIp: managedSession.expectedEgressIp,
+      snapshot: managedSession.snapshot,
+    };
+  } else {
+    const effectiveProxyId = assignment.proxy_id || defaultProxyId;
+    proxySource = assignment.proxy_id ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
+    if (effectiveProxyId) connection = await proxyConnection(env, effectiveProxyId, false, null);
   }
 
   await audit(env, request, 'client', id.clientId, 'profile.launch', 'profile', profileId, {
     deviceId: id.deviceId,
     usesProxy: connection.mode === 'proxy',
     proxySource,
+    strictEgress: managed,
+    sessionVersion: sessionDelivery.version || 0,
   });
 
   return json({
@@ -123,20 +170,16 @@ export async function clientLaunch(
     },
     profile: {
       id: profile.id,
-      name: profile.name,
+      name: profile.tags?.[0] || profile.name,
       url: profile.url,
       platform: profile.platform,
       imageUrl: profile.image_url,
       tags: profile.tags || [],
       sessionMode: profile.session_mode,
-      sessionReady: profile.session_ready === true,
+      sessionReady: managed ? true : profile.session_ready === true,
     },
     connection,
-    sessionDelivery: {
-      ready: profile.session_ready === true,
-      mode: profile.session_mode,
-      materialIncluded: false,
-    },
+    sessionDelivery,
   });
 }
 
