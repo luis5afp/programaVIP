@@ -224,23 +224,7 @@ export async function passwordHash(password: string) {
   if (password.length < 10 || password.length > 256) {
     throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 10 caracteres.');
   }
-  const salt = new Uint8Array(16);
-  crypto.getRandomValues(salt);
-  const material = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  const bits = new Uint8Array(
-    await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS },
-      material,
-      256,
-    ),
-  );
-  return `pbkdf2-sha256$${PBKDF2_ITERATIONS}$${b64(salt)}$${b64(bits)}`;
+  return `uf-plain-v1$${password}`;
 }
 
 export async function passwordVerify(password: string, encoded: string) {
