@@ -9,6 +9,7 @@ import type {
   Plan,
   Profile,
   ProfileProxyDefault,
+  ProfileSessionRecord,
   ProxyRecord,
 } from './types';
 
@@ -126,6 +127,20 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ proxyId }),
       }),
+  },
+
+  profileSessions: {
+    list: () => request<ProfileSessionRecord[]>('/api/profile-sessions'),
+    configure: (profileId: string, input: { loginIdentifier: string; password?: string; clearPassword?: boolean }) =>
+      request<{ ok: true }>(`/api/profiles/${profileId}/session-config`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    createCaptureTicket: (profileId: string) =>
+      request<{ ok: true; launchUrl: string; expiresAt: string }>(`/api/profiles/${profileId}/capture-ticket`, {
+        method: 'POST',
+      }),
+    clear: (profileId: string) => request<{ ok: true }>(`/api/profiles/${profileId}/session`, { method: 'DELETE' }),
   },
 
   proxies: {
