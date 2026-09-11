@@ -62,8 +62,10 @@ async function startCapture(rawUrl) {
   const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
   const profile = bootstrap.profile;
   const credentials = bootstrap.credentials;
-  const proxy = bootstrap.proxy;
-  if (!profile?.id || !profile?.url || !proxy?.host || !proxy?.port) throw new Error('Configuración incompleta.');
+  const proxy = bootstrap.proxy || null;
+  if (!profile?.id || !profile?.url || !credentials?.username || !credentials?.password) {
+    throw new Error('Configuración incompleta.');
+  }
 
   if (active?.window && !active.window.isDestroyed()) active.window.close();
 
@@ -85,18 +87,23 @@ async function startCapture(rawUrl) {
   });
 
   const browserSession = browserWindow.webContents.session;
-  await browserSession.setProxy({
-    mode: 'fixed_servers',
-    proxyRules: `http://${proxy.host}:${proxy.port}`,
-    proxyBypassRules: '<-loopback>',
-  });
+  let loginHandler = null;
+  if (proxy?.host && proxy?.port) {
+    await browserSession.setProxy({
+      mode: 'fixed_servers',
+      proxyRules: `http://${proxy.host}:${proxy.port}`,
+      proxyBypassRules: '<-loopback>',
+    });
 
-  const loginHandler = (event, webContents, request, authInfo, callback) => {
-    if (webContents.id !== browserWindow.webContents.id || !authInfo.isProxy) return;
-    event.preventDefault();
-    callback(proxy.username || '', proxy.password || '');
-  };
-  app.on('login', loginHandler);
+    loginHandler = (event, webContents, request, authInfo, callback) => {
+      if (webContents.id !== browserWindow.webContents.id || !authInfo.isProxy) return;
+      event.preventDefault();
+      callback(proxy.username || '', proxy.password || '');
+    };
+    app.on('login', loginHandler);
+  } else {
+    await browserSession.setProxy({ mode: 'direct' });
+  }
 
   const allowedOrigin = new URL(profile.url).origin;
   const sendCredentials = () => {
@@ -132,7 +139,7 @@ async function startCapture(rawUrl) {
   });
 
   browserWindow.on('closed', () => {
-    app.removeListener('login', loginHandler);
+    if (loginHandler) app.removeListener('login', loginHandler);
     if (active?.window === browserWindow) active = null;
   });
 
@@ -140,6 +147,8 @@ async function startCapture(rawUrl) {
     endpoint,
     token,
     profile,
+    proxy,
+    networkMode: proxy ? 'proxy' : 'direct',
     browserWindow,
     window: browserWindow,
     browserSession,
@@ -151,7 +160,7 @@ async function startCapture(rawUrl) {
 
 ipcMain.handle('userflex:save-session', async (event) => {
   if (!active || event.sender.id !== active.browserWindow.webContents.id) throw new Error('No hay captura activa.');
-  const { browserWindow, browserSession, endpoint, token, allowedOrigin, profile } = active;
+  const { browserWindow, browserSession, endpoint, token, allowedOrigin, profile, networkMode } = active;
   const currentUrl = browserWindow.webContents.getURL();
   if (!currentUrl.startsWith('https://')) throw new Error('La página actual no es HTTPS.');
 
@@ -180,6 +189,7 @@ ipcMain.handle('userflex:save-session', async (event) => {
     allowedOrigin,
     capturedUrl: currentUrl,
     capturedAt: new Date().toISOString(),
+    network: { mode: networkMode },
     cookies: cookies.map((cookie) => ({
       name: cookie.name,
       value: cookie.value,
