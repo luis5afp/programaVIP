@@ -34,6 +34,8 @@ jobs:
       - name: Validate Client JavaScript
         shell: pwsh
         run: |
+          node --check bootstrap.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check main.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check renderer.js
