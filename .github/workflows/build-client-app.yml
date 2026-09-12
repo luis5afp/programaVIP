@@ -46,22 +46,84 @@ jobs:
           node --check preload.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build Windows installer and updater metadata
+      - name: Build Windows installer
         run: npm run dist:win
 
-      - name: Validate updater artifacts
+      - name: Build chunked updater feed
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
-          $blockmap = Get-ChildItem -Path dist -Filter *.blockmap | Select-Object -First 1
-          $latest = Get-Item -Path dist/latest.yml -ErrorAction SilentlyContinue
-          if (-not $exe) { throw "No Windows installer was generated." }
-          if (-not $blockmap) { throw "No updater blockmap was generated." }
-          if (-not $latest) { throw "No latest.yml updater manifest was generated." }
+          $ErrorActionPreference = 'Stop'
           $version = node -p "require('./package.json').version"
-          if (-not (Select-String -Path $latest.FullName -Pattern "version: $version" -SimpleMatch)) {
-            throw "latest.yml does not contain Client version $version."
+          $exe = Get-ChildItem -Path dist -Filter *.exe | Where-Object { $_.Name -notlike '*.__uninstaller.exe' } | Select-Object -First 1
+          if (-not $exe) { throw "No Windows installer was generated." }
+          if ($exe.Length -gt 300MB) { throw "Client installer exceeds the supported updater size." }
+
+          $feedRoot = Join-Path $PWD 'dist\update-feed'
+          $versionRoot = Join-Path $feedRoot "versions\$version"
+          New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
+
+          $chunkSize = 20MB
+          $chunks = @()
+          [int64]$totalChunkBytes = 0
+          $input = [System.IO.File]::OpenRead($exe.FullName)
+          try {
+            $index = 0
+            while ($input.Position -lt $input.Length) {
+              $remaining = [int64]($input.Length - $input.Position)
+              $size = [int][Math]::Min([int64]$chunkSize, $remaining)
+              $buffer = New-Object byte[] $size
+              $offset = 0
+              while ($offset -lt $size) {
+                $read = $input.Read($buffer, $offset, $size - $offset)
+                if ($read -le 0) { break }
+                $offset += $read
+              }
+              if ($offset -le 0) { break }
+
+              $fileName = 'part-{0:D3}.bin' -f $index
+              $chunkPath = Join-Path $versionRoot $fileName
+              $output = [System.IO.File]::Create($chunkPath)
+              try {
+                $output.Write($buffer, 0, $offset)
+                $output.Flush()
+              } finally {
+                $output.Dispose()
+              }
+
+              $chunks += [ordered]@{
+                name = "versions/$version/$fileName"
+                size = [int64]$offset
+              }
+              $totalChunkBytes += [int64]$offset
+              $index += 1
+            }
+          } finally {
+            $input.Dispose()
           }
+
+          if ($totalChunkBytes -ne [int64]$exe.Length) {
+            throw "Chunk total $totalChunkBytes does not match installer size $($exe.Length)."
+          }
+          foreach ($chunk in $chunks) {
+            if ([int64]$chunk['size'] -gt 25MB) { throw "Updater chunk exceeds the Storage object limit." }
+          }
+
+          $hash = (Get-FileHash -Path $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            version = $version
+            size = [int64]$exe.Length
+            sha256 = $hash
+            chunks = $chunks
+            publishedAt = [DateTimeOffset]::UtcNow.ToString('o')
+          }
+          $manifestPath = Join-Path $feedRoot 'latest.json'
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding utf8NoBOM
+
+          $parsed = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
+          if ($parsed.version -ne $version) { throw "Updater manifest version mismatch." }
+          if ($parsed.sha256 -ne $hash) { throw "Updater manifest hash mismatch." }
+          if ([int64]$parsed.size -ne [int64]$exe.Length) { throw "Updater manifest size mismatch." }
+          if (@($parsed.chunks).Count -lt 1) { throw "Updater manifest contains no chunks." }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -69,8 +131,7 @@ jobs:
           name: userFLEX-Client-Windows
           path: |
             client-app/dist/*.exe
-            client-app/dist/*.blockmap
-            client-app/dist/latest.yml
+            client-app/dist/update-feed/latest.json
           if-no-files-found: error
           retention-days: 30
 
@@ -81,41 +142,54 @@ jobs:
           SUPABASE_URL: https://lbvxnbbglkjnwphaomyx.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          $ErrorActionPreference = 'Stop'
           if (-not $env:SUPABASE_SERVICE_ROLE_KEY) { throw "SUPABASE_SERVICE_ROLE_KEY is required." }
 
-          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
-          $blockmap = Get-ChildItem -Path dist -Filter *.blockmap | Select-Object -First 1
-          $latest = Get-Item -Path dist/latest.yml
-          $files = @($exe, $blockmap, $latest)
+          $version = node -p "require('./package.json').version"
+          $feedRoot = Join-Path $PWD 'dist\update-feed'
+          $versionRoot = Join-Path $feedRoot "versions\$version"
+          $parts = @(Get-ChildItem -Path $versionRoot -Filter 'part-*.bin' | Sort-Object Name)
+          if ($parts.Count -lt 1) { throw "No updater chunks were generated." }
 
-          foreach ($file in $files) {
-            if (-not $file) { throw "Updater artifact is missing." }
-            $contentType = switch -Regex ($file.Name) {
-              '\.exe$' { 'application/x-msdownload'; break }
-              '\.blockmap$' { 'application/octet-stream'; break }
-              '\.yml$' { 'application/yaml'; break }
-              default { 'application/octet-stream' }
-            }
-            $name = [System.Uri]::EscapeDataString($file.Name)
-            $url = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/$name"
-            Write-Host "Publishing $($file.Name) to updater feed..."
-            & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 900 `
+          # Publish immutable versioned chunks first. latest.json is uploaded last so
+          # clients can never discover a release whose binary parts are incomplete.
+          foreach ($file in $parts) {
+            $objectName = "versions/$version/$($file.Name)"
+            $url = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/$objectName"
+            Write-Host "Publishing $objectName ($($file.Length) bytes)..."
+            & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 300 `
               --request POST $url `
               --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
               --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
               --header "x-upsert: true" `
-              --header "cache-control: max-age=0" `
-              --header "Content-Type: $contentType" `
+              --header "cache-control: max-age=31536000, immutable" `
+              --header "Content-Type: application/octet-stream" `
               --data-binary "@$($file.FullName)"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to publish $($file.Name) to Supabase Storage." }
+            if ($LASTEXITCODE -ne 0) { throw "Failed to publish $objectName." }
           }
 
-          $version = node -p "require('./package.json').version"
-          $feedUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/latest.yml?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-          $feed = (Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -Headers @{ 'Cache-Control' = 'no-cache' }).Content
-          if ($feed -notmatch "version:\s*$([regex]::Escape($version))") {
-            throw "Published updater feed does not expose version $version."
-          }
+          $manifest = Get-Item -Path (Join-Path $feedRoot 'latest.json')
+          $manifestUrl = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/latest.json"
+          Write-Host "Publishing latest.json last..."
+          & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 60 `
+            --request POST $manifestUrl `
+            --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
+            --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
+            --header "x-upsert: true" `
+            --header "cache-control: max-age=0" `
+            --header "Content-Type: application/json" `
+            --data-binary "@$($manifest.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish latest.json." }
+
+          $publicManifestUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/latest.json?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+          $published = Invoke-RestMethod -Uri $publicManifestUrl -Headers @{ 'Cache-Control' = 'no-cache' }
+          if ($published.version -ne $version) { throw "Published updater feed does not expose version $version." }
+          if (@($published.chunks).Count -ne $parts.Count) { throw "Published updater feed chunk count mismatch." }
+
+          $firstChunk = @($published.chunks)[0]
+          $firstChunkUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/$($firstChunk.name)?v=$version"
+          $response = Invoke-WebRequest -Uri $firstChunkUrl -Method Head -UseBasicParsing
+          if ($response.StatusCode -ne 200) { throw "Published updater chunk is not publicly readable." }
 
       - name: Publish Client release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -125,12 +199,12 @@ jobs:
         run: |
           $version = node -p "require('./package.json').version"
           $tag = "client-v$version"
-          $asset = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          $asset = Get-ChildItem -Path dist -Filter *.exe | Where-Object { $_.Name -notlike '*.__uninstaller.exe' } | Select-Object -First 1
           if (-not $asset) { throw "No Windows installer was generated." }
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX con actualización automática por versión antes del inicio de sesión."
+            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX con verificación de versión y actualización automática obligatoria antes del inicio de sesión."
           }

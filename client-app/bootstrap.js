@@ -1,25 +1,22 @@
 import { app, BrowserWindow, Menu } from 'electron';
-import updaterPackage from 'electron-updater';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 
-const { autoUpdater } = updaterPackage;
+const UPDATE_BASE_URL = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
+const UPDATE_MANIFEST_URL = `${UPDATE_BASE_URL}/latest.json`;
+const UPDATE_CHECK_TIMEOUT_MS = 8_000;
+const MAX_UPDATE_BYTES = 300 * 1024 * 1024;
 
 await app.whenReady();
 Menu.setApplicationMenu(null);
-
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.allowPrerelease = false;
-autoUpdater.requestHeaders = { 'Cache-Control': 'no-cache' };
-// electron-updater emits an `error` event in addition to rejecting promises.
-// Keep a listener registered so a network/update failure never crashes startup.
-autoUpdater.on('error', () => {});
 
 let splashWindow = null;
 let splashReady = false;
 let pendingStatus = null;
 let checking = false;
 let mainStarted = false;
-let targetVersion = null;
 
 function escapeHtml(value) {
   return String(value || '')
@@ -142,19 +139,125 @@ async function startMain() {
   await import('./main.js');
 }
 
-autoUpdater.on('download-progress', (progress) => {
-  const percent = Number(progress?.percent || 0);
-  pushStatus({
-    phase: 'downloading',
-    message: `Actualizando a v${targetVersion || 'nueva'}…`,
-    percent,
+function validateManifest(value) {
+  if (!value || typeof value !== 'object') throw new Error('UPDATE_MANIFEST_INVALID');
+  const version = String(value.version || '').trim();
+  const sha256 = String(value.sha256 || '').trim().toLowerCase();
+  const size = Number(value.size || 0);
+  const chunks = Array.isArray(value.chunks) ? value.chunks : [];
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('UPDATE_VERSION_INVALID');
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('UPDATE_HASH_INVALID');
+  if (!Number.isSafeInteger(size) || size < 1 || size > MAX_UPDATE_BYTES) throw new Error('UPDATE_SIZE_INVALID');
+  if (chunks.length < 1 || chunks.length > 64) throw new Error('UPDATE_CHUNKS_INVALID');
+
+  let chunkBytes = 0;
+  const normalizedChunks = chunks.map((chunk, index) => {
+    const name = String(chunk?.name || '').trim();
+    const chunkSize = Number(chunk?.size || 0);
+    const expectedPrefix = `versions/${version}/`;
+    if (!name.startsWith(expectedPrefix) || !/^versions\/[0-9A-Za-z.-]+\/part-\d{3}\.bin$/.test(name)) {
+      throw new Error(`UPDATE_CHUNK_NAME_INVALID_${index}`);
+    }
+    if (!Number.isSafeInteger(chunkSize) || chunkSize < 1 || chunkSize > 25 * 1024 * 1024) {
+      throw new Error(`UPDATE_CHUNK_SIZE_INVALID_${index}`);
+    }
+    chunkBytes += chunkSize;
+    return { name, size: chunkSize };
   });
-});
+  if (chunkBytes !== size) throw new Error('UPDATE_TOTAL_SIZE_MISMATCH');
+  return { version, sha256, size, chunks: normalizedChunks };
+}
+
+async function fetchManifest() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${UPDATE_MANIFEST_URL}?ts=${Date.now()}`, {
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`UPDATE_MANIFEST_HTTP_${response.status}`);
+    return validateManifest(await response.json());
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function downloadInstaller(manifest) {
+  const updateDir = path.join(app.getPath('userData'), 'updates');
+  await fs.rm(updateDir, { recursive: true, force: true });
+  await fs.mkdir(updateDir, { recursive: true });
+  const installerPath = path.join(updateDir, `userFLEX-Client-${manifest.version}-Setup.exe`);
+  const file = await fs.open(installerPath, 'w');
+  const hash = crypto.createHash('sha256');
+  let totalReceived = 0;
+
+  try {
+    for (let index = 0; index < manifest.chunks.length; index += 1) {
+      const chunk = manifest.chunks[index];
+      const url = `${UPDATE_BASE_URL}/${chunk.name}?v=${encodeURIComponent(manifest.version)}`;
+      const response = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      if (!response.ok || !response.body) throw new Error(`UPDATE_CHUNK_HTTP_${response.status}`);
+      const reader = response.body.getReader();
+      let chunkReceived = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        const buffer = Buffer.from(value);
+        await file.write(buffer);
+        hash.update(buffer);
+        totalReceived += buffer.length;
+        chunkReceived += buffer.length;
+        const percent = Math.min(99, (totalReceived / manifest.size) * 100);
+        pushStatus({ phase: 'downloading', message: `Actualizando a v${manifest.version}…`, percent });
+      }
+      if (chunkReceived !== chunk.size) throw new Error(`UPDATE_CHUNK_LENGTH_MISMATCH_${index}`);
+    }
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+
+  if (totalReceived !== manifest.size) {
+    await fs.rm(installerPath, { force: true });
+    throw new Error('UPDATE_FILE_LENGTH_MISMATCH');
+  }
+  const digest = hash.digest('hex');
+  if (digest !== manifest.sha256) {
+    await fs.rm(installerPath, { force: true });
+    throw new Error('UPDATE_FILE_HASH_MISMATCH');
+  }
+  return installerPath;
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function installAndRestart(installerPath) {
+  const currentExe = app.getPath('exe');
+  const command = [
+    `$targetPid=${process.pid}`,
+    'Wait-Process -Id $targetPid -ErrorAction SilentlyContinue',
+    `$installer=${psQuote(installerPath)}`,
+    `$appExe=${psQuote(currentExe)}`,
+    "$install=Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru",
+    'if ($install.ExitCode -eq 0 -and (Test-Path $appExe)) { Start-Process -FilePath $appExe }',
+  ].join('; ');
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', command], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  app.quit();
+}
 
 async function checkUpdatesAndContinue() {
   if (checking || mainStarted) return;
   checking = true;
-  targetVersion = null;
   pushStatus({ phase: 'checking', message: 'Verificando actualización…', percent: null });
 
   try {
@@ -163,19 +266,17 @@ async function checkUpdatesAndContinue() {
       return;
     }
 
-    const result = await autoUpdater.checkForUpdates();
-    const latestVersion = result?.updateInfo?.version || app.getVersion();
-    if (!isNewerVersion(latestVersion, app.getVersion())) {
+    const manifest = await fetchManifest();
+    if (!isNewerVersion(manifest.version, app.getVersion())) {
       await startMain();
       return;
     }
 
-    targetVersion = latestVersion;
-    pushStatus({ phase: 'downloading', message: `Actualizando a v${latestVersion}…`, percent: 0 });
-    await autoUpdater.downloadUpdate();
-    pushStatus({ phase: 'installing', message: `Actualización v${latestVersion} descargada · instalando…`, percent: 100 });
+    pushStatus({ phase: 'downloading', message: `Actualizando a v${manifest.version}…`, percent: 0 });
+    const installerPath = await downloadInstaller(manifest);
+    pushStatus({ phase: 'installing', message: `Actualización v${manifest.version} verificada · instalando…`, percent: 100 });
     await wait(650);
-    autoUpdater.quitAndInstall(false, true);
+    installAndRestart(installerPath);
   } catch {
     pushStatus({
       phase: 'error',

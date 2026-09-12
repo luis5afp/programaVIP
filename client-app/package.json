@@ -7,11 +7,9 @@
   "main": "bootstrap.js",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --publish never"
+    "dist:win": "electron-builder --win nsis"
   },
-  "dependencies": {
-    "electron-updater": "^6.6.2"
-  },
+  "dependencies": {},
   "devDependencies": {
     "electron": "^38.1.2",
     "electron-builder": "^26.0.12"
@@ -31,12 +29,6 @@
       "renderer.js",
       "styles.css",
       "package.json"
-    ],
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases/"
-      }
     ],
     "win": {
       "target": [
