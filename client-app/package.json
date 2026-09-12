@@ -37,6 +37,7 @@
     ],
     "win": {
       "icon": "assets/userflow.ico",
+      "executableName": "userFLEX Client",
       "target": [
         "nsis"
       ],
