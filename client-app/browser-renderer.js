@@ -36,11 +36,11 @@ function tabIcon(tab) {
 function renderTabs() {
   tabsElement.replaceChildren();
   for (const tab of state.tabs) {
-    const item = document.createElement('button');
-    item.type = 'button';
+    const item = document.createElement('div');
     item.className = `tab${tab.id === state.activeProfileId ? ' active' : ''}${tab.loading ? ' loading' : ''}`;
     item.setAttribute('role', 'tab');
     item.setAttribute('aria-selected', tab.id === state.activeProfileId ? 'true' : 'false');
+    item.tabIndex = 0;
     item.title = tab.label || 'Perfil';
 
     const title = document.createElement('span');
@@ -60,6 +60,12 @@ function renderTabs() {
 
     item.append(tabIcon(tab), title, close);
     item.addEventListener('click', () => void run('select', tab.id));
+    item.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        void run('select', tab.id);
+      }
+    });
     tabsElement.appendChild(item);
   }
 
