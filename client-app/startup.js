@@ -18,6 +18,59 @@ app.setName('userFLOW');
 // the splash, but this guard remains as a defensive lifecycle fallback.
 const bootstrapWindowHold = () => {};
 
+function enableAutomaticInstallerLaunch(log) {
+  const onWindowCreated = (_event, window) => {
+    const webContents = window?.webContents;
+    if (!webContents) return;
+
+    webContents.on('did-finish-load', () => {
+      void webContents.executeJavaScript(`
+        (() => {
+          const box = document.getElementById('update');
+          const label = document.getElementById('label');
+          const install = document.getElementById('install');
+          if (!box || !label || !install || window.__userflowAutoInstallerObserver) return false;
+
+          // v0.2.17+ launches the already downloaded and SHA-256 verified setup
+          // automatically. Keep the old button hidden during the normal path;
+          // expose it only as a fallback if Windows rejects the installer launch.
+          install.hidden = true;
+
+          const maybeLaunch = () => {
+            if (!box.classList.contains('ready-install')) return;
+            const message = String(label.textContent || '');
+            if (message.includes('no se pudo abrir')) {
+              install.hidden = false;
+              return;
+            }
+            install.hidden = true;
+            if (install.dataset.autoStarted === '1') return;
+            install.dataset.autoStarted = '1';
+            label.textContent = 'Actualización lista · abriendo instalador automáticamente…';
+            setTimeout(() => {
+              window.location.href = 'userflex-update://install';
+            }, 350);
+          };
+
+          const observer = new MutationObserver(maybeLaunch);
+          observer.observe(box, { attributes: true, attributeFilter: ['class'] });
+          observer.observe(label, { childList: true, subtree: true, characterData: true });
+          window.__userflowAutoInstallerObserver = observer;
+          maybeLaunch();
+          return true;
+        })();
+      `).then((installed) => {
+        if (installed) void log('Automatic update installer launcher armed');
+      }).catch((error) => {
+        void log(`Automatic installer launcher injection skipped: ${error?.message || String(error)}`);
+      });
+    });
+  };
+
+  app.on('browser-window-created', onWindowCreated);
+  return () => app.removeListener('browser-window-created', onWindowCreated);
+}
+
 async function startAfterReady() {
   Menu.setApplicationMenu(null);
 
@@ -95,10 +148,12 @@ async function startAfterReady() {
       return nativeFetch(input, init);
     };
 
+    const disableAutomaticInstallerLaunch = enableAutomaticInstallerLaunch(log);
     try {
       await import('./bootstrap.js');
       await log('bootstrap.js loaded; main lifecycle is active');
     } finally {
+      disableAutomaticInstallerLaunch();
       app.setPath = nativeSetPath;
       globalThis.fetch = nativeFetch;
       app.removeListener('window-all-closed', bootstrapWindowHold);
