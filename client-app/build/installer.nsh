@@ -1,7 +1,6 @@
 !macro customInit
-  ; Close stale userFLOW/userFLEX processes so upgrades can replace the
-  ; executable. Do not use /T: the updater helper is a child of the old app
-  ; and must remain alive until the installer completes.
+  ; The installer is already running as an independent process. Close only the
+  ; old application executable so NSIS can replace it safely.
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "userFLEX Client.exe"'
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "userFLOW.exe"'
@@ -10,10 +9,18 @@
 !macroend
 
 !macro customInstall
-  ; For automatic updates, relaunch from the installer itself. At this point
-  ; $INSTDIR is the authoritative final installation directory, so this does
-  ; not depend on the path used by the previous version.
-  ${if} ${isUpdated}
+  ; Automatic updates are invoked with /S. Relaunch deterministically after a
+  ; successful silent install instead of depending only on NSIS isUpdated.
+  IfSilent silent_relaunch interactive_install
+
+  silent_relaunch:
     Exec '"$INSTDIR\userFLEX Client.exe" --updated'
-  ${endIf}
+    Goto install_done
+
+  interactive_install:
+    ${if} ${isUpdated}
+      Exec '"$INSTDIR\userFLEX Client.exe" --updated'
+    ${endIf}
+
+  install_done:
 !macroend
