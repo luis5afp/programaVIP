@@ -54,7 +54,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version = node -p "require('./package.json').version"
-          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          $exe = Get-ChildItem -Path dist -Filter *.exe | Where-Object { $_.Name -notlike '*.__uninstaller.exe' } | Select-Object -First 1
           if (-not $exe) { throw "No Windows installer was generated." }
           if ($exe.Length -gt 300MB) { throw "Client installer exceeds the supported updater size." }
 
@@ -64,6 +64,7 @@ jobs:
 
           $chunkSize = 20MB
           $chunks = @()
+          [int64]$totalChunkBytes = 0
           $input = [System.IO.File]::OpenRead($exe.FullName)
           try {
             $index = 0
@@ -93,18 +94,18 @@ jobs:
                 name = "versions/$version/$fileName"
                 size = [int64]$offset
               }
+              $totalChunkBytes += [int64]$offset
               $index += 1
             }
           } finally {
             $input.Dispose()
           }
 
-          $totalChunkBytes = ($chunks | Measure-Object -Property size -Sum).Sum
-          if ([int64]$totalChunkBytes -ne [int64]$exe.Length) {
-            throw "Chunk total does not match installer size."
+          if ($totalChunkBytes -ne [int64]$exe.Length) {
+            throw "Chunk total $totalChunkBytes does not match installer size $($exe.Length)."
           }
           foreach ($chunk in $chunks) {
-            if ([int64]$chunk.size -gt 25MB) { throw "Updater chunk exceeds the Storage object limit." }
+            if ([int64]$chunk['size'] -gt 25MB) { throw "Updater chunk exceeds the Storage object limit." }
           }
 
           $hash = (Get-FileHash -Path $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -147,7 +148,7 @@ jobs:
           $version = node -p "require('./package.json').version"
           $feedRoot = Join-Path $PWD 'dist\update-feed'
           $versionRoot = Join-Path $feedRoot "versions\$version"
-          $parts = Get-ChildItem -Path $versionRoot -Filter 'part-*.bin' | Sort-Object Name
+          $parts = @(Get-ChildItem -Path $versionRoot -Filter 'part-*.bin' | Sort-Object Name)
           if ($parts.Count -lt 1) { throw "No updater chunks were generated." }
 
           # Publish immutable versioned chunks first. latest.json is uploaded last so
@@ -198,7 +199,7 @@ jobs:
         run: |
           $version = node -p "require('./package.json').version"
           $tag = "client-v$version"
-          $asset = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          $asset = Get-ChildItem -Path dist -Filter *.exe | Where-Object { $_.Name -notlike '*.__uninstaller.exe' } | Select-Object -First 1
           if (-not $asset) { throw "No Windows installer was generated." }
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
