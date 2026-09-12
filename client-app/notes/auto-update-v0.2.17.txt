@@ -1,0 +1,6 @@
+userFLOW v0.2.17 updater behavior:
+- Download and SHA-256 verification stay inside userFLOW.
+- When the update reaches ready-install, userFLOW automatically opens the verified Windows installer.
+- The legacy Install update button stays hidden during the normal path.
+- If Windows rejects the installer launch, the legacy button is revealed as a manual fallback.
+- The old userFLOW process quits only after the installer process has actually spawned.
