@@ -5,6 +5,13 @@ import path from 'node:path';
 const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
 const UPDATE_PROXY_BASE = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
 
+// bootstrap.js temporarily closes the splash before main.js creates the Client
+// window. Electron may otherwise terminate on Windows when the last window is
+// closed. Keeping a window-all-closed listener registered during that handoff
+// prevents the default quit; main.js installs the normal lifecycle listener
+// before this guard is removed.
+const bootstrapWindowHold = () => {};
+
 async function startAfterReady() {
   Menu.setApplicationMenu(null);
 
@@ -84,14 +91,16 @@ async function startAfterReady() {
 
     try {
       await import('./bootstrap.js');
-      await log('bootstrap.js loaded');
+      await log('bootstrap.js loaded; main lifecycle is active');
     } finally {
       app.setPath = nativeSetPath;
       globalThis.fetch = nativeFetch;
+      app.removeListener('window-all-closed', bootstrapWindowHold);
     }
   } catch (error) {
     const details = error?.stack || error?.message || String(error);
     await log(`FATAL AFTER READY: ${details}`);
+    app.removeListener('window-all-closed', bootstrapWindowHold);
     dialog.showErrorBox(
       'userFLOW no pudo iniciar',
       `Se produjo un error al iniciar userFLOW.\n\n${error?.message || 'Error desconocido'}\n\nDiagnóstico: ${startupLog}`,
@@ -108,6 +117,11 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
+  // Hold the process open across the splash -> main-window handoff. Without
+  // this listener, closing the only BrowserWindow can terminate Electron before
+  // main.js gets a chance to create the login window.
+  app.on('window-all-closed', bootstrapWindowHold);
+
   // Important: do not top-level await app.whenReady(). The early working Client
   // builds used this promise pattern. It lets the entry module finish evaluating
   // immediately while Electron continues its normal initialization.
@@ -117,6 +131,7 @@ if (!hasSingleInstanceLock) {
     })
     .catch((error) => {
       try {
+        app.removeListener('window-all-closed', bootstrapWindowHold);
         dialog.showErrorBox('userFLOW no pudo iniciar', error?.message || String(error));
       } finally {
         app.quit();
