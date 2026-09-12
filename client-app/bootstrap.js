@@ -9,6 +9,9 @@ const UPDATE_MANIFEST_URL = `${UPDATE_BASE_URL}/latest.json`;
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 const MAX_UPDATE_BYTES = 300 * 1024 * 1024;
 
+// Keep the original user-data directory so the rebrand does not register a new
+// device or lose the client's encrypted login/profile partitions.
+app.setPath('userData', path.join(app.getPath('appData'), 'userFLEX Client'));
 app.setName('userFLOW');
 await app.whenReady();
 Menu.setApplicationMenu(null);
