@@ -1,0 +1,71 @@
+name: Build userFLEX Client
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'client-app/**'
+      - '.github/workflows/build-client-app.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'client-app/**'
+      - '.github/workflows/build-client-app.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: client-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Client dependencies
+        run: npm install
+
+      - name: Validate Client JavaScript
+        shell: pwsh
+        run: |
+          node --check main.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check renderer.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check preload.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: userFLEX-Client-Windows
+          path: client-app/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Client release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = "client-v$version"
+          $asset = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          if (-not $asset) { throw "No Windows installer was generated." }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX: login, dispositivos, perfiles asignados y apertura de Chromium aislado con sesión administrada y proxy del perfil."
+          }
