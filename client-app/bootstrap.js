@@ -21,6 +21,8 @@ let splashReady = false;
 let pendingStatus = null;
 let checking = false;
 let mainStarted = false;
+let pendingUpdate = null;
+let launchingInstaller = false;
 
 function escapeHtml(value) {
   return String(value || '')
@@ -43,22 +45,23 @@ function splashHtml() {
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f4f7fb;color:#0f172a;overflow:hidden}
 body{background:radial-gradient(circle at 18% 12%,rgba(99,102,241,.11),transparent 32%),radial-gradient(circle at 88% 88%,rgba(14,165,233,.07),transparent 28%),#f8fafc}
 .center{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:8px}.mark{width:64px;height:64px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#7cf8ff 0,#35d5cf 24%,#6b29b8 52%,#171143 100%);color:#fff;display:grid;place-items:center;font-size:20px;font-weight:900;box-shadow:0 12px 34px rgba(74,45,170,.30),inset 0 0 0 3px rgba(93,245,227,.72);text-shadow:0 0 12px rgba(255,255,255,.55)}h1{margin:10px 0 0;font-size:30px;letter-spacing:-.8px}p{margin:0;color:#64748b;font-size:14px}
-.update{position:fixed;left:24px;bottom:22px;width:min(430px,calc(100vw - 48px));padding:13px 15px;border-radius:14px;background:rgba(255,255,255,.96);border:1px solid #dfe6f1;box-shadow:0 12px 34px rgba(15,23,42,.08)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#475569;font-size:12px;font-weight:700}.percent{color:#4338ca;font-variant-numeric:tabular-nums}.track{height:6px;margin-top:9px;border-radius:999px;background:#e8eaf7;overflow:hidden}.bar{height:100%;width:0;background:linear-gradient(90deg,#6557ef,#4f46e5);transition:width .15s linear}.retry{display:none;margin-top:10px;color:#4338ca;font-size:12px;font-weight:800;text-decoration:none}.retry:hover{text-decoration:underline}.error .row{color:#991b1b}.error{border-color:#fecdd3;background:#fffafb}.error .retry{display:inline-block}.ready .row{color:#047857}.ready .track{display:none}
+.update{position:fixed;left:24px;bottom:22px;width:min(460px,calc(100vw - 48px));padding:13px 15px;border-radius:14px;background:rgba(255,255,255,.96);border:1px solid #dfe6f1;box-shadow:0 12px 34px rgba(15,23,42,.08)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#475569;font-size:12px;font-weight:700}.percent{color:#4338ca;font-variant-numeric:tabular-nums}.track{height:6px;margin-top:9px;border-radius:999px;background:#e8eaf7;overflow:hidden}.bar{height:100%;width:0;background:linear-gradient(90deg,#6557ef,#4f46e5);transition:width .15s linear}.retry,.install-action{display:none;margin-top:10px;font-size:12px;font-weight:800;text-decoration:none}.retry{color:#4338ca}.retry:hover{text-decoration:underline}.install-action{width:max-content;padding:9px 14px;border-radius:10px;background:#4f46e5;color:#fff;box-shadow:0 5px 14px rgba(79,70,229,.18)}.install-action:hover{background:#4338ca}.error .row{color:#991b1b}.error{border-color:#fecdd3;background:#fffafb}.error .retry{display:inline-block}.ready .row,.ready-install .row{color:#047857}.ready .track,.ready-install .track{display:none}.ready-install .install-action{display:inline-flex}
 .version{position:fixed;right:24px;bottom:25px;color:#94a3b8;font-size:11px}
 </style>
 </head>
 <body>
 <div class="center"><div class="mark">uF</div><h1>userFLOW</h1><p>Preparando el programa…</p></div>
-<div id="update" class="update"><div class="row"><span id="label">Verificando actualización…</span><span id="percent" class="percent"></span></div><div id="track" class="track"><div id="bar" class="bar"></div></div><a id="retry" class="retry" href="userflex-update://retry">Reintentar verificación</a></div>
+<div id="update" class="update"><div class="row"><span id="label">Verificando actualización…</span><span id="percent" class="percent"></span></div><div id="track" class="track"><div id="bar" class="bar"></div></div><a id="install" class="install-action" href="userflex-update://install">Instalar actualización</a><a id="retry" class="retry" href="userflex-update://retry">Reintentar verificación</a></div>
 <div class="version">v${version}</div>
 <script>
 window.userflexSetUpdateStatus=(state)=>{
  const box=document.getElementById('update');const label=document.getElementById('label');const pct=document.getElementById('percent');const bar=document.getElementById('bar');const track=document.getElementById('track');
- box.className='update'+(state.phase==='error'?' error':'')+(state.phase==='ready'?' ready':'');
+ const phase=state.phase||'';
+ box.className='update'+(phase==='error'?' error':'')+(phase==='ready'?' ready':'')+(phase==='ready-install'?' ready-install':'');
  label.textContent=state.message||'Verificando actualización…';
  const value=Number.isFinite(state.percent)?Math.max(0,Math.min(100,Math.round(state.percent))):null;
  pct.textContent=value===null?'':value+'%';bar.style.width=(value===null?0:value)+'%';
- track.style.display=(state.phase==='downloading'||state.phase==='installing')?'block':(state.phase==='ready'?'none':'block');
+ track.style.display=(phase==='downloading'||phase==='verifying'||phase==='opening-installer')?'block':'none';
 };
 </script>
 </body></html>`;
@@ -91,6 +94,11 @@ function createSplash() {
     if (url === 'userflex-update://retry') {
       event.preventDefault();
       void checkUpdatesAndContinue();
+      return;
+    }
+    if (url === 'userflex-update://install') {
+      event.preventDefault();
+      void launchDownloadedInstaller();
       return;
     }
     if (!url.startsWith('data:text/html')) event.preventDefault();
@@ -223,7 +231,7 @@ async function downloadInstaller(manifest) {
         totalReceived += buffer.length;
         chunkReceived += buffer.length;
         const percent = Math.min(99, (totalReceived / manifest.size) * 100);
-        pushStatus({ phase: 'downloading', message: `Actualizando a v${manifest.version}…`, percent });
+        pushStatus({ phase: 'downloading', message: `Descargando v${manifest.version}…`, percent });
       }
       if (chunkReceived !== chunk.size) throw new Error(`UPDATE_CHUNK_LENGTH_MISMATCH_${index}`);
     }
@@ -244,30 +252,80 @@ async function downloadInstaller(manifest) {
   return installerPath;
 }
 
-async function installAndRestart(installerPath) {
-  const child = spawn(installerPath, ['/S'], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
+async function verifyInstallerOnDisk(installerPath, manifest) {
+  const stat = await fs.stat(installerPath);
+  if (stat.size !== manifest.size) throw new Error('UPDATE_INSTALLER_SIZE_CHANGED');
 
-  await new Promise((resolve, reject) => {
-    child.once('spawn', resolve);
-    child.once('error', reject);
-  });
+  const file = await fs.open(installerPath, 'r');
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
+  let totalRead = 0;
 
-  child.unref();
+  try {
+    while (true) {
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, totalRead);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      totalRead += bytesRead;
+    }
+  } finally {
+    await file.close();
+  }
 
-  // The NSIS customInit closes this old executable after the installer is
-  // already running. This fallback prevents an old instance from surviving if
-  // Windows delays taskkill for any reason.
-  const quitFallback = setTimeout(() => app.quit(), 5_000);
-  quitFallback.unref?.();
+  if (totalRead !== manifest.size) throw new Error('UPDATE_INSTALLER_LENGTH_CHANGED');
+  if (hash.digest('hex') !== manifest.sha256) throw new Error('UPDATE_INSTALLER_HASH_CHANGED');
+}
+
+async function launchDownloadedInstaller() {
+  if (launchingInstaller || !pendingUpdate) return;
+  launchingInstaller = true;
+  const { installerPath, manifest } = pendingUpdate;
+
+  try {
+    pushStatus({ phase: 'verifying', message: `Verificando instalador v${manifest.version}…`, percent: 100 });
+    await verifyInstallerOnDisk(installerPath, manifest);
+
+    pushStatus({ phase: 'opening-installer', message: 'Abriendo instalador de Windows…', percent: 100 });
+    const child = spawn(installerPath, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+
+    let earlyExit = null;
+    child.once('exit', (code, signal) => {
+      earlyExit = { code, signal };
+    });
+
+    await wait(1_200);
+    if (earlyExit && earlyExit.code !== 0) {
+      throw new Error(`UPDATE_INSTALLER_EXIT_${earlyExit.code ?? earlyExit.signal ?? 'UNKNOWN'}`);
+    }
+
+    child.unref();
+    pushStatus({ phase: 'opening-installer', message: 'Instalador abierto · cerrando userFLOW…', percent: 100 });
+    await wait(250);
+    app.quit();
+  } catch (error) {
+    launchingInstaller = false;
+    console.error('userFLOW installer launch error', error instanceof Error ? error.message : String(error));
+    pushStatus({
+      phase: 'ready-install',
+      message: `v${manifest.version} descargada · no se pudo abrir el instalador. Reintenta.`,
+      percent: 100,
+    });
+  }
 }
 
 async function checkUpdatesAndContinue() {
-  if (checking || mainStarted) return;
+  if (checking || mainStarted || launchingInstaller) return;
   checking = true;
+  pendingUpdate = null;
   pushStatus({ phase: 'checking', message: 'Verificando actualización…', percent: null });
 
   try {
@@ -282,16 +340,19 @@ async function checkUpdatesAndContinue() {
       return;
     }
 
-    pushStatus({ phase: 'downloading', message: `Actualizando a v${manifest.version}…`, percent: 0 });
+    pushStatus({ phase: 'downloading', message: `Descargando v${manifest.version}…`, percent: 0 });
     const installerPath = await downloadInstaller(manifest);
-    pushStatus({ phase: 'installing', message: `Actualización v${manifest.version} verificada · instalando…`, percent: 100 });
-    await wait(650);
-    await installAndRestart(installerPath);
+    pendingUpdate = { installerPath, manifest };
+    pushStatus({
+      phase: 'ready-install',
+      message: `Actualización v${manifest.version} lista para instalar`,
+      percent: 100,
+    });
   } catch (error) {
     console.error('userFLOW updater error', error instanceof Error ? error.message : String(error));
     pushStatus({
       phase: 'error',
-      message: 'No se pudo completar la actualización. Reintenta o instala la nueva versión manualmente.',
+      message: 'No se pudo descargar o verificar la actualización. Revisa tu conexión y reintenta.',
       percent: null,
     });
   } finally {
