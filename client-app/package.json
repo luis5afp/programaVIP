@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -45,6 +45,7 @@
       "artifactName": "userFLOW-${version}-Setup.${ext}"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
