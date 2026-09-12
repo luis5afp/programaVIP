@@ -4,8 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
-const UPDATE_BASE_URL = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
-const UPDATE_MANIFEST_URL = `${UPDATE_BASE_URL}/latest.json`;
+const UPDATE_API_URL = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
+const UPDATE_MANIFEST_URL = `${UPDATE_API_URL}/latest`;
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 const MAX_UPDATE_BYTES = 300 * 1024 * 1024;
 
@@ -27,7 +27,7 @@ function escapeHtml(value) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/\"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
 
@@ -188,6 +188,12 @@ async function fetchManifest() {
   }
 }
 
+function updateChunkUrl(chunkName, version) {
+  const match = String(chunkName || '').match(/^versions\/([^/]+)\/(part-\d{3}\.bin)$/);
+  if (!match || match[1] !== version) throw new Error('UPDATE_CHUNK_PATH_INVALID');
+  return `${UPDATE_API_URL}/chunks/${encodeURIComponent(version)}/${match[2]}`;
+}
+
 async function downloadInstaller(manifest) {
   const updateDir = path.join(app.getPath('userData'), 'updates');
   await fs.rm(updateDir, { recursive: true, force: true });
@@ -200,8 +206,10 @@ async function downloadInstaller(manifest) {
   try {
     for (let index = 0; index < manifest.chunks.length; index += 1) {
       const chunk = manifest.chunks[index];
-      const url = `${UPDATE_BASE_URL}/${chunk.name}?v=${encodeURIComponent(manifest.version)}`;
-      const response = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(updateChunkUrl(chunk.name, manifest.version), {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (!response.ok || !response.body) throw new Error(`UPDATE_CHUNK_HTTP_${response.status}`);
       const reader = response.body.getReader();
       let chunkReceived = 0;
@@ -236,27 +244,25 @@ async function downloadInstaller(manifest) {
   return installerPath;
 }
 
-function psQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function installAndRestart(installerPath) {
-  const currentExe = app.getPath('exe');
-  const command = [
-    `$targetPid=${process.pid}`,
-    'Wait-Process -Id $targetPid -ErrorAction SilentlyContinue',
-    `$installer=${psQuote(installerPath)}`,
-    `$appExe=${psQuote(currentExe)}`,
-    "$install=Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru",
-    'if ($install.ExitCode -eq 0 -and (Test-Path $appExe)) { Start-Process -FilePath $appExe }',
-  ].join('; ');
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', command], {
+async function installAndRestart(installerPath) {
+  const child = spawn(installerPath, ['/S'], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
   });
+
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+
   child.unref();
-  app.quit();
+
+  // The NSIS customInit closes this old executable after the installer is
+  // already running. This fallback prevents an old instance from surviving if
+  // Windows delays taskkill for any reason.
+  const quitFallback = setTimeout(() => app.quit(), 5_000);
+  quitFallback.unref?.();
 }
 
 async function checkUpdatesAndContinue() {
@@ -280,11 +286,12 @@ async function checkUpdatesAndContinue() {
     const installerPath = await downloadInstaller(manifest);
     pushStatus({ phase: 'installing', message: `Actualización v${manifest.version} verificada · instalando…`, percent: 100 });
     await wait(650);
-    installAndRestart(installerPath);
-  } catch {
+    await installAndRestart(installerPath);
+  } catch (error) {
+    console.error('userFLOW updater error', error instanceof Error ? error.message : String(error));
     pushStatus({
       phase: 'error',
-      message: 'No se pudo verificar o descargar la actualización. Revisa tu conexión.',
+      message: 'No se pudo completar la actualización. Reintenta o instala la nueva versión manualmente.',
       percent: null,
     });
   } finally {
