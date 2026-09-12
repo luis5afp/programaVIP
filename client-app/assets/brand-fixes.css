@@ -1,0 +1,19 @@
+.brand-mark,
+.brand-mark.large,
+.brand-mark.compact {
+  border-radius: 50%;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.login-brand {
+  align-items: center;
+}
