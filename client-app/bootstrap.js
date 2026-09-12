@@ -8,6 +8,7 @@ const UPDATE_API_URL = 'https://userflex-admin.luis5afp.workers.dev/api/client-u
 const UPDATE_MANIFEST_URL = `${UPDATE_API_URL}/latest`;
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 const MAX_UPDATE_BYTES = 300 * 1024 * 1024;
+const MAIN_WINDOW_START_TIMEOUT_MS = 10_000;
 
 // Keep the original user-data directory so the rebrand does not register a new
 // device or lose the client's encrypted login/profile partitions.
@@ -141,14 +142,32 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForMainWindow() {
+  const deadline = Date.now() + MAIN_WINDOW_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const mainWindow = BrowserWindow.getAllWindows().find(
+      (window) => window !== splashWindow && !window.isDestroyed(),
+    );
+    if (mainWindow) return mainWindow;
+    await wait(50);
+  }
+  throw new Error('MAIN_WINDOW_START_TIMEOUT');
+}
+
 async function startMain() {
   if (mainStarted) return;
   mainStarted = true;
   pushStatus({ phase: 'ready', message: `v${app.getVersion()} · Actualizado`, percent: null });
   await wait(180);
+
+  // Keep the splash alive while main.js initializes. Closing the splash first
+  // can emit window-all-closed after main.js has installed its normal quit
+  // handler, which makes Electron exit before the login window is created.
+  await import('./main.js');
+  await waitForMainWindow();
+
   if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
   splashWindow = null;
-  await import('./main.js');
 }
 
 function validateManifest(value) {
