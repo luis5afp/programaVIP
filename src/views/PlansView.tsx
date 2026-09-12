@@ -1,19 +1,30 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api';
-import type { Plan } from '../types';
+import type { Plan, Profile } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Plan | 'new' | null;
 
+function profileLabel(profile: Profile) {
+  return profile.tags?.[0] || profile.name;
+}
+
 export function PlansView() {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
+  const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
-      setPlans(await api.plans.list());
+      const [planRows, profileRows] = await Promise.all([
+        api.plans.list(),
+        api.profiles.list(),
+      ]);
+      setPlans(planRows);
+      setProfiles(profileRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -24,8 +35,28 @@ export function PlansView() {
     void load();
   }, []);
 
+  function openEditor(next: Exclude<Editor, null>) {
+    setEditor(next);
+    setSelectedProfileIds(next === 'new' ? [] : [...(next.profile_ids || [])]);
+  }
+
+  function closeEditor() {
+    setEditor(null);
+    setSelectedProfileIds([]);
+  }
+
+  function toggleProfile(profileId: string) {
+    setSelectedProfileIds((current) => current.includes(profileId)
+      ? current.filter((id) => id !== profileId)
+      : [...current, profileId]);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (selectedProfileIds.length === 0) {
+      setError('Selecciona al menos un perfil permitido para este plan.');
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const durationRaw = String(form.get('durationDays') || '').trim();
     const input = {
@@ -33,13 +64,14 @@ export function PlansView() {
       duration_days: durationRaw ? Number(durationRaw) : null,
       max_devices: Number(form.get('maxDevices') || 1),
       max_profiles: Number(form.get('maxProfiles') || 1),
+      profile_ids: selectedProfileIds,
       enabled: String(form.get('enabled')) === 'true',
     };
 
     try {
       if (editor && editor !== 'new') await api.plans.update(editor.id, input);
       else await api.plans.create(input);
-      setEditor(null);
+      closeEditor();
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -56,15 +88,22 @@ export function PlansView() {
     }
   }
 
+  function allowedProfileNames(plan: Plan) {
+    return plan.profile_ids
+      .map((id) => profiles.find((profile) => profile.id === id))
+      .filter(Boolean)
+      .map((profile) => profileLabel(profile!));
+  }
+
   const current = editor && editor !== 'new' ? editor : null;
 
   return (
     <>
       <PageHead
         title="Planes"
-        description="Define duración y límites que el servidor aplica a las suscripciones del Client."
+        description="Define duración, límites y exactamente qué perfiles/webs puede utilizar cada plan."
         actions={
-          <button className="button primary" onClick={() => setEditor('new')}>
+          <button className="button primary" onClick={() => openEditor('new')} disabled={profiles.length === 0}>
             <Plus size={14} />
             Nuevo plan
           </button>
@@ -82,35 +121,47 @@ export function PlansView() {
                   <th>Plan</th>
                   <th>Duración</th>
                   <th>Dispositivos</th>
-                  <th>Perfiles</th>
+                  <th>Máx. asignados</th>
+                  <th>Perfiles permitidos</th>
                   <th>Estado</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {plans.map((plan) => (
-                  <tr key={plan.id}>
-                    <td className="table-primary">{plan.name}</td>
-                    <td>{plan.duration_days === null ? 'Sin límite definido' : `${plan.duration_days} días`}</td>
-                    <td>{plan.max_devices}</td>
-                    <td>{plan.max_profiles}</td>
-                    <td>
-                      <Badge tone={plan.enabled ? 'ok' : 'bad'}>{plan.enabled ? 'Activo' : 'Inactivo'}</Badge>
-                    </td>
-                    <td>
-                      <div className="toolbar" style={{ margin: 0 }}>
-                        <button className="button secondary small" onClick={() => setEditor(plan)}>
-                          <Pencil size={12} />
-                          Editar
-                        </button>
-                        <button className="button danger small" onClick={() => void remove(plan)}>
-                          <Trash2 size={12} />
-                          Eliminar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {plans.map((plan) => {
+                  const names = allowedProfileNames(plan);
+                  return (
+                    <tr key={plan.id}>
+                      <td className="table-primary">{plan.name}</td>
+                      <td>{plan.duration_days === null ? 'Sin límite definido' : `${plan.duration_days} días`}</td>
+                      <td>{plan.max_devices}</td>
+                      <td>{plan.max_profiles}</td>
+                      <td>
+                        <div className="table-primary">{plan.profile_ids.length} permitidos</div>
+                        <div className="table-secondary">
+                          {names.length > 0
+                            ? `${names.slice(0, 3).join(' · ')}${names.length > 3 ? ` · +${names.length - 3}` : ''}`
+                            : 'Sin perfiles'}
+                        </div>
+                      </td>
+                      <td>
+                        <Badge tone={plan.enabled ? 'ok' : 'bad'}>{plan.enabled ? 'Activo' : 'Inactivo'}</Badge>
+                      </td>
+                      <td>
+                        <div className="toolbar" style={{ margin: 0 }}>
+                          <button className="button secondary small" onClick={() => openEditor(plan)}>
+                            <Pencil size={12} />
+                            Editar
+                          </button>
+                          <button className="button danger small" onClick={() => void remove(plan)}>
+                            <Trash2 size={12} />
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -120,10 +171,10 @@ export function PlansView() {
       {editor && (
         <Modal
           title={current ? `Editar plan · ${current.name}` : 'Nuevo plan'}
-          onClose={() => setEditor(null)}
+          onClose={closeEditor}
           actions={
             <>
-              <button className="button secondary" onClick={() => setEditor(null)}>Cancelar</button>
+              <button className="button secondary" onClick={closeEditor}>Cancelar</button>
               <button className="button primary" form="plan-form" type="submit">Guardar</button>
             </>
           }
@@ -138,7 +189,7 @@ export function PlansView() {
             <Field label="Máximo de dispositivos">
               <input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue={current?.max_devices ?? 1} required />
             </Field>
-            <Field label="Máximo de perfiles">
+            <Field label="Máximo de perfiles" help="Cantidad máxima que se puede asignar al cliente; puede ser menor que la lista de permitidos.">
               <input className="input" name="maxProfiles" type="number" min="1" max="500" defaultValue={current?.max_profiles ?? 5} required />
             </Field>
             <Field label="Estado">
@@ -146,6 +197,50 @@ export function PlansView() {
                 <option value="true">Activo</option>
                 <option value="false">Inactivo</option>
               </select>
+            </Field>
+            <Field
+              label={`Perfiles permitidos (${selectedProfileIds.length})`}
+              help="Sólo estos perfiles podrán asignarse y abrirse para clientes que tengan este plan."
+              className="span-2"
+            >
+              <div style={{ border: '1px solid #dbe2ea', borderRadius: 12, padding: 12 }}>
+                <div className="toolbar" style={{ margin: '0 0 10px' }}>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => setSelectedProfileIds(profiles.map((profile) => profile.id))}
+                  >
+                    Seleccionar todos
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => setSelectedProfileIds([])}
+                  >
+                    Ninguno
+                  </button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
+                  {profiles.map((profile) => (
+                    <label
+                      key={profile.id}
+                      style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 10px', border: '1px solid #e5eaf0', borderRadius: 10, cursor: 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedProfileIds.includes(profile.id)}
+                        onChange={() => toggleProfile(profile.id)}
+                      />
+                      <span style={{ minWidth: 0 }}>
+                        <span className="table-primary">{profileLabel(profile)}</span>
+                        <span className="table-secondary" style={{ display: 'block' }}>
+                          {profile.enabled ? new URL(profile.url).hostname : 'Inactivo'}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </Field>
           </form>
         </Modal>

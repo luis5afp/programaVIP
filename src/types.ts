@@ -14,6 +14,7 @@ export interface Plan {
   duration_days: number | null;
   max_devices: number;
   max_profiles: number;
+  profile_ids: string[];
   enabled: boolean;
   created_at: string;
   updated_at: string;
