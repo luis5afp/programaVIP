@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { CalendarClock, KeyRound, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Client, Plan } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
@@ -12,6 +12,13 @@ function endDate(days = 30) {
   return dateInput(new Date(Date.now() + days * 86400000));
 }
 
+function normalizeSearchValue(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es');
+}
+
 export function ClientsView() {
   const [clients, setClients] = useState<Client[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -20,6 +27,7 @@ export function ClientsView() {
   const [credentialsClient, setCredentialsClient] = useState<Client | null>(null);
   const [subscriptionClient, setSubscriptionClient] = useState<Client | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const defaultStart = useMemo(() => dateInput(new Date()), []);
 
   async function load() {
@@ -131,16 +139,46 @@ export function ClientsView() {
     }
   }
 
+  const normalizedSearch = normalizeSearchValue(searchQuery.trim());
+  const filteredClients = normalizedSearch
+    ? clients.filter((client) => {
+        const searchable = [
+          client.name,
+          client.email,
+          client.phone || '',
+          client.credential?.username || '',
+          client.subscription?.plan?.name || '',
+          client.status,
+        ].join(' ');
+        return normalizeSearchValue(searchable).includes(normalizedSearch);
+      })
+    : clients;
+
   return (
     <>
       <PageHead
         title="Clientes"
         description="Clientes reales con credenciales de PC hasheadas, suscripción y suspensión controladas por el servidor."
         actions={
-          <button className="button primary" onClick={() => setCreateOpen(true)} disabled={plans.length === 0}>
-            <Plus size={14} />
-            Nuevo cliente
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <Search size={15} style={{ position: 'absolute', left: 11, color: '#94a3b8', pointerEvents: 'none' }} />
+              <input
+                className="input"
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Buscar clientes..."
+                aria-label="Buscar clientes"
+                autoComplete="off"
+                style={{ width: 270, paddingLeft: 34 }}
+              />
+            </label>
+            <button className="button primary" onClick={() => setCreateOpen(true)} disabled={plans.length === 0}>
+              <Plus size={14} />
+              Nuevo cliente
+            </button>
+          </div>
         }
       />
       <ErrorBanner message={error} />
@@ -153,6 +191,8 @@ export function ClientsView() {
       <Card>
         {clients.length === 0 ? (
           <Empty title="No hay clientes" description="Crea el primer cliente cuando tengas un plan definido." />
+        ) : filteredClients.length === 0 ? (
+          <Empty title="No se encontraron clientes" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre, correo o usuario.`} />
         ) : (
           <div className="table-wrap">
             <table>
@@ -166,7 +206,7 @@ export function ClientsView() {
                 </tr>
               </thead>
               <tbody>
-                {clients.map((client) => {
+                {filteredClients.map((client) => {
                   const expired = client.subscription
                     ? new Date(client.subscription.expires_at).getTime() <= Date.now()
                     : true;
