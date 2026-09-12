@@ -1,6 +1,6 @@
 {
   "name": "userflex-client",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "userFLEX Client para Windows",
@@ -28,6 +28,10 @@
       "index.html",
       "renderer.js",
       "styles.css",
+      "browser.html",
+      "browser.css",
+      "browser-renderer.js",
+      "browser-preload.cjs",
       "package.json"
     ],
     "win": {
