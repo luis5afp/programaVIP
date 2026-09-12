@@ -6,8 +6,8 @@
   "description": "userFLOW para Windows",
   "main": "bootstrap.js",
   "scripts": {
-    "start": "electron .",
-    "dist:win": "electron-builder --win nsis"
+    "start": "node prepare-icon.js && electron .",
+    "dist:win": "node prepare-icon.js && electron-builder --win nsis"
   },
   "dependencies": {},
   "devDependencies": {
@@ -36,7 +36,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "assets/userflow.ico",
+      "icon": "assets/userflow.png",
       "executableName": "userFLEX Client",
       "target": [
         "nsis"
