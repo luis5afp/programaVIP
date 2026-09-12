@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -50,7 +50,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "userFLOW"
+      "shortcutName": "userFLOW",
+      "runAfterFinish": true
     }
   }
 }
