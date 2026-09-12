@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'none'; font-src 'self';" />
+  <title>userFLEX Client</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="loading-view" class="screen center-screen">
+      <div class="brand-mark">uF</div>
+      <h1>userFLEX</h1>
+      <p>Conectando con el servidor…</p>
+    </section>
+
+    <section id="login-view" class="screen hidden">
+      <div class="login-shell">
+        <div class="login-brand">
+          <div class="brand-mark large">uF</div>
+          <div>
+            <h1>userFLEX Client</h1>
+            <p>Accede con las credenciales asignadas por tu administrador.</p>
+          </div>
+        </div>
+        <form id="login-form" class="login-card">
+          <label>
+            <span>Usuario o correo</span>
+            <input id="identifier" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Contraseña</span>
+            <input id="password" type="password" autocomplete="current-password" required />
+          </label>
+          <div id="login-error" class="error hidden"></div>
+          <button id="login-button" class="primary-button" type="submit">Ingresar</button>
+          <div class="login-note">Este equipo quedará registrado dentro del límite de dispositivos de tu plan.</div>
+        </form>
+      </div>
+    </section>
+
+    <section id="client-view" class="screen hidden">
+      <header class="topbar">
+        <div class="brand-inline">
+          <div class="brand-mark">uF</div>
+          <div>
+            <strong>userFLEX</strong>
+            <span>Client</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="server-state" class="status-dot">Servidor conectado</span>
+          <button id="refresh-button" class="ghost-button" type="button">Actualizar</button>
+          <button id="logout-button" class="ghost-button danger-text" type="button">Salir</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="account-row">
+          <div>
+            <div class="eyebrow">CUENTA</div>
+            <h2 id="client-name">Cliente</h2>
+            <div id="client-email" class="muted"></div>
+          </div>
+          <div class="plan-box">
+            <div class="eyebrow">PLAN</div>
+            <strong id="plan-name">—</strong>
+            <span id="plan-expiry">—</span>
+          </div>
+        </section>
+
+        <section class="profiles-section">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">PERFILES ASIGNADOS</div>
+              <h2>Mis accesos</h2>
+            </div>
+            <div class="search-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="profile-search" type="search" placeholder="Buscar perfil…" autocomplete="off" />
+            </div>
+          </div>
+
+          <div id="catalog-error" class="error hidden"></div>
+          <div id="empty-state" class="empty hidden">
+            <div class="empty-icon">◎</div>
+            <h3>No tienes perfiles asignados</h3>
+            <p>Cuando el administrador te asigne un perfil aparecerá aquí automáticamente.</p>
+          </div>
+          <div id="profiles-grid" class="profiles-grid"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>userFLEX Client v0.1.0</span>
+        <span id="heartbeat-time">Listo</span>
+      </footer>
+    </section>
+  </div>
+  <script src="./renderer.js"></script>
+</body>
+</html>
