@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage } from 'electron';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,15 +8,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 60_000;
+const BROWSER_CHROME_HEIGHT = 92;
 
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 let mainWindow = null;
+let browserWindow = null;
+let browserShellReady = false;
+let activeProfileId = null;
 let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
-const profileWindows = new Map();
+const profileTabs = new Map();
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -117,6 +121,7 @@ async function catalog() {
     return await apiRequest('/api/client/catalog');
   } catch (error) {
     if (error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code)) {
+      closePrivateBrowser();
       await clearAuth();
     }
     throw error;
@@ -143,11 +148,13 @@ function startHeartbeat() {
       const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
       sendMain('userflex:heartbeat', result);
       if (result?.revoke === true || result?.active === false) {
+        closePrivateBrowser();
         await clearAuth();
         sendMain('userflex:auth-invalidated', { message: 'La sesión del cliente fue revocada.' });
       }
     } catch (error) {
       if (error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code)) {
+        closePrivateBrowser();
         await clearAuth();
         sendMain('userflex:auth-invalidated', serializeError(error));
       }
@@ -167,7 +174,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 620,
     title: 'userFLEX Client',
-    backgroundColor: '#f4f7fb',
+    backgroundColor: '#080b10',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -220,13 +227,13 @@ function cookieSetPayload(cookie, fallbackUrl) {
   return value;
 }
 
-async function restoreManagedSession(browserWindow, browserSession, profile, delivery) {
+async function restoreManagedSession(webContents, browserSession, profile, delivery) {
   const material = delivery?.material;
   if (!material || material.format !== 'userflex-browser-session-v1') {
     throw new UserflexError('El material de sesión del perfil no es compatible.', 'SESSION_MATERIAL_INVALID');
   }
   if (material.profileId && material.profileId !== profile.id) {
-    throw new UserflexError('La sesión recibida no pertenece a este perfil.', 'SESSION_PROFILE_MISMATCH');
+    throw new UserflexError('La sesión recibida no pertenecece a este perfil.', 'SESSION_PROFILE_MISMATCH');
   }
   const targetOrigin = new URL(profile.url).origin;
   if (material.allowedOrigin && material.allowedOrigin !== targetOrigin) {
@@ -244,13 +251,13 @@ async function restoreManagedSession(browserWindow, browserSession, profile, del
     }
   }
 
-  await browserWindow.loadURL(profile.url);
+  await webContents.loadURL(profile.url);
   const storage = material.storage && typeof material.storage === 'object' ? material.storage : null;
   if (!storage) return;
 
   let currentOrigin = null;
   try {
-    currentOrigin = new URL(browserWindow.webContents.getURL()).origin;
+    currentOrigin = new URL(webContents.getURL()).origin;
   } catch {
     return;
   }
@@ -258,7 +265,7 @@ async function restoreManagedSession(browserWindow, browserSession, profile, del
 
   const localStorageData = storage.localStorage && typeof storage.localStorage === 'object' ? storage.localStorage : {};
   const sessionStorageData = storage.sessionStorage && typeof storage.sessionStorage === 'object' ? storage.sessionStorage : {};
-  await browserWindow.webContents.executeJavaScript(`(() => {
+  await webContents.executeJavaScript(`(() => {
     const localData = ${JSON.stringify(localStorageData)};
     const sessionData = ${JSON.stringify(sessionStorageData)};
     try { localStorage.clear(); } catch {}
@@ -267,15 +274,211 @@ async function restoreManagedSession(browserWindow, browserSession, profile, del
     for (const [key, value] of Object.entries(sessionData)) { try { sessionStorage.setItem(key, String(value)); } catch {} }
     return true;
   })()`);
-  await browserWindow.webContents.reload();
+  webContents.reload();
+}
+
+function profileLabel(profile) {
+  return profile?.tags?.[0] || profile?.name || 'Perfil';
+}
+
+function navigationCapability(webContents, direction) {
+  try {
+    if (direction === 'back') return Boolean(webContents.navigationHistory?.canGoBack?.() ?? webContents.canGoBack?.());
+    return Boolean(webContents.navigationHistory?.canGoForward?.() ?? webContents.canGoForward?.());
+  } catch {
+    return false;
+  }
+}
+
+function browserTabPayload(tab) {
+  const webContents = tab.view.webContents;
+  const lockedIp = tab.delivery?.networkLocked ? tab.delivery?.expectedPublicIp : null;
+  return {
+    id: tab.profile.id,
+    label: profileLabel(tab.profile),
+    imageUrl: tab.profile.imageUrl || null,
+    url: webContents.isDestroyed() ? tab.profile.url : (webContents.getURL() || tab.profile.url),
+    loading: tab.loading === true,
+    canGoBack: !webContents.isDestroyed() && navigationCapability(webContents, 'back'),
+    canGoForward: !webContents.isDestroyed() && navigationCapability(webContents, 'forward'),
+    networkLabel: tab.connection?.mode === 'proxy'
+      ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
+      : 'Conexión directa',
+  };
+}
+
+function browserState() {
+  return {
+    activeProfileId,
+    tabs: Array.from(profileTabs.values()).map(browserTabPayload),
+  };
+}
+
+function sendBrowserState() {
+  if (!browserShellReady || !browserWindow || browserWindow.isDestroyed()) return;
+  browserWindow.webContents.send('userflex-browser:state', browserState());
+}
+
+function layoutActiveProfileView() {
+  if (!browserWindow || browserWindow.isDestroyed() || !activeProfileId) return;
+  const tab = profileTabs.get(activeProfileId);
+  if (!tab || tab.view.webContents.isDestroyed()) return;
+  const [width, height] = browserWindow.getContentSize();
+  tab.view.setBounds({
+    x: 0,
+    y: BROWSER_CHROME_HEIGHT,
+    width: Math.max(1, width),
+    height: Math.max(1, height - BROWSER_CHROME_HEIGHT),
+  });
+}
+
+function cleanupProfileTab(tab, removeView = true) {
+  if (!tab) return;
+  if (tab.loginHandler) app.removeListener('login', tab.loginHandler);
+  if (removeView && browserWindow && !browserWindow.isDestroyed()) {
+    try {
+      browserWindow.contentView.removeChildView(tab.view);
+    } catch {
+      // The view may already be detached during window teardown.
+    }
+  }
+  if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+}
+
+function createBrowserWindow() {
+  if (browserWindow && !browserWindow.isDestroyed()) return browserWindow;
+  browserShellReady = false;
+  browserWindow = new BrowserWindow({
+    width: 1380,
+    height: 900,
+    minWidth: 960,
+    minHeight: 680,
+    title: 'userFLEX Browser',
+    backgroundColor: '#090c12',
+    webPreferences: {
+      preload: path.join(__dirname, 'browser-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: false,
+    },
+  });
+  browserWindow.on('resize', layoutActiveProfileView);
+  browserWindow.webContents.on('did-finish-load', () => {
+    browserShellReady = true;
+    sendBrowserState();
+  });
+  browserWindow.on('closed', () => {
+    const tabs = Array.from(profileTabs.values());
+    browserWindow = null;
+    browserShellReady = false;
+    activeProfileId = null;
+    profileTabs.clear();
+    for (const tab of tabs) cleanupProfileTab(tab, false);
+  });
+  void browserWindow.loadFile(path.join(__dirname, 'browser.html'));
+  return browserWindow;
+}
+
+function selectProfileTab(profileId) {
+  const tab = profileTabs.get(profileId);
+  if (!tab) return false;
+  const window = createBrowserWindow();
+  if (activeProfileId && activeProfileId !== profileId) {
+    const previous = profileTabs.get(activeProfileId);
+    if (previous) window.contentView.removeChildView(previous.view);
+  }
+  activeProfileId = profileId;
+  window.contentView.addChildView(tab.view);
+  layoutActiveProfileView();
+  window.show();
+  window.focus();
+  sendBrowserState();
+  return true;
+}
+
+function closeProfileTab(profileId) {
+  const id = profileId || activeProfileId;
+  if (!id) return false;
+  const ids = Array.from(profileTabs.keys());
+  const index = ids.indexOf(id);
+  const tab = profileTabs.get(id);
+  if (!tab) return false;
+  const wasActive = activeProfileId === id;
+  cleanupProfileTab(tab, true);
+  profileTabs.delete(id);
+  if (wasActive) {
+    activeProfileId = null;
+    const nextId = ids[index + 1] || ids[index - 1] || null;
+    if (nextId && profileTabs.has(nextId)) selectProfileTab(nextId);
+    else if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
+  } else {
+    sendBrowserState();
+  }
+  return true;
+}
+
+function closePrivateBrowser() {
+  const tabs = Array.from(profileTabs.values());
+  profileTabs.clear();
+  activeProfileId = null;
+  for (const tab of tabs) cleanupProfileTab(tab, true);
+  if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
+}
+
+function tabNavigation(action, profileId) {
+  const tab = profileTabs.get(profileId || activeProfileId);
+  if (!tab || tab.view.webContents.isDestroyed()) return false;
+  const webContents = tab.view.webContents;
+  try {
+    if (action === 'back' && navigationCapability(webContents, 'back')) {
+      if (webContents.navigationHistory?.goBack) webContents.navigationHistory.goBack();
+      else webContents.goBack();
+    } else if (action === 'forward' && navigationCapability(webContents, 'forward')) {
+      if (webContents.navigationHistory?.goForward) webContents.navigationHistory.goForward();
+      else webContents.goForward();
+    } else if (action === 'reload') {
+      webContents.reload();
+    } else if (action === 'home') {
+      void webContents.loadURL(tab.profile.url);
+    } else {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function attachProfileViewEvents(tab) {
+  const webContents = tab.view.webContents;
+  const update = () => sendBrowserState();
+  webContents.on('did-start-loading', () => {
+    tab.loading = true;
+    update();
+  });
+  webContents.on('did-stop-loading', () => {
+    tab.loading = false;
+    update();
+  });
+  webContents.on('did-navigate', update);
+  webContents.on('did-navigate-in-page', update);
+  webContents.on('page-title-updated', update);
+  webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const target = new URL(url);
+      if (target.protocol === 'https:' || target.protocol === 'http:') void webContents.loadURL(target.toString());
+    } catch {
+      // Ignore invalid popups.
+    }
+    return { action: 'deny' };
+  });
 }
 
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
-  const existing = profileWindows.get(profileId);
-  if (existing && !existing.isDestroyed()) {
-    existing.show();
-    existing.focus();
+  if (profileTabs.has(profileId)) {
+    selectProfileTab(profileId);
     return { ok: true, reused: true };
   }
 
@@ -287,14 +490,7 @@ async function openProfile(profileId) {
 
   const partitionClientId = authMeta?.client?.id || 'client';
   const partition = `persist:userflex-client-${partitionClientId}-${profile.id}`;
-  const browserWindow = new BrowserWindow({
-    width: 1280,
-    height: 850,
-    minWidth: 900,
-    minHeight: 650,
-    title: `userFLEX · ${profile.name}`,
-    show: false,
-    backgroundColor: '#ffffff',
+  const view = new WebContentsView({
     webPreferences: {
       partition,
       contextIsolation: true,
@@ -303,11 +499,10 @@ async function openProfile(profileId) {
       devTools: false,
     },
   });
-  profileWindows.set(profileId, browserWindow);
-  browserWindow.on('closed', () => profileWindows.delete(profileId));
-
-  const browserSession = browserWindow.webContents.session;
+  view.setBackgroundColor('#ffffff');
+  const browserSession = view.webContents.session;
   let loginHandler = null;
+
   if (connection.mode === 'proxy' && connection.proxy) {
     await browserSession.setProxy({
       mode: 'fixed_servers',
@@ -315,7 +510,8 @@ async function openProfile(profileId) {
       proxyBypassRules: '<-loopback>',
     });
     const proxyHost = String(connection.proxy.host || '').toLowerCase();
-    loginHandler = (event, _webContents, _details, authInfo, callback) => {
+    loginHandler = (event, targetWebContents, _details, authInfo, callback) => {
+      if (targetWebContents !== view.webContents) return;
       if (!authInfo?.isProxy || String(authInfo.host || '').toLowerCase() !== proxyHost) return;
       event.preventDefault();
       callback(connection.proxy.username || '', connection.proxy.password || '');
@@ -325,9 +521,15 @@ async function openProfile(profileId) {
     await browserSession.setProxy({ mode: 'direct' });
   }
 
-  browserWindow.on('closed', () => {
-    if (loginHandler) app.removeListener('login', loginHandler);
-  });
+  const tab = {
+    profile,
+    connection,
+    delivery,
+    view,
+    loginHandler,
+    loading: false,
+  };
+  attachProfileViewEvents(tab);
 
   try {
     if (connection.locked === true && connection.mode !== 'proxy') {
@@ -345,32 +547,23 @@ async function openProfile(profileId) {
       if (!delivery?.ready || !delivery?.materialIncluded) {
         throw new UserflexError('La sesión administrada todavía no está lista.', 'MANAGED_SESSION_NOT_READY');
       }
-      await restoreManagedSession(browserWindow, browserSession, profile, delivery);
+      await restoreManagedSession(view.webContents, browserSession, profile, delivery);
     } else {
-      await browserWindow.loadURL(profile.url);
+      await view.webContents.loadURL(profile.url);
     }
 
-    browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-      try {
-        const target = new URL(url);
-        if (target.protocol === 'https:' || target.protocol === 'http:') void browserWindow.loadURL(target.toString());
-      } catch {
-        // Ignore invalid popups.
-      }
-      return { action: 'deny' };
-    });
-
-    browserWindow.show();
-    browserWindow.focus();
+    profileTabs.set(profile.id, tab);
+    selectProfileTab(profile.id);
     return {
       ok: true,
       reused: false,
+      tabbed: true,
       network: connection.mode,
       networkLocked: connection.locked === true,
       sessionVersion: Number(delivery?.version || 0),
     };
   } catch (error) {
-    if (!browserWindow.isDestroyed()) browserWindow.destroy();
+    cleanupProfileTab(tab, false);
     throw error;
   }
 }
@@ -437,14 +630,37 @@ ipcMain.handle('userflex:launch-profile', async (_event, profileId) => {
   }
 });
 
+ipcMain.handle('userflex-browser:get-state', (event) => {
+  if (!browserWindow || browserWindow.isDestroyed() || event.sender !== browserWindow.webContents) {
+    return { activeProfileId: null, tabs: [] };
+  }
+  return browserState();
+});
+
+ipcMain.handle('userflex-browser:action', (event, input) => {
+  if (!browserWindow || browserWindow.isDestroyed() || event.sender !== browserWindow.webContents) return { ok: false };
+  const action = String(input?.action || '');
+  const profileId = typeof input?.profileId === 'string' ? input.profileId : activeProfileId;
+  if (action === 'select') return { ok: selectProfileTab(profileId) };
+  if (action === 'close') return { ok: closeProfileTab(profileId) };
+  if (['back', 'forward', 'reload', 'home'].includes(action)) return { ok: tabNavigation(action, profileId) };
+  if (action === 'catalog') {
+    if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
+    mainWindow.show();
+    mainWindow.focus();
+    return { ok: true };
+  }
+  return { ok: false };
+});
+
 ipcMain.handle('userflex:logout', async () => {
   try {
     if (accessToken) await apiRequest('/api/client/logout', { method: 'POST' }).catch(() => null);
-    for (const window of profileWindows.values()) if (!window.isDestroyed()) window.destroy();
-    profileWindows.clear();
+    closePrivateBrowser();
     await clearAuth();
     return { ok: true };
   } catch (error) {
+    closePrivateBrowser();
     await clearAuth();
     return { ok: false, error: serializeError(error) };
   }
