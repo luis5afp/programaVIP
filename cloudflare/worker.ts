@@ -1,6 +1,7 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
+import { publicClientUpdateRoutes } from './lib/client-updates';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
@@ -14,7 +15,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -35,6 +36,9 @@ async function api(request: Request, env: Env): Promise<Response> {
       timestamp: new Date().toISOString(),
     });
   }
+
+  const updateResponse = await publicClientUpdateRoutes(request, env);
+  if (updateResponse) return updateResponse;
 
   if (path === '/api/auth/login' && method === 'POST') {
     requireSameOriginWrite(request);
