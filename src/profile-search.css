@@ -1,9 +1,9 @@
-.page-head:has(input[aria-label="Buscar perfiles"]) > div:first-child {
+.page-head:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) > div:first-child {
   min-width: 0;
   flex: 1 1 auto;
 }
 
-.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) {
+.page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) {
   flex: 0 1 430px;
   min-width: 0;
   max-width: 430px;
@@ -12,41 +12,41 @@
   justify-content: flex-end;
 }
 
-.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) > div {
+.page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) > div {
   width: 100%;
   min-width: 0;
   flex-wrap: nowrap !important;
   align-items: center;
 }
 
-.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) label {
+.page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) label {
   min-width: 0;
   flex: 1 1 auto !important;
 }
 
-.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) input[aria-label="Buscar perfiles"] {
+.page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"]) {
   width: 100% !important;
   min-width: 150px;
 }
 
-.page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) .button {
+.page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) .button {
   flex: 0 0 auto;
   white-space: nowrap;
 }
 
 @media (max-width: 1050px) {
-  .page-head:has(input[aria-label="Buscar perfiles"]) {
+  .page-head:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) {
     align-items: flex-start;
   }
 
-  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) {
+  .page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) {
     flex-basis: 360px;
     max-width: 360px;
   }
 }
 
 @media (max-width: 820px) {
-  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) {
+  .page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) {
     width: 100%;
     max-width: none;
     flex-basis: auto;
@@ -54,11 +54,11 @@
 }
 
 @media (max-width: 560px) {
-  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) > div {
+  .page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) > div {
     flex-wrap: wrap !important;
   }
 
-  .page-head > .toolbar:has(input[aria-label="Buscar perfiles"]) label {
+  .page-head > .toolbar:has(input:is([aria-label="Buscar perfiles"], [aria-label="Buscar clientes"])) label {
     flex: 1 1 100% !important;
   }
 }
