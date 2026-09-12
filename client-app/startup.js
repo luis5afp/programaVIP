@@ -5,23 +5,29 @@ import path from 'node:path';
 const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
 const UPDATE_PROXY_BASE = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
 
-// bootstrap.js temporarily closes the splash before main.js creates the Client
-// window. Electron may otherwise terminate on Windows when the last window is
-// closed. Keeping a window-all-closed listener registered during that handoff
-// prevents the default quit; main.js installs the normal lifecycle listener
-// before this guard is removed.
+// Capture Electron's packaged default user-data directory before changing the
+// visible application name. Keep that directory fixed for every future launch
+// so an update/rebrand cannot silently generate a different device identity.
+const STABLE_USER_DATA = app.getPath('userData');
+const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'userFLEX Client');
+app.setPath('userData', STABLE_USER_DATA);
+app.setName('userFLOW');
+
+// Keep Electron alive while bootstrap hands off from the updater splash to the
+// real Client window. bootstrap.js now waits for the main window before closing
+// the splash, but this guard remains as a defensive lifecycle fallback.
 const bootstrapWindowHold = () => {};
 
 async function startAfterReady() {
   Menu.setApplicationMenu(null);
 
   const currentUserData = app.getPath('userData');
-  const legacyUserData = path.join(app.getPath('appData'), 'userFLEX Client');
-  const startupLog = path.join(legacyUserData, 'startup.log');
+  const legacyUserData = LEGACY_USER_DATA;
+  const startupLog = path.join(currentUserData, 'startup.log');
 
   async function log(message) {
     try {
-      await fs.mkdir(legacyUserData, { recursive: true });
+      await fs.mkdir(currentUserData, { recursive: true });
       await fs.appendFile(startupLog, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
     } catch {
       // Diagnostics must never block startup.
@@ -36,12 +42,12 @@ async function startAfterReady() {
       await fs.access(target);
       return;
     } catch {
-      // Copy only when the destination does not already exist.
+      // Copy only when the stable destination does not already exist.
     }
     try {
       await fs.mkdir(currentUserData, { recursive: true });
       await fs.copyFile(source, target);
-      await log(`Migrated ${fileName} to ${currentUserData}`);
+      await log(`Migrated ${fileName} from legacy userData to ${currentUserData}`);
     } catch {
       // Fresh installs may not have legacy identity files.
     }
@@ -49,25 +55,25 @@ async function startAfterReady() {
 
   try {
     await log(`READY userFLOW v${app.getVersion()} from ${app.getPath('exe')}`);
-    await log(`userData: ${currentUserData}`);
+    await log(`stable userData: ${currentUserData}`);
     await copyIdentityFile('device.json');
     await copyIdentityFile('auth.json');
 
-    // bootstrap.js still contains one legacy userData compatibility call.
-    // Electron is already ready here, so ignore only that call and leave all
-    // other app.setPath uses untouched.
+    // bootstrap.js still contains one legacy userData compatibility call. The
+    // stable path is already locked before app.whenReady(), so ignore that late
+    // override and leave all other app.setPath calls untouched.
     const nativeSetPath = app.setPath.bind(app);
     app.setPath = (name, value) => {
       if (name === 'userData') {
-        void log(`Ignored legacy userData override after ready: ${value}`);
+        void log(`Ignored late userData override: ${value}`);
         return;
       }
       return nativeSetPath(name, value);
     };
 
     // Some client networks cannot reach the Supabase Storage hostname directly.
-    // Keep the updater implementation unchanged, but transparently route only
-    // its manifest/chunk reads through the userFLEX Cloudflare Worker.
+    // Keep compatibility with legacy updater URLs while routing only those reads
+    // through the userFLEX Cloudflare Worker.
     const nativeFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = (input, init) => {
       const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
@@ -109,22 +115,17 @@ async function startAfterReady() {
   }
 }
 
-// Keep only one userFLOW process. During an automatic update the NSIS installer
-// now relaunches the app itself; the legacy updater helper may also attempt a
-// fallback launch, so a second instance must exit cleanly instead of opening a
-// duplicate window.
+// Keep only one userFLOW process. During an update the NSIS installer may be
+// visible while the old app is still shutting down, so duplicate launches must
+// exit cleanly instead of opening a second Client window.
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  // Hold the process open across the splash -> main-window handoff. Without
-  // this listener, closing the only BrowserWindow can terminate Electron before
-  // main.js gets a chance to create the login window.
   app.on('window-all-closed', bootstrapWindowHold);
 
-  // Important: do not top-level await app.whenReady(). The early working Client
-  // builds used this promise pattern. It lets the entry module finish evaluating
-  // immediately while Electron continues its normal initialization.
+  // Do not top-level await app.whenReady(); let Electron complete its native
+  // startup lifecycle while this entry module finishes evaluation normally.
   app.whenReady()
     .then(() => {
       void startAfterReady();
