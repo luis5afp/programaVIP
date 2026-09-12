@@ -6,11 +6,13 @@ on:
     paths:
       - 'client-app/**'
       - '.github/workflows/build-client-app.yml'
+      - 'supabase/migrations/*client_release*'
   push:
     branches: [main]
     paths:
       - 'client-app/**'
       - '.github/workflows/build-client-app.yml'
+      - 'supabase/migrations/*client_release*'
 
 permissions:
   contents: write
@@ -18,6 +20,7 @@ permissions:
 jobs:
   windows-installer:
     runs-on: windows-latest
+    environment: production
     defaults:
       run:
         working-directory: client-app
@@ -43,16 +46,76 @@ jobs:
           node --check preload.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build Windows installer
+      - name: Build Windows installer and updater metadata
         run: npm run dist:win
+
+      - name: Validate updater artifacts
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          $blockmap = Get-ChildItem -Path dist -Filter *.blockmap | Select-Object -First 1
+          $latest = Get-Item -Path dist/latest.yml -ErrorAction SilentlyContinue
+          if (-not $exe) { throw "No Windows installer was generated." }
+          if (-not $blockmap) { throw "No updater blockmap was generated." }
+          if (-not $latest) { throw "No latest.yml updater manifest was generated." }
+          $version = node -p "require('./package.json').version"
+          if (-not (Select-String -Path $latest.FullName -Pattern "version: $version" -SimpleMatch)) {
+            throw "latest.yml does not contain Client version $version."
+          }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: userFLEX-Client-Windows
-          path: client-app/dist/*.exe
+          path: |
+            client-app/dist/*.exe
+            client-app/dist/*.blockmap
+            client-app/dist/latest.yml
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish automatic updater feed
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          SUPABASE_URL: https://lbvxnbbglkjnwphaomyx.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if (-not $env:SUPABASE_SERVICE_ROLE_KEY) { throw "SUPABASE_SERVICE_ROLE_KEY is required." }
+
+          $exe = Get-ChildItem -Path dist -Filter *.exe | Select-Object -First 1
+          $blockmap = Get-ChildItem -Path dist -Filter *.blockmap | Select-Object -First 1
+          $latest = Get-Item -Path dist/latest.yml
+          $files = @($exe, $blockmap, $latest)
+
+          foreach ($file in $files) {
+            if (-not $file) { throw "Updater artifact is missing." }
+            $contentType = switch -Regex ($file.Name) {
+              '\.exe$' { 'application/x-msdownload'; break }
+              '\.blockmap$' { 'application/octet-stream'; break }
+              '\.yml$' { 'application/yaml'; break }
+              default { 'application/octet-stream' }
+            }
+            $name = [System.Uri]::EscapeDataString($file.Name)
+            $url = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/$name"
+            Write-Host "Publishing $($file.Name) to updater feed..."
+            & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 900 `
+              --request POST $url `
+              --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
+              --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
+              --header "x-upsert: true" `
+              --header "cache-control: max-age=0" `
+              --header "Content-Type: $contentType" `
+              --data-binary "@$($file.FullName)"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to publish $($file.Name) to Supabase Storage." }
+          }
+
+          $version = node -p "require('./package.json').version"
+          $feedUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/latest.yml?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+          $feed = (Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -Headers @{ 'Cache-Control' = 'no-cache' }).Content
+          if ($feed -notmatch "version:\s*$([regex]::Escape($version))") {
+            throw "Published updater feed does not expose version $version."
+          }
 
       - name: Publish Client release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -69,5 +132,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX: login, dispositivos, perfiles asignados y apertura de Chromium aislado con sesión administrada y proxy del perfil."
+            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX con actualización automática por versión antes del inicio de sesión."
           }
