@@ -1,9 +1,9 @@
 {
-  "name": "userflex-client",
-  "version": "0.2.2",
+  "name": "userflow-client",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
-  "description": "userFLEX Client para Windows",
+  "description": "userFLOW para Windows",
   "main": "bootstrap.js",
   "scripts": {
     "start": "electron .",
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "com.userflex.client",
-    "productName": "userFLEX Client",
+    "productName": "userFLOW",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -32,20 +32,22 @@
       "browser.css",
       "browser-renderer.js",
       "browser-preload.cjs",
+      "assets/**",
       "package.json"
     ],
     "win": {
+      "icon": "assets/userflow.ico",
       "target": [
         "nsis"
       ],
-      "artifactName": "userFLEX-Client-${version}-Setup.${ext}"
+      "artifactName": "userFLOW-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "userFLEX Client"
+      "shortcutName": "userFLOW"
     }
   }
 }
