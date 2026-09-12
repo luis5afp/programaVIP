@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'none'; font-src 'self';" />
+  <title>userFLEX Browser</title>
+  <link rel="stylesheet" href="./browser.css" />
+</head>
+<body>
+  <header class="browser-chrome">
+    <div class="tabs-row">
+      <button id="catalog-button" class="brand-button" type="button" title="Volver al catálogo">
+        <span class="brand-mark">uF</span>
+        <span class="brand-name">userFLEX</span>
+      </button>
+      <div id="tabs" class="tabs" role="tablist" aria-label="Perfiles abiertos"></div>
+      <button id="new-tab-button" class="new-tab-button" type="button" title="Abrir otro perfil desde el catálogo">+</button>
+      <span class="private-indicator"><span class="private-dot"></span>Perfiles privados</span>
+    </div>
+    <div class="toolbar">
+      <div class="nav-actions">
+        <button id="back-button" class="nav-button" type="button" title="Atrás" aria-label="Atrás">‹</button>
+        <button id="forward-button" class="nav-button" type="button" title="Adelante" aria-label="Adelante">›</button>
+        <button id="reload-button" class="nav-button" type="button" title="Recargar" aria-label="Recargar">↻</button>
+        <button id="home-button" class="nav-button home-button" type="button" title="Página principal del perfil" aria-label="Página principal">⌂</button>
+      </div>
+      <div class="address-shell">
+        <span class="lock-icon">◆</span>
+        <div class="address-copy">
+          <span id="profile-name" class="address-profile">Perfil</span>
+          <span id="address" class="address-url">—</span>
+        </div>
+      </div>
+      <div id="network-state" class="network-state">Aislado</div>
+    </div>
+  </header>
+  <script src="./browser-renderer.js"></script>
+</body>
+</html>
