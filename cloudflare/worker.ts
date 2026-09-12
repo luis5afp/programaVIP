@@ -1,6 +1,7 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
+import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProfileSessionRoutes, publicSessionManagerRoutes } from './lib/profile-sessions';
@@ -13,7 +14,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -78,6 +79,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (profileProxyResponse) return profileProxyResponse;
   const profileSessionResponse = await adminProfileSessionRoutes(request, env, admin);
   if (profileSessionResponse) return profileSessionResponse;
+  const planAccessResponse = await planAccessRoutes(request, env, admin);
+  if (planAccessResponse) return planAccessResponse;
   return adminRoutes(request, env, admin);
 }
 
