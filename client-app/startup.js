@@ -100,17 +100,26 @@ async function startAfterReady() {
   }
 }
 
-// Important: do not top-level await app.whenReady(). The early working Client
-// builds used this promise pattern. It lets the entry module finish evaluating
-// immediately while Electron continues its normal initialization.
-app.whenReady()
-  .then(() => {
-    void startAfterReady();
-  })
-  .catch((error) => {
-    try {
-      dialog.showErrorBox('userFLOW no pudo iniciar', error?.message || String(error));
-    } finally {
-      app.quit();
-    }
-  });
+// Keep only one userFLOW process. During an automatic update the NSIS installer
+// now relaunches the app itself; the legacy updater helper may also attempt a
+// fallback launch, so a second instance must exit cleanly instead of opening a
+// duplicate window.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  // Important: do not top-level await app.whenReady(). The early working Client
+  // builds used this promise pattern. It lets the entry module finish evaluating
+  // immediately while Electron continues its normal initialization.
+  app.whenReady()
+    .then(() => {
+      void startAfterReady();
+    })
+    .catch((error) => {
+      try {
+        dialog.showErrorBox('userFLOW no pudo iniciar', error?.message || String(error));
+      } finally {
+        app.quit();
+      }
+    });
+}
