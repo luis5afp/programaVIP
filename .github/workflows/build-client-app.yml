@@ -45,6 +45,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check preload.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-renderer.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-preload.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows installer
         run: npm run dist:win
