@@ -1,15 +1,17 @@
 {
   "name": "userflex-client",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "userFLEX Client para Windows",
   "main": "bootstrap.js",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis"
+    "dist:win": "electron-builder --win nsis --publish never"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
   "devDependencies": {
     "electron": "^38.1.2",
     "electron-builder": "^26.0.12"
@@ -29,6 +31,12 @@
       "renderer.js",
       "styles.css",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases/"
+      }
     ],
     "win": {
       "target": [
