@@ -1,10 +1,10 @@
 {
   "name": "userflow-client",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
-  "main": "bootstrap.js",
+  "main": "startup.js",
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --win nsis"
@@ -22,6 +22,7 @@
       "output": "dist"
     },
     "files": [
+      "startup.js",
       "bootstrap.js",
       "main.js",
       "preload.cjs",
