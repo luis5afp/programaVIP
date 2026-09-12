@@ -31,6 +31,16 @@ jobs:
       - name: Install Client dependencies
         run: npm install
 
+      - name: Validate Client JavaScript
+        shell: pwsh
+        run: |
+          node --check main.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check renderer.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check preload.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build Windows installer
         run: npm run dist:win
 
