@@ -12,10 +12,14 @@ const refreshButton = document.getElementById('refresh-button');
 const logoutButton = document.getElementById('logout-button');
 const heartbeatTime = document.getElementById('heartbeat-time');
 const serverState = document.getElementById('server-state');
+const subscriptionStatus = document.getElementById('subscription-status');
+const categoryFilters = document.getElementById('category-filters');
 
 let auth = null;
 let catalog = null;
 let query = '';
+let category = 'all';
+const launchingProfiles = new Set();
 
 function show(view) {
   for (const element of [loadingView, loginView, clientView]) element.classList.add('hidden');
@@ -40,11 +44,11 @@ function normalize(value) {
 }
 
 function formatDate(value) {
-  if (!value) return '—';
+  if (!value) return null;
   try {
     return new Date(value).toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
   } catch {
-    return '—';
+    return null;
   }
 }
 
@@ -60,102 +64,154 @@ function domain(url) {
   }
 }
 
-function renderAccount() {
-  document.getElementById('client-name').textContent = auth?.client?.name || 'Cliente';
-  document.getElementById('client-email').textContent = auth?.client?.email || '';
-  document.getElementById('plan-name').textContent = catalog?.plan?.name || auth?.plan?.name || '—';
-  document.getElementById('plan-expiry').textContent = `Vence ${formatDate(catalog?.expiresAt || auth?.subscription?.expiresAt)}`;
+function profileSearchText(profile) {
+  return normalize([
+    profileLabel(profile),
+    profile?.name,
+    profile?.url,
+    profile?.platform,
+    ...(Array.isArray(profile?.tags) ? profile.tags : []),
+  ].filter(Boolean).join(' '));
 }
 
-function badge(text, tone = '') {
-  const span = document.createElement('span');
-  span.className = `badge ${tone}`.trim();
-  span.textContent = text;
-  return span;
+function profileCategories(profile) {
+  const text = profileSearchText(profile);
+  const result = new Set(['all']);
+  const addWhen = (name, words) => {
+    if (words.some((word) => text.includes(word))) result.add(name);
+  };
+
+  addWhen('chat', ['chat', 'chatgpt', 'claude', 'gemini', 'perplexity', 'copilot', 'deepseek']);
+  addWhen('image', ['image', 'imagen', 'canva', 'leonardo', 'midjourney', 'ideogram', 'flux']);
+  addWhen('video', ['video', 'digen', 'hailuo', 'runway', 'kling', 'sora', 'veo']);
+  addWhen('audio', ['audio', 'voice', 'voz', 'voces', 'suno', 'udio', 'eleven', 'music', 'musica']);
+  addWhen('pro', [' pro', 'pro ', 'plus', 'ultimate', 'premium', 'unlimited', 'ilimitado']);
+  return result;
+}
+
+function renderAccount() {
+  document.getElementById('client-name').textContent = auth?.client?.name || 'Cliente';
+  const planName = catalog?.plan?.name || auth?.plan?.name || 'Plan activo';
+  const expiry = formatDate(catalog?.expiresAt || auth?.subscription?.expiresAt);
+  subscriptionStatus.textContent = expiry ? `${planName} · vence ${expiry}` : `${planName} · suscripción activa`;
+}
+
+function networkLabel(profile) {
+  if (profile?.networkIdentity?.locked) {
+    return profile.networkIdentity.publicIp ? `IP fija ${profile.networkIdentity.publicIp}` : 'Proxy protegido';
+  }
+  if (profile?.managedConnection) return 'Proxy asignado';
+  return 'Conexión directa';
+}
+
+function descriptionFor(profile) {
+  const host = domain(profile.url);
+  if (profile.sessionMode === 'managed-first-party') {
+    return profile.sessionReady
+      ? `${host} · sesión v${profile.sessionVersion || 1}`
+      : 'En mantenimiento';
+  }
+  return `${host} · acceso manual`;
+}
+
+async function launchProfile(profile, card) {
+  if (launchingProfiles.has(profile.id)) return;
+  const unavailable = profile.sessionMode === 'managed-first-party' && !profile.sessionReady;
+  if (unavailable) return;
+
+  launchingProfiles.add(profile.id);
+  card.classList.add('launching');
+  setError(catalogError, '');
+  const state = card.querySelector('.card-state');
+  if (state) state.textContent = 'Abriendo…';
+
+  try {
+    const result = await window.userflex.launchProfile(profile.id);
+    if (!result?.ok) setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
+  } finally {
+    launchingProfiles.delete(profile.id);
+    card.classList.remove('launching');
+    if (state) state.textContent = 'Abrir';
+  }
+}
+
+function makeProfileCard(profile) {
+  const unavailable = profile.sessionMode === 'managed-first-party' && !profile.sessionReady;
+  const card = document.createElement('article');
+  card.className = `profile-card${unavailable ? ' unavailable' : ''}`;
+  card.dataset.profileId = profile.id;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+  card.tabIndex = unavailable ? -1 : 0;
+  card.title = unavailable ? 'Este perfil todavía no está disponible.' : `Abrir ${profileLabel(profile)}`;
+
+  const image = document.createElement('div');
+  image.className = 'profile-image';
+  if (profile.imageUrl) {
+    const img = document.createElement('img');
+    img.src = profile.imageUrl;
+    img.alt = '';
+    image.appendChild(img);
+  } else {
+    const fallback = document.createElement('span');
+    fallback.textContent = profileLabel(profile).slice(0, 1).toUpperCase();
+    image.appendChild(fallback);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'profile-body';
+  const title = document.createElement('h3');
+  title.textContent = profileLabel(profile);
+  const description = document.createElement('p');
+  description.className = 'profile-description';
+  description.textContent = descriptionFor(profile);
+  body.append(title, description);
+
+  const footer = document.createElement('div');
+  footer.className = 'card-footer';
+  const availability = document.createElement('span');
+  availability.className = `availability${unavailable ? ' maintenance' : ''}`;
+  availability.textContent = unavailable ? 'No disponible' : networkLabel(profile);
+  const state = document.createElement('span');
+  state.className = 'card-state';
+  state.textContent = unavailable ? 'Mantenimiento' : 'Abrir';
+  footer.append(availability, state);
+
+  card.append(image, body, footer);
+  if (!unavailable) {
+    card.addEventListener('click', () => void launchProfile(profile, card));
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      void launchProfile(profile, card);
+    });
+  }
+  return card;
 }
 
 function renderProfiles() {
   profilesGrid.replaceChildren();
   const profiles = Array.isArray(catalog?.profiles) ? catalog.profiles : [];
   const normalizedQuery = normalize(query.trim());
-  const filtered = normalizedQuery
-    ? profiles.filter((profile) => normalize(`${profileLabel(profile)} ${profile.name || ''} ${profile.url || ''} ${(profile.tags || []).join(' ')}`).includes(normalizedQuery))
-    : profiles;
+  const filtered = profiles.filter((profile) => {
+    const matchesQuery = !normalizedQuery || profileSearchText(profile).includes(normalizedQuery);
+    const matchesCategory = category === 'all' || profileCategories(profile).has(category);
+    return matchesQuery && matchesCategory;
+  });
 
   emptyState.classList.toggle('hidden', filtered.length !== 0);
-  if (profiles.length > 0 && filtered.length === 0) {
-    emptyState.querySelector('h3').textContent = 'No se encontraron perfiles';
-    emptyState.querySelector('p').textContent = `No hay coincidencias para “${query.trim()}”.`;
-  } else if (profiles.length === 0) {
+  if (profiles.length === 0) {
     emptyState.querySelector('h3').textContent = 'No tienes perfiles asignados';
     emptyState.querySelector('p').textContent = 'Cuando el administrador te asigne un perfil aparecerá aquí automáticamente.';
+  } else if (filtered.length === 0 && query.trim()) {
+    emptyState.querySelector('h3').textContent = 'No se encontraron perfiles';
+    emptyState.querySelector('p').textContent = `No hay coincidencias para “${query.trim()}”.`;
+  } else if (filtered.length === 0) {
+    emptyState.querySelector('h3').textContent = 'No hay perfiles en esta categoría';
+    emptyState.querySelector('p').textContent = 'Prueba con otra categoría o selecciona Todos.';
   }
 
-  for (const profile of filtered) {
-    const card = document.createElement('article');
-    card.className = 'profile-card';
-
-    const image = document.createElement('div');
-    image.className = 'profile-image';
-    if (profile.imageUrl) {
-      const img = document.createElement('img');
-      img.src = profile.imageUrl;
-      img.alt = '';
-      image.appendChild(img);
-    } else {
-      image.textContent = '◎';
-    }
-
-    const body = document.createElement('div');
-    body.className = 'profile-body';
-    const title = document.createElement('h3');
-    title.textContent = profileLabel(profile);
-    const url = document.createElement('div');
-    url.className = 'profile-domain';
-    url.textContent = domain(profile.url);
-
-    const badges = document.createElement('div');
-    badges.className = 'badges';
-    if (profile.sessionMode === 'managed-first-party') {
-      badges.appendChild(badge(profile.sessionReady ? `Sesión lista · v${profile.sessionVersion || 0}` : 'Sesión no disponible', profile.sessionReady ? 'ok' : 'warn'));
-    } else {
-      badges.appendChild(badge('Login manual'));
-    }
-    if (profile.networkIdentity?.locked) {
-      badges.appendChild(badge(profile.networkIdentity.publicIp ? `IP fija · ${profile.networkIdentity.publicIp}` : 'Proxy protegido', 'locked'));
-    } else if (profile.managedConnection) {
-      badges.appendChild(badge('Proxy asignado', 'locked'));
-    } else {
-      badges.appendChild(badge('Conexión directa'));
-    }
-
-    body.append(title, url, badges);
-
-    const actions = document.createElement('div');
-    actions.className = 'profile-actions';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'open-button';
-    const unavailable = profile.sessionMode === 'managed-first-party' && !profile.sessionReady;
-    button.disabled = unavailable;
-    button.textContent = unavailable ? 'No disponible' : 'Abrir';
-    button.addEventListener('click', async () => {
-      setError(catalogError, '');
-      const original = button.textContent;
-      button.disabled = true;
-      button.textContent = 'Abriendo…';
-      const result = await window.userflex.launchProfile(profile.id);
-      if (!result?.ok) {
-        setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
-      }
-      button.disabled = unavailable;
-      button.textContent = original;
-    });
-    actions.appendChild(button);
-
-    card.append(image, body, actions);
-    profilesGrid.appendChild(card);
-  }
+  for (const profile of filtered) profilesGrid.appendChild(makeProfileCard(profile));
 }
 
 function renderClient() {
@@ -166,9 +222,11 @@ function renderClient() {
 
 async function refreshCatalog() {
   refreshButton.disabled = true;
+  refreshButton.classList.add('spinning');
   setError(catalogError, '');
   const result = await window.userflex.catalog();
   refreshButton.disabled = false;
+  refreshButton.classList.remove('spinning');
   if (!result?.ok) {
     setError(catalogError, result?.error?.message || 'No se pudo actualizar.');
     if (result?.error?.status === 401) show(loginView);
@@ -198,12 +256,24 @@ loginForm.addEventListener('submit', async (event) => {
   auth = result.auth;
   catalog = result.catalog;
   query = '';
+  category = 'all';
   searchInput.value = '';
+  for (const button of categoryFilters.querySelectorAll('.category-pill')) {
+    button.classList.toggle('active', button.dataset.category === 'all');
+  }
   renderClient();
 });
 
 searchInput.addEventListener('input', () => {
   query = searchInput.value;
+  renderProfiles();
+});
+
+categoryFilters.addEventListener('click', (event) => {
+  const button = event.target.closest('.category-pill');
+  if (!button) return;
+  category = button.dataset.category || 'all';
+  for (const item of categoryFilters.querySelectorAll('.category-pill')) item.classList.toggle('active', item === button);
   renderProfiles();
 });
 
@@ -216,13 +286,14 @@ logoutButton.addEventListener('click', async () => {
   auth = null;
   catalog = null;
   query = '';
+  category = 'all';
   loginForm.reset();
   setError(loginError, '');
   show(loginView);
 });
 
 window.userflex.onHeartbeat((payload) => {
-  serverState.textContent = payload?.active === false ? 'Servidor sin autorización' : 'Servidor conectado';
+  serverState.textContent = payload?.active === false ? 'Sin autorización' : 'Conectado';
   serverState.classList.toggle('bad', payload?.active === false);
   heartbeatTime.textContent = `Última conexión ${new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}`;
 });
