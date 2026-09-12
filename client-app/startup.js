@@ -1,82 +1,51 @@
-import { app, dialog } from 'electron';
+import { app, Menu } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const appData = app.getPath('appData');
-const legacyUserData = path.join(appData, 'userFLEX Client');
-const currentUserData = app.getPath('userData');
-const startupLog = path.join(legacyUserData, 'startup.log');
+// Critical rule: do not touch filesystem state, userData, updater logic, or
+// Electron methods before ready. This is the same startup pattern that worked
+// in the early Client builds.
+await app.whenReady();
+Menu.setApplicationMenu(null);
 
-async function log(message) {
-  try {
-    await fs.mkdir(legacyUserData, { recursive: true });
-    await fs.appendFile(startupLog, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
-  } catch {
-    // Startup logging must never prevent the app from opening.
-  }
-}
+// After Electron is ready, preserve only the client identity files from the
+// legacy folder. Chromium profile data is not moved here; managed sessions are
+// restored by the server when a profile opens.
+const currentUserData = app.getPath('userData');
+const legacyUserData = path.join(app.getPath('appData'), 'userFLEX Client');
 
 async function copyIdentityFile(fileName) {
-  if (path.resolve(legacyUserData) === path.resolve(currentUserData)) return;
+  if (path.resolve(currentUserData) === path.resolve(legacyUserData)) return;
   const source = path.join(legacyUserData, fileName);
   const target = path.join(currentUserData, fileName);
   try {
     await fs.access(target);
     return;
   } catch {
-    // Copy the legacy identity only when the new location does not have one yet.
+    // Copy only when the new location does not already have this identity file.
   }
   try {
     await fs.mkdir(currentUserData, { recursive: true });
     await fs.copyFile(source, target);
-    await log(`Migrated ${fileName} to ${currentUserData}`);
   } catch {
-    // The file may not exist on a fresh install. That is expected.
+    // Fresh installs may not have legacy identity files.
   }
 }
 
+await copyIdentityFile('device.json');
+await copyIdentityFile('auth.json');
+
+// bootstrap.js still contains the old compatibility call that tries to force
+// userData back to the legacy folder. Ignore only that call now that Electron
+// is already ready, then restore Electron's native method after bootstrap.
+const nativeSetPath = app.setPath.bind(app);
+app.setPath = (name, value) => {
+  if (name === 'userData') return;
+  return nativeSetPath(name, value);
+};
+
 try {
-  await fs.mkdir(legacyUserData, { recursive: true });
-  await fs.mkdir(currentUserData, { recursive: true });
-  await log(`Starting userFLOW v${app.getVersion()} from ${app.getPath('exe')}`);
-  await log(`Default userData: ${currentUserData}`);
-  await copyIdentityFile('device.json');
-  await copyIdentityFile('auth.json');
-
-  // v0.2.3/v0.2.4 forced Electron's userData path before readiness. On some
-  // Windows installations that prevents Electron from reaching the ready state.
-  // Preserve the normal Electron path and ignore only that legacy override.
-  const nativeSetPath = app.setPath.bind(app);
-  app.setPath = (name, value) => {
-    if (name === 'userData') {
-      void log(`Ignored early userData override: ${value}`);
-      return;
-    }
-    return nativeSetPath(name, value);
-  };
-
-  const nativeWhenReady = app.whenReady.bind(app);
-  app.whenReady = () => {
-    void log('app.whenReady() called');
-    const promise = nativeWhenReady();
-    promise.then(() => log('app.whenReady() resolved')).catch((error) => log(`app.whenReady() rejected: ${error?.message || error}`));
-    return promise;
-  };
-
-  await log('Importing bootstrap.js');
   await import('./bootstrap.js');
-  await log('bootstrap.js completed');
-} catch (error) {
-  const details = error?.stack || error?.message || String(error);
-  await log(`FATAL STARTUP ERROR: ${details}`);
-  try {
-    await app.whenReady();
-    dialog.showErrorBox(
-      'userFLOW no pudo iniciar',
-      `Se produjo un error al iniciar userFLOW.\n\n${error?.message || 'Error desconocido'}\n\nDiagnóstico: ${startupLog}`,
-    );
-  } catch {
-    // Nothing else can be shown if Electron itself cannot become ready.
-  }
-  app.quit();
+} finally {
+  app.setPath = nativeSetPath;
 }
