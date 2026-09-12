@@ -2,6 +2,9 @@ import { app, Menu, dialog } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
+const UPDATE_PROXY_BASE = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
+
 async function startAfterReady() {
   Menu.setApplicationMenu(null);
 
@@ -55,11 +58,36 @@ async function startAfterReady() {
       return nativeSetPath(name, value);
     };
 
+    // Some client networks cannot reach the Supabase Storage hostname directly.
+    // Keep the updater implementation unchanged, but transparently route only
+    // its manifest/chunk reads through the userFLEX Cloudflare Worker.
+    const nativeFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = (input, init) => {
+      const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+      if (typeof rawUrl === 'string' && rawUrl.startsWith(DIRECT_UPDATE_BASE)) {
+        const parsed = new URL(rawUrl);
+        const relative = parsed.pathname.split('/userflex-client-releases/')[1] || '';
+        let rewritten = null;
+        if (relative === 'latest.json') {
+          rewritten = `${UPDATE_PROXY_BASE}/latest?ts=${Date.now()}`;
+        } else {
+          const chunk = relative.match(/^versions\/([^/]+)\/(part-\d{3}\.bin)$/);
+          if (chunk) rewritten = `${UPDATE_PROXY_BASE}/chunks/${encodeURIComponent(chunk[1])}/${chunk[2]}`;
+        }
+        if (rewritten) {
+          void log(`Updater request via Cloudflare: ${relative}`);
+          return nativeFetch(rewritten, init);
+        }
+      }
+      return nativeFetch(input, init);
+    };
+
     try {
       await import('./bootstrap.js');
       await log('bootstrap.js loaded');
     } finally {
       app.setPath = nativeSetPath;
+      globalThis.fetch = nativeFetch;
     }
   } catch (error) {
     const details = error?.stack || error?.message || String(error);
