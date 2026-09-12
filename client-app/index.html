@@ -20,11 +20,15 @@
         <div class="login-brand">
           <div class="brand-mark large">uF</div>
           <div>
-            <h1>userFLEX Client</h1>
-            <p>Accede con las credenciales asignadas por tu administrador.</p>
+            <div class="brand-title-row">
+              <h1>userFLEX</h1>
+              <span class="version-pill">v0.2.1</span>
+            </div>
+            <p>Ingresa con las credenciales asignadas por tu administrador.</p>
           </div>
         </div>
         <form id="login-form" class="login-card">
+          <div class="login-heading">Acceso al Client</div>
           <label>
             <span>Usuario o correo</span>
             <input id="identifier" autocomplete="username" required />
@@ -40,61 +44,54 @@
       </div>
     </section>
 
-    <section id="client-view" class="screen hidden">
-      <header class="topbar">
-        <div class="brand-inline">
-          <div class="brand-mark">uF</div>
-          <div>
+    <section id="client-view" class="screen hidden launcher-screen">
+      <header class="launcher-header">
+        <div class="launcher-topline">
+          <div class="brand-inline">
+            <div class="brand-mark compact">uF</div>
             <strong>userFLEX</strong>
-            <span>Client</span>
+            <span class="version-text">v0.2.1</span>
+          </div>
+
+          <div class="search-wrap launcher-search">
+            <span class="search-icon">⌕</span>
+            <input id="profile-search" type="search" placeholder="Buscar herramienta…" autocomplete="off" />
+          </div>
+
+          <div class="header-right">
+            <span id="server-state" class="status-dot">Conectado</span>
+            <button id="refresh-button" class="icon-button" type="button" title="Actualizar perfiles" aria-label="Actualizar perfiles">↻</button>
           </div>
         </div>
-        <div class="topbar-actions">
-          <span id="server-state" class="status-dot">Servidor conectado</span>
-          <button id="refresh-button" class="ghost-button" type="button">Actualizar</button>
-          <button id="logout-button" class="ghost-button danger-text" type="button">Salir</button>
+
+        <div id="category-filters" class="category-filters" aria-label="Filtrar perfiles">
+          <button class="category-pill active" type="button" data-category="all">Todos</button>
+          <button class="category-pill" type="button" data-category="chat">Chat</button>
+          <button class="category-pill" type="button" data-category="image">Imagen</button>
+          <button class="category-pill" type="button" data-category="video">Video</button>
+          <button class="category-pill" type="button" data-category="audio">Audio</button>
+          <button class="category-pill" type="button" data-category="pro">Pro</button>
         </div>
       </header>
 
-      <main class="content">
-        <section class="account-row">
-          <div>
-            <div class="eyebrow">CUENTA</div>
-            <h2 id="client-name">Cliente</h2>
-            <div id="client-email" class="muted"></div>
-          </div>
-          <div class="plan-box">
-            <div class="eyebrow">PLAN</div>
-            <strong id="plan-name">—</strong>
-            <span id="plan-expiry">—</span>
-          </div>
-        </section>
-
-        <section class="profiles-section">
-          <div class="section-head">
-            <div>
-              <div class="eyebrow">PERFILES ASIGNADOS</div>
-              <h2>Mis accesos</h2>
-            </div>
-            <div class="search-wrap">
-              <span class="search-icon">⌕</span>
-              <input id="profile-search" type="search" placeholder="Buscar perfil…" autocomplete="off" />
-            </div>
-          </div>
-
-          <div id="catalog-error" class="error hidden"></div>
-          <div id="empty-state" class="empty hidden">
-            <div class="empty-icon">◎</div>
-            <h3>No tienes perfiles asignados</h3>
-            <p>Cuando el administrador te asigne un perfil aparecerá aquí automáticamente.</p>
-          </div>
-          <div id="profiles-grid" class="profiles-grid"></div>
-        </section>
+      <main class="catalog-content">
+        <div id="catalog-error" class="error catalog-error hidden"></div>
+        <div id="empty-state" class="empty hidden">
+          <div class="empty-icon">◎</div>
+          <h3>No tienes perfiles asignados</h3>
+          <p>Cuando el administrador te asigne un perfil aparecerá aquí automáticamente.</p>
+        </div>
+        <div id="profiles-grid" class="profiles-grid"></div>
       </main>
 
-      <footer class="footer">
-        <span>userFLEX Client v0.2.0</span>
-        <span id="heartbeat-time">Listo</span>
+      <footer class="launcher-footer">
+        <button id="logout-button" class="logout-link" type="button"><span>↪</span> Cerrar sesión</button>
+        <div class="footer-account">
+          <span id="client-name">Cliente</span>
+          <span class="footer-separator">·</span>
+          <span id="heartbeat-time">Listo</span>
+        </div>
+        <div id="subscription-status" class="subscription-status">Suscripción activa</div>
       </footer>
     </section>
   </div>
