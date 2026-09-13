@@ -30,6 +30,7 @@ body.catalog-mode .toolbar { display: none; }
   -webkit-app-region: drag;
 }
 
+/* Pointer Events own tab dragging; only the empty titlebar gaps move the window. */
 .catalog-button,
 .new-tab-button,
 .tabs,
