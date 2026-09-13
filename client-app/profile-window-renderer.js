@@ -49,17 +49,10 @@ function markPageTarget(index, pageId) {
   });
 }
 
-function flushQueuedState() {
-  if (!queuedState) return;
-  const next = queuedState;
-  queuedState = null;
-  state = next;
-  render();
-}
-
 function beginPagePointerDrag(item, page, index, event) {
   if (event.button !== 0 || event.target.closest('.page-close')) return;
   event.preventDefault();
+  queuedState = null;
   pagePointerDrag = {
     pageId: page.id,
     pointerId: event.pointerId,
@@ -84,17 +77,23 @@ function movePagePointerDrag(event) {
 async function endPagePointerDrag(item, event, canceled = false) {
   const drag = pagePointerDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
+  const pending = queuedState;
   pagePointerDrag = null;
+  queuedState = null;
   clearPageDragVisuals();
   try {
     if (item.hasPointerCapture(event.pointerId)) item.releasePointerCapture(event.pointerId);
   } catch {}
 
-  if (!canceled) {
-    if (drag.moved) await run('reorder-page', { pageId: drag.pageId, targetIndex: drag.targetIndex });
-    else await run('select-page', { pageId: drag.pageId });
+  if (canceled) {
+    if (pending) {
+      state = pending;
+      render();
+    }
+    return;
   }
-  flushQueuedState();
+  if (drag.moved) await run('reorder-page', { pageId: drag.pageId, targetIndex: drag.targetIndex });
+  else await run('select-page', { pageId: drag.pageId });
 }
 
 function makePageTab(page, index) {
@@ -193,7 +192,6 @@ window.userflexProfileWindow.onState((next) => {
     const stillExists = normalized.pages.some((page) => page.id === pagePointerDrag.pageId);
     if (stillExists) {
       queuedState = normalized;
-      state = normalized;
       return;
     }
     pagePointerDrag = null;
