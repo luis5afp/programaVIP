@@ -120,6 +120,15 @@ export const api = {
     },
   },
 
+  profilePlans: {
+    list: () => request<Array<{ profile_id: string; plan_id: string; created_at: string }>>('/api/profile-plan-memberships'),
+    set: (profileId: string, planIds: string[]) =>
+      request<{ ok: true; profile_id: string; plan_ids: string[] }>(`/api/profiles/${profileId}/plans`, {
+        method: 'POST',
+        body: JSON.stringify({ planIds }),
+      }),
+  },
+
   profileProxyDefaults: {
     list: () => request<ProfileProxyDefault[]>('/api/profile-proxy-defaults'),
     set: (profileId: string, proxyId: string | null) =>
