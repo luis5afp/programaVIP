@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen } from 'electron';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -905,8 +905,13 @@ function detachProfile(profileId, point = null) {
 
 function detachIfOutside(profileId, point) {
   if (!browserWindow || browserWindow.isDestroyed()) return false;
-  const x = Number(point?.x);
-  const y = Number(point?.y);
+  let x = Number(point?.x);
+  let y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) {
+    const cursor = screen.getCursorScreenPoint();
+    x = Number(cursor?.x);
+    y = Number(cursor?.y);
+  }
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   const bounds = browserWindow.getBounds();
   const outside = x < bounds.x || x > bounds.x + bounds.width || y < bounds.y || y > bounds.y + bounds.height;

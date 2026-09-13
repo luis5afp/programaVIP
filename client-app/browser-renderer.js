@@ -96,7 +96,7 @@ function makeProfileTab(tab, index) {
     const id = draggedProfileId;
     clearDragMarkers();
     draggedProfileId = null;
-    if (!id || dragDropped || (event.screenX === 0 && event.screenY === 0)) {
+    if (!id || dragDropped) {
       dragDropped = false;
       return;
     }
