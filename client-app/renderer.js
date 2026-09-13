@@ -56,6 +56,61 @@ function profileLabel(profile) {
   return profile?.tags?.[0] || profile?.name || 'Perfil';
 }
 
+function categoryLabel(profile) {
+  return String(profile?.platform || '').trim() || 'Otros';
+}
+
+function categoryKey(value) {
+  return normalize(value).trim();
+}
+
+function catalogCategories() {
+  const profiles = Array.isArray(catalog?.profiles) ? catalog.profiles : [];
+  const seen = new Map();
+  for (const profile of profiles) {
+    const label = categoryLabel(profile);
+    const key = categoryKey(label);
+    if (!seen.has(key)) seen.set(key, label);
+  }
+
+  const preferred = ['chat', 'imagen', 'video', 'audio', 'pro'];
+  return [...seen.entries()]
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => {
+      const ai = preferred.indexOf(a.key);
+      const bi = preferred.indexOf(b.key);
+      if (ai !== -1 || bi !== -1) {
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        if (ai !== bi) return ai - bi;
+      }
+      return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+    });
+}
+
+function renderCategoryFilters() {
+  const categories = catalogCategories();
+  const availableKeys = new Set(categories.map((item) => item.key));
+  if (category !== 'all' && !availableKeys.has(category)) category = 'all';
+
+  categoryFilters.replaceChildren();
+  const all = document.createElement('button');
+  all.className = `category-pill${category === 'all' ? ' active' : ''}`;
+  all.type = 'button';
+  all.dataset.category = 'all';
+  all.textContent = 'Todos';
+  categoryFilters.appendChild(all);
+
+  for (const item of categories) {
+    const button = document.createElement('button');
+    button.className = `category-pill${category === item.key ? ' active' : ''}`;
+    button.type = 'button';
+    button.dataset.category = item.key;
+    button.textContent = item.label;
+    categoryFilters.appendChild(button);
+  }
+}
+
 function domain(url) {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -72,21 +127,6 @@ function profileSearchText(profile) {
     profile?.platform,
     ...(Array.isArray(profile?.tags) ? profile.tags : []),
   ].filter(Boolean).join(' '));
-}
-
-function profileCategories(profile) {
-  const text = profileSearchText(profile);
-  const result = new Set(['all']);
-  const addWhen = (name, words) => {
-    if (words.some((word) => text.includes(word))) result.add(name);
-  };
-
-  addWhen('chat', ['chat', 'chatgpt', 'claude', 'gemini', 'perplexity', 'copilot', 'deepseek']);
-  addWhen('image', ['image', 'imagen', 'canva', 'leonardo', 'midjourney', 'ideogram', 'flux']);
-  addWhen('video', ['video', 'digen', 'hailuo', 'runway', 'kling', 'sora', 'veo']);
-  addWhen('audio', ['audio', 'voice', 'voz', 'voces', 'suno', 'udio', 'eleven', 'music', 'musica']);
-  addWhen('pro', [' pro', 'pro ', 'plus', 'ultimate', 'premium', 'unlimited', 'ilimitado']);
-  return result;
 }
 
 function renderAccount() {
@@ -195,14 +235,14 @@ function renderProfiles() {
   const normalizedQuery = normalize(query.trim());
   const filtered = profiles.filter((profile) => {
     const matchesQuery = !normalizedQuery || profileSearchText(profile).includes(normalizedQuery);
-    const matchesCategory = category === 'all' || profileCategories(profile).has(category);
+    const matchesCategory = category === 'all' || categoryKey(categoryLabel(profile)) === category;
     return matchesQuery && matchesCategory;
   });
 
   emptyState.classList.toggle('hidden', filtered.length !== 0);
   if (profiles.length === 0) {
-    emptyState.querySelector('h3').textContent = 'No tienes perfiles asignados';
-    emptyState.querySelector('p').textContent = 'Cuando el administrador te asigne un perfil aparecerá aquí automáticamente.';
+    emptyState.querySelector('h3').textContent = 'Tu plan no tiene perfiles disponibles';
+    emptyState.querySelector('p').textContent = 'Cuando el administrador agregue un perfil a tu plan aparecerá aquí automáticamente.';
   } else if (filtered.length === 0 && query.trim()) {
     emptyState.querySelector('h3').textContent = 'No se encontraron perfiles';
     emptyState.querySelector('p').textContent = `No hay coincidencias para “${query.trim()}”.`;
@@ -216,6 +256,7 @@ function renderProfiles() {
 
 function renderClient() {
   renderAccount();
+  renderCategoryFilters();
   renderProfiles();
   show(clientView);
 }
@@ -258,9 +299,6 @@ loginForm.addEventListener('submit', async (event) => {
   query = '';
   category = 'all';
   searchInput.value = '';
-  for (const button of categoryFilters.querySelectorAll('.category-pill')) {
-    button.classList.toggle('active', button.dataset.category === 'all');
-  }
   renderClient();
 });
 
