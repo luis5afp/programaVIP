@@ -1,0 +1,132 @@
+name: Apply pointer tab drag v0.2.26
+
+on:
+  push:
+    branches:
+      - fix/pointer-tab-drag-v026
+    paths:
+      - .github/workflows/apply-pointer-tab-drag-v026.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pointer-tab-drag-v026
+          fetch-depth: 0
+      - name: Apply native drag monitor and drag styling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('client-app/main.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new):
+              global text
+              if old not in text:
+                  raise SystemExit(f'Missing expected main.js fragment: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "let profileOrder = [];\n",
+              "let profileOrder = [];\nlet profileDragMonitor = null;\n",
+          )
+
+          replace_once(
+              "  browserWindow.on('closed', () => {\n    const workspaces = Array.from(profileTabs.values());",
+              "  browserWindow.on('closed', () => {\n    stopProfileDragMonitor();\n    const workspaces = Array.from(profileTabs.values());",
+          )
+
+          replace_once(
+              "function closePrivateBrowser() {\n  const workspaces = Array.from(profileTabs.values());",
+              "function closePrivateBrowser() {\n  stopProfileDragMonitor();\n  const workspaces = Array.from(profileTabs.values());",
+          )
+
+          helper = r'''function stopProfileDragMonitor() {
+            if (profileDragMonitor?.timer) clearInterval(profileDragMonitor.timer);
+            profileDragMonitor = null;
+          }
+
+          function beginProfileDragMonitor(profileId) {
+            stopProfileDragMonitor();
+            if (!browserWindow || browserWindow.isDestroyed()) return false;
+            const workspace = profileTabs.get(profileId);
+            if (!workspace || workspace.detachedWindow) return false;
+
+            const monitor = { profileId, timer: null };
+            monitor.timer = setInterval(() => {
+              if (profileDragMonitor !== monitor) return;
+              const current = profileTabs.get(profileId);
+              if (!browserWindow || browserWindow.isDestroyed() || !current || current.detachedWindow) {
+                stopProfileDragMonitor();
+                return;
+              }
+              const cursor = screen.getCursorScreenPoint();
+              const bounds = browserWindow.getBounds();
+              const margin = 18;
+              const outside = cursor.x < bounds.x - margin
+                || cursor.x > bounds.x + bounds.width + margin
+                || cursor.y < bounds.y - margin
+                || cursor.y > bounds.y + bounds.height + margin;
+              if (!outside) return;
+              stopProfileDragMonitor();
+              detachProfile(profileId, cursor);
+            }, 25);
+            profileDragMonitor = monitor;
+            return true;
+          }
+
+          function endProfileDragMonitor(profileId) {
+            const detached = Boolean(profileTabs.get(profileId)?.detachedWindow);
+            if (!profileDragMonitor || profileDragMonitor.profileId === profileId) stopProfileDragMonitor();
+            return detached;
+          }
+
+          '''
+
+          replace_once(
+              "function detachProfile(profileId, point = null) {\n  const workspace = profileTabs.get(profileId);",
+              helper + "function detachProfile(profileId, point = null) {\n  if (profileDragMonitor?.profileId === profileId) stopProfileDragMonitor();\n  const workspace = profileTabs.get(profileId);",
+          )
+
+          replace_once(
+              "  if (action === 'reorder') return { ok: reorderProfiles(profileId, input?.targetIndex) };\n  if (action === 'detach')",
+              "  if (action === 'reorder') return { ok: reorderProfiles(profileId, input?.targetIndex) };\n  if (action === 'profile-drag-begin') return { ok: beginProfileDragMonitor(profileId) };\n  if (action === 'profile-drag-end') return { ok: true, detached: endProfileDragMonitor(profileId) };\n  if (action === 'detach')",
+          )
+
+          path.write_text(text, encoding='utf-8')
+
+          css_path = Path('client-app/browser.css')
+          css = css_path.read_text(encoding='utf-8')
+          old = "  padding: 0 5px 0 9px;\n  cursor: pointer;\n  transition: background .14s ease, border-color .14s ease, color .14s ease;\n}"
+          new = "  padding: 0 5px 0 9px;\n  cursor: grab;\n  touch-action: none;\n  transition: background .14s ease, border-color .14s ease, color .14s ease;\n}\n.tab.dragging { cursor: grabbing; opacity: .78; }"
+          if old not in css:
+              raise SystemExit('Missing browser.css tab block')
+          css_path.write_text(css.replace(old, new, 1), encoding='utf-8')
+
+          profile_css_path = Path('client-app/profile-window.css')
+          profile_css = profile_css_path.read_text(encoding='utf-8')
+          old = "  padding: 0 5px 0 10px;\n  cursor: pointer;\n}"
+          new = "  padding: 0 5px 0 10px;\n  cursor: grab;\n  touch-action: none;\n}\n.page-tab.dragging { cursor: grabbing; opacity: .78; }"
+          if old not in profile_css:
+              raise SystemExit('Missing profile-window.css page-tab block')
+          profile_css_path.write_text(profile_css.replace(old, new, 1), encoding='utf-8')
+
+          Path('.github/workflows/apply-pointer-tab-drag-v026.yml').unlink()
+      - name: Validate JavaScript syntax
+        run: |
+          node --check client-app/main.js
+          node --check client-app/browser-renderer.js
+          node --check client-app/profile-window-renderer.js
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add client-app/main.js client-app/browser.css client-app/profile-window.css .github/workflows/apply-pointer-tab-drag-v026.yml
+          git commit -m "Fix profile and page tab dragging with pointer events v0.2.26"
+          git push origin HEAD:fix/pointer-tab-drag-v026
