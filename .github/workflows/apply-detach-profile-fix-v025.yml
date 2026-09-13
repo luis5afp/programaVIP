@@ -1,0 +1,89 @@
+name: Apply detach profile fix v0.2.25
+
+on:
+  push:
+    branches:
+      - feature/detach-profile-fix-v025
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply fix and bump version
+        shell: python
+        run: |
+          from pathlib import Path
+
+          main = Path('client-app/main.js')
+          text = main.read_text(encoding='utf-8')
+          old_import = "import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage } from 'electron';"
+          new_import = "import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen } from 'electron';"
+          if old_import not in text:
+              raise SystemExit('Electron import not found')
+          text = text.replace(old_import, new_import, 1)
+
+          old_detach = '''function detachIfOutside(profileId, point) {
+            if (!browserWindow || browserWindow.isDestroyed()) return false;
+            const x = Number(point?.x);
+            const y = Number(point?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+            const bounds = browserWindow.getBounds();
+            const outside = x < bounds.x || x > bounds.x + bounds.width || y < bounds.y || y > bounds.y + bounds.height;
+            return outside ? detachProfile(profileId, { x, y }) : false;
+          }'''
+          new_detach = '''function detachIfOutside(profileId, point) {
+            if (!browserWindow || browserWindow.isDestroyed()) return false;
+            let x = Number(point?.x);
+            let y = Number(point?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) {
+              const cursor = screen.getCursorScreenPoint();
+              x = Number(cursor?.x);
+              y = Number(cursor?.y);
+            }
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+            const bounds = browserWindow.getBounds();
+            const outside = x < bounds.x || x > bounds.x + bounds.width || y < bounds.y || y > bounds.y + bounds.height;
+            return outside ? detachProfile(profileId, { x, y }) : false;
+          }'''
+          if old_detach not in text:
+              raise SystemExit('detachIfOutside block not found')
+          text = text.replace(old_detach, new_detach, 1)
+          main.write_text(text, encoding='utf-8')
+
+          renderer = Path('client-app/browser-renderer.js')
+          text = renderer.read_text(encoding='utf-8')
+          old_guard = "if (!id || dragDropped || (event.screenX === 0 && event.screenY === 0)) {"
+          new_guard = "if (!id || dragDropped) {"
+          if old_guard not in text:
+              raise SystemExit('dragend guard not found')
+          text = text.replace(old_guard, new_guard, 1)
+          renderer.write_text(text, encoding='utf-8')
+
+          package = Path('client-app/package.json')
+          text = package.read_text(encoding='utf-8')
+          if '"version": "0.2.24"' not in text:
+              raise SystemExit('package version 0.2.24 not found')
+          package.write_text(text.replace('"version": "0.2.24"', '"version": "0.2.25"', 1), encoding='utf-8')
+
+          index = Path('client-app/index.html')
+          text = index.read_text(encoding='utf-8')
+          if 'v0.2.24' not in text:
+              raise SystemExit('index version v0.2.24 not found')
+          index.write_text(text.replace('v0.2.24', 'v0.2.25'), encoding='utf-8')
+
+          workflow = Path('.github/workflows/apply-detach-profile-fix-v025.yml')
+          if workflow.exists():
+              workflow.unlink()
+      - name: Commit applied fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix profile tab detach on Windows v0.2.25"
+          git push
