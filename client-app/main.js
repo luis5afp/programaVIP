@@ -10,6 +10,7 @@ const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 60_000;
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
+const PROFILE_WINDOW_CHROME_HEIGHT = 88;
 
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
@@ -25,6 +26,7 @@ let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
 const profileTabs = new Map();
+let profileOrder = [];
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -153,9 +155,7 @@ function startHeartbeat() {
     try {
       const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
       sendClient('userflex:heartbeat', result);
-      if (result?.revoke === true || result?.active === false) {
-        await returnToLogin();
-      }
+      if (result?.revoke === true || result?.active === false) await returnToLogin();
     } catch (error) {
       if (authError(error)) await returnToLogin();
     }
@@ -321,21 +321,54 @@ function navigationCapability(webContents, direction) {
   }
 }
 
-function browserTabPayload(tab) {
-  const webContents = tab.view.webContents;
-  const lockedIp = tab.delivery?.networkLocked ? tab.delivery?.expectedPublicIp : null;
+function activePage(workspace) {
+  if (!workspace) return null;
+  const byId = workspace.activePageId ? workspace.pages.get(workspace.activePageId) : null;
+  if (byId) return byId;
+  const firstId = workspace.pageOrder.find((id) => workspace.pages.has(id));
+  if (!firstId) return null;
+  workspace.activePageId = firstId;
+  return workspace.pages.get(firstId) || null;
+}
+
+function pagePayload(page, fallbackLabel = 'Pestaña') {
+  const webContents = page?.view?.webContents;
+  const alive = Boolean(webContents && !webContents.isDestroyed());
+  const title = alive ? (webContents.getTitle() || page.title || fallbackLabel) : (page?.title || fallbackLabel);
   return {
-    id: tab.profile.id,
-    label: profileLabel(tab.profile),
-    imageUrl: tab.profile.imageUrl || null,
-    url: webContents.isDestroyed() ? tab.profile.url : (webContents.getURL() || tab.profile.url),
-    loading: tab.loading === true,
-    canGoBack: !webContents.isDestroyed() && navigationCapability(webContents, 'back'),
-    canGoForward: !webContents.isDestroyed() && navigationCapability(webContents, 'forward'),
-    networkLabel: tab.connection?.mode === 'proxy'
+    id: page.id,
+    title,
+    url: alive ? (webContents.getURL() || '') : '',
+    loading: page.loading === true,
+    canGoBack: alive && navigationCapability(webContents, 'back'),
+    canGoForward: alive && navigationCapability(webContents, 'forward'),
+  };
+}
+
+function browserTabPayload(workspace) {
+  const page = activePage(workspace);
+  const webContents = page?.view?.webContents;
+  const alive = Boolean(webContents && !webContents.isDestroyed());
+  const lockedIp = workspace.delivery?.networkLocked ? workspace.delivery?.expectedPublicIp : null;
+  return {
+    id: workspace.profile.id,
+    label: profileLabel(workspace.profile),
+    imageUrl: workspace.profile.imageUrl || null,
+    url: alive ? (webContents.getURL() || workspace.profile.url) : workspace.profile.url,
+    loading: page?.loading === true,
+    canGoBack: alive && navigationCapability(webContents, 'back'),
+    canGoForward: alive && navigationCapability(webContents, 'forward'),
+    networkLabel: workspace.connection?.mode === 'proxy'
       ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
       : 'Conexión directa',
   };
+}
+
+function attachedProfileIds() {
+  return profileOrder.filter((id) => {
+    const workspace = profileTabs.get(id);
+    return Boolean(workspace && !workspace.detachedWindow);
+  });
 }
 
 function browserState() {
@@ -343,13 +376,37 @@ function browserState() {
     activeProfileId,
     catalogMode: activeProfileId ? null : (pendingCatalogTab ? 'pending' : 'home'),
     pendingTab: !activeProfileId && pendingCatalogTab,
-    tabs: Array.from(profileTabs.values()).map(browserTabPayload),
+    tabs: attachedProfileIds().map((id) => browserTabPayload(profileTabs.get(id))),
   };
 }
 
 function sendBrowserState() {
   if (!browserShellReady || !browserWindow || browserWindow.isDestroyed()) return;
   browserWindow.webContents.send('userflex-browser:state', browserState());
+}
+
+function detachedState(workspace) {
+  const page = activePage(workspace);
+  const lockedIp = workspace.delivery?.networkLocked ? workspace.delivery?.expectedPublicIp : null;
+  return {
+    profileId: workspace.profile.id,
+    profileLabel: profileLabel(workspace.profile),
+    profileImageUrl: workspace.profile.imageUrl || null,
+    activePageId: page?.id || null,
+    pages: workspace.pageOrder
+      .map((id) => workspace.pages.get(id))
+      .filter(Boolean)
+      .map((item) => pagePayload(item, profileLabel(workspace.profile))),
+    networkLabel: workspace.connection?.mode === 'proxy'
+      ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
+      : 'Conexión directa',
+  };
+}
+
+function sendDetachedState(workspace) {
+  const window = workspace?.detachedWindow;
+  if (!workspace?.detachedShellReady || !window || window.isDestroyed()) return;
+  window.webContents.send('userflex-profile-window:state', detachedState(workspace));
 }
 
 function contentTop() {
@@ -360,12 +417,7 @@ function layoutActiveContent() {
   if (!browserWindow || browserWindow.isDestroyed() || !activeContentView || activeContentView.webContents.isDestroyed()) return;
   const [width, height] = browserWindow.getContentSize();
   const top = contentTop();
-  activeContentView.setBounds({
-    x: 0,
-    y: top,
-    width: Math.max(1, width),
-    height: Math.max(1, height - top),
-  });
+  activeContentView.setBounds({ x: 0, y: top, width: Math.max(1, width), height: Math.max(1, height - top) });
 }
 
 function setActiveContent(view) {
@@ -388,18 +440,72 @@ function setActiveContent(view) {
   layoutActiveContent();
 }
 
-function cleanupProfileTab(tab, removeView = true) {
-  if (!tab) return;
-  if (tab.loginHandler) app.removeListener('login', tab.loginHandler);
-  if (removeView && browserWindow && !browserWindow.isDestroyed()) {
+function layoutDetachedProfile(workspace) {
+  const window = workspace?.detachedWindow;
+  const page = activePage(workspace);
+  if (!window || window.isDestroyed() || !page || page.view.webContents.isDestroyed()) return;
+  const [width, height] = window.getContentSize();
+  page.view.setBounds({
+    x: 0,
+    y: PROFILE_WINDOW_CHROME_HEIGHT,
+    width: Math.max(1, width),
+    height: Math.max(1, height - PROFILE_WINDOW_CHROME_HEIGHT),
+  });
+}
+
+function detachViewFromPossibleParents(view, workspace) {
+  if (!view) return;
+  try {
+    if (browserWindow && !browserWindow.isDestroyed()) browserWindow.contentView.removeChildView(view);
+  } catch {
+    // Not attached to the main window.
+  }
+  try {
+    const detachedWindow = workspace?.detachedWindow;
+    if (detachedWindow && !detachedWindow.isDestroyed()) detachedWindow.contentView.removeChildView(view);
+  } catch {
+    // Not attached to the detached window.
+  }
+  if (activeContentView === view) activeContentView = null;
+}
+
+function setDetachedActivePage(workspace, pageId) {
+  const window = workspace?.detachedWindow;
+  const next = workspace?.pages.get(pageId);
+  if (!window || window.isDestroyed() || !next || next.view.webContents.isDestroyed()) return false;
+  const previous = activePage(workspace);
+  if (previous && previous !== next) {
     try {
-      browserWindow.contentView.removeChildView(tab.view);
+      window.contentView.removeChildView(previous.view);
     } catch {
-      // The view may already be detached during window teardown.
+      // It may already be detached.
     }
   }
-  if (activeContentView === tab.view) activeContentView = null;
-  if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+  workspace.activePageId = pageId;
+  try {
+    window.contentView.addChildView(next.view);
+  } catch {
+    // It may already be attached.
+  }
+  layoutDetachedProfile(workspace);
+  sendDetachedState(workspace);
+  return true;
+}
+
+function cleanupPage(workspace, page) {
+  if (!page) return;
+  detachViewFromPossibleParents(page.view, workspace);
+  if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
+}
+
+function cleanupWorkspace(workspace) {
+  if (!workspace || workspace.cleaned) return;
+  workspace.cleaned = true;
+  if (workspace.loginHandler) app.removeListener('login', workspace.loginHandler);
+  for (const page of workspace.pages.values()) cleanupPage(workspace, page);
+  workspace.pages.clear();
+  workspace.pageOrder = [];
+  workspace.activePageId = null;
 }
 
 function createCatalogView() {
@@ -447,14 +553,21 @@ function createBrowserWindow() {
     if (!browserWindow?.isDestroyed()) browserWindow.show();
   });
   browserWindow.on('closed', () => {
-    const tabs = Array.from(profileTabs.values());
+    const workspaces = Array.from(profileTabs.values());
     browserWindow = null;
     browserShellReady = false;
     activeProfileId = null;
     pendingCatalogTab = false;
     activeContentView = null;
     profileTabs.clear();
-    for (const tab of tabs) cleanupProfileTab(tab, false);
+    profileOrder = [];
+    for (const workspace of workspaces) {
+      if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
+        workspace.closing = true;
+        workspace.detachedWindow.close();
+      }
+      cleanupWorkspace(workspace);
+    }
     if (catalogView && !catalogView.webContents.isDestroyed()) catalogView.webContents.close();
     catalogView = null;
   });
@@ -474,32 +587,54 @@ function showCatalogTab(mode = 'home') {
 }
 
 function selectProfileTab(profileId) {
-  const tab = profileTabs.get(profileId);
-  if (!tab) return false;
+  const workspace = profileTabs.get(profileId);
+  if (!workspace) return false;
+  if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
+    pendingCatalogTab = false;
+    sendBrowserState();
+    workspace.detachedWindow.show();
+    workspace.detachedWindow.focus();
+    return true;
+  }
+  const page = activePage(workspace);
+  if (!page) return false;
   const window = createBrowserWindow();
   activeProfileId = profileId;
   pendingCatalogTab = false;
-  setActiveContent(tab.view);
+  setActiveContent(page.view);
   sendBrowserState();
   window.show();
   window.focus();
   return true;
 }
 
+function removeWorkspace(profileId) {
+  const workspace = profileTabs.get(profileId);
+  if (!workspace) return false;
+  cleanupWorkspace(workspace);
+  profileTabs.delete(profileId);
+  profileOrder = profileOrder.filter((id) => id !== profileId);
+  return true;
+}
+
 function closeProfileTab(profileId) {
   const id = profileId || activeProfileId;
   if (!id) return false;
-  const ids = Array.from(profileTabs.keys());
-  const index = ids.indexOf(id);
-  const tab = profileTabs.get(id);
-  if (!tab) return false;
+  const attachedIds = attachedProfileIds();
+  const index = attachedIds.indexOf(id);
+  const workspace = profileTabs.get(id);
+  if (!workspace) return false;
+  if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
+    workspace.detachedWindow.close();
+    return true;
+  }
   const wasActive = activeProfileId === id;
-  cleanupProfileTab(tab, true);
-  profileTabs.delete(id);
+  removeWorkspace(id);
   if (wasActive) {
     activeProfileId = null;
-    const nextId = ids[index + 1] || ids[index - 1] || null;
-    if (nextId && profileTabs.has(nextId)) selectProfileTab(nextId);
+    const remaining = attachedProfileIds();
+    const nextId = remaining[Math.min(index, Math.max(0, remaining.length - 1))] || remaining[index - 1] || null;
+    if (nextId) selectProfileTab(nextId);
     else showCatalogTab('home');
   } else {
     sendBrowserState();
@@ -508,11 +643,16 @@ function closeProfileTab(profileId) {
 }
 
 function closePrivateBrowser() {
-  const tabs = Array.from(profileTabs.values());
+  const workspaces = Array.from(profileTabs.values());
   profileTabs.clear();
+  profileOrder = [];
   activeProfileId = null;
   pendingCatalogTab = false;
-  for (const tab of tabs) cleanupProfileTab(tab, true);
+  for (const workspace of workspaces) {
+    workspace.closing = true;
+    if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) workspace.detachedWindow.close();
+    cleanupWorkspace(workspace);
+  }
   if (catalogView && !catalogView.webContents.isDestroyed()) {
     try {
       if (browserWindow && !browserWindow.isDestroyed()) browserWindow.contentView.removeChildView(catalogView);
@@ -526,10 +666,9 @@ function closePrivateBrowser() {
   if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
 }
 
-function tabNavigation(action, profileId) {
-  const tab = profileTabs.get(profileId || activeProfileId);
-  if (!tab || tab.view.webContents.isDestroyed()) return false;
-  const webContents = tab.view.webContents;
+function pageNavigation(workspace, page, action) {
+  if (!workspace || !page || page.view.webContents.isDestroyed()) return false;
+  const webContents = page.view.webContents;
   try {
     if (action === 'back' && navigationCapability(webContents, 'back')) {
       if (webContents.navigationHistory?.goBack) webContents.navigationHistory.goBack();
@@ -540,7 +679,7 @@ function tabNavigation(action, profileId) {
     } else if (action === 'reload') {
       webContents.reload();
     } else if (action === 'home') {
-      void webContents.loadURL(tab.profile.url);
+      void webContents.loadURL(workspace.profile.url);
     } else {
       return false;
     }
@@ -550,24 +689,43 @@ function tabNavigation(action, profileId) {
   }
 }
 
-function attachProfileViewEvents(tab) {
-  const webContents = tab.view.webContents;
-  const update = () => sendBrowserState();
+function tabNavigation(action, profileId) {
+  const workspace = profileTabs.get(profileId || activeProfileId);
+  const page = activePage(workspace);
+  return pageNavigation(workspace, page, action);
+}
+
+function updateWorkspaceState(workspace) {
+  if (workspace.detachedWindow) sendDetachedState(workspace);
+  else sendBrowserState();
+}
+
+function attachProfilePageEvents(workspace, page) {
+  const webContents = page.view.webContents;
+  const update = () => updateWorkspaceState(workspace);
   webContents.on('did-start-loading', () => {
-    tab.loading = true;
+    page.loading = true;
     update();
   });
   webContents.on('did-stop-loading', () => {
-    tab.loading = false;
+    page.loading = false;
     update();
   });
   webContents.on('did-navigate', update);
   webContents.on('did-navigate-in-page', update);
-  webContents.on('page-title-updated', update);
+  webContents.on('page-title-updated', (_event, title) => {
+    page.title = title || page.title;
+    update();
+  });
   webContents.setWindowOpenHandler(({ url }) => {
     try {
       const target = new URL(url);
-      if (target.protocol === 'https:' || target.protocol === 'http:') void webContents.loadURL(target.toString());
+      if (target.protocol !== 'https:' && target.protocol !== 'http:') return { action: 'deny' };
+      if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
+        void createProfilePage(workspace, target.toString(), true);
+      } else {
+        void webContents.loadURL(target.toString());
+      }
     } catch {
       // Ignore invalid popups.
     }
@@ -575,10 +733,194 @@ function attachProfileViewEvents(tab) {
   });
 }
 
+function createProfilePageView(workspace) {
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: workspace.partition,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: false,
+    },
+  });
+  view.setBackgroundColor('#ffffff');
+  const page = {
+    id: crypto.randomUUID(),
+    view,
+    loading: false,
+    title: profileLabel(workspace.profile),
+  };
+  workspace.pages.set(page.id, page);
+  workspace.pageOrder.push(page.id);
+  attachProfilePageEvents(workspace, page);
+  return page;
+}
+
+async function createProfilePage(workspace, url = workspace.profile.url, activate = true) {
+  const page = createProfilePageView(workspace);
+  try {
+    await page.view.webContents.loadURL(url);
+    if (activate) {
+      workspace.activePageId = page.id;
+      if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) setDetachedActivePage(workspace, page.id);
+    }
+    updateWorkspaceState(workspace);
+    return page;
+  } catch (error) {
+    cleanupPage(workspace, page);
+    workspace.pages.delete(page.id);
+    workspace.pageOrder = workspace.pageOrder.filter((id) => id !== page.id);
+    throw error;
+  }
+}
+
+function closeDetachedPage(workspace, pageId) {
+  const page = workspace?.pages.get(pageId);
+  if (!workspace || !page) return false;
+  const index = workspace.pageOrder.indexOf(pageId);
+  const wasActive = workspace.activePageId === pageId;
+  cleanupPage(workspace, page);
+  workspace.pages.delete(pageId);
+  workspace.pageOrder = workspace.pageOrder.filter((id) => id !== pageId);
+  if (workspace.pages.size === 0) {
+    if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) workspace.detachedWindow.close();
+    return true;
+  }
+  if (wasActive) {
+    const nextId = workspace.pageOrder[Math.min(index, workspace.pageOrder.length - 1)] || workspace.pageOrder[index - 1];
+    if (nextId) setDetachedActivePage(workspace, nextId);
+  } else {
+    sendDetachedState(workspace);
+  }
+  return true;
+}
+
+function reorderDetachedPages(workspace, pageId, targetIndex) {
+  if (!workspace?.pages.has(pageId)) return false;
+  const order = workspace.pageOrder.filter((id) => workspace.pages.has(id));
+  const from = order.indexOf(pageId);
+  if (from < 0) return false;
+  const clamped = Math.max(0, Math.min(Number(targetIndex) || 0, order.length - 1));
+  order.splice(from, 1);
+  order.splice(clamped, 0, pageId);
+  workspace.pageOrder = order;
+  sendDetachedState(workspace);
+  return true;
+}
+
+function reorderProfiles(profileId, targetIndex) {
+  const attached = attachedProfileIds();
+  const from = attached.indexOf(profileId);
+  if (from < 0) return false;
+  const clamped = Math.max(0, Math.min(Number(targetIndex) || 0, attached.length - 1));
+  attached.splice(from, 1);
+  attached.splice(clamped, 0, profileId);
+  const detached = profileOrder.filter((id) => !attached.includes(id));
+  profileOrder = [...attached, ...detached];
+  sendBrowserState();
+  return true;
+}
+
+function workspaceForDetachedSender(sender) {
+  for (const workspace of profileTabs.values()) {
+    const window = workspace.detachedWindow;
+    if (window && !window.isDestroyed() && window.webContents === sender) return workspace;
+  }
+  return null;
+}
+
+function createDetachedProfileWindow(workspace, point = null) {
+  if (!workspace || workspace.detachedWindow) return workspace?.detachedWindow || null;
+  const opts = {
+    width: 1240,
+    height: 850,
+    minWidth: 760,
+    minHeight: 560,
+    title: `userFLOW · ${profileLabel(workspace.profile)}`,
+    show: false,
+    backgroundColor: '#090c12',
+    webPreferences: {
+      preload: path.join(__dirname, 'profile-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: false,
+    },
+  };
+  if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
+    opts.x = Math.max(0, Math.round(point.x - 180));
+    opts.y = Math.max(0, Math.round(point.y - 24));
+  }
+  const window = new BrowserWindow(opts);
+  workspace.detachedWindow = window;
+  workspace.detachedShellReady = false;
+  workspace.closing = false;
+
+  window.on('resize', () => layoutDetachedProfile(workspace));
+  window.webContents.on('did-finish-load', () => {
+    workspace.detachedShellReady = true;
+    const page = activePage(workspace);
+    if (page) setDetachedActivePage(workspace, page.id);
+    sendDetachedState(workspace);
+    if (!window.isDestroyed()) {
+      window.show();
+      window.focus();
+    }
+  });
+  window.on('closed', () => {
+    workspace.detachedWindow = null;
+    workspace.detachedShellReady = false;
+    if (!workspace.closing) {
+      cleanupWorkspace(workspace);
+      profileTabs.delete(workspace.profile.id);
+      profileOrder = profileOrder.filter((id) => id !== workspace.profile.id);
+      sendBrowserState();
+    }
+  });
+  void window.loadFile(path.join(__dirname, 'profile-window.html'));
+  return window;
+}
+
+function detachProfile(profileId, point = null) {
+  const workspace = profileTabs.get(profileId);
+  if (!workspace || workspace.detachedWindow) return false;
+  const page = activePage(workspace);
+  if (!page) return false;
+  const wasActive = activeProfileId === profileId;
+  detachViewFromPossibleParents(page.view, workspace);
+  if (wasActive) {
+    activeProfileId = null;
+    const remaining = attachedProfileIds().filter((id) => id !== profileId);
+    if (remaining.length) selectProfileTab(remaining[0]);
+    else showCatalogTab('home');
+  }
+  createDetachedProfileWindow(workspace, point);
+  sendBrowserState();
+  return true;
+}
+
+function detachIfOutside(profileId, point) {
+  if (!browserWindow || browserWindow.isDestroyed()) return false;
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const bounds = browserWindow.getBounds();
+  const outside = x < bounds.x || x > bounds.x + bounds.width || y < bounds.y || y > bounds.y + bounds.height;
+  return outside ? detachProfile(profileId, { x, y }) : false;
+}
+
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   if (profileTabs.has(profileId)) {
-    selectProfileTab(profileId);
+    const workspace = profileTabs.get(profileId);
+    pendingCatalogTab = false;
+    if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
+      showCatalogTab('home');
+      workspace.detachedWindow.show();
+      workspace.detachedWindow.focus();
+    } else {
+      selectProfileTab(profileId);
+    }
     return { ok: true, reused: true };
   }
 
@@ -589,19 +931,23 @@ async function openProfile(profileId) {
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
 
   const partitionClientId = authMeta?.client?.id || 'client';
-  const partition = `persist:userflex-client-${partitionClientId}-${profile.id}`;
-  const view = new WebContentsView({
-    webPreferences: {
-      partition,
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      devTools: false,
-    },
-  });
-  view.setBackgroundColor('#ffffff');
-  const browserSession = view.webContents.session;
-  let loginHandler = null;
+  const workspace = {
+    profile,
+    connection,
+    delivery,
+    partition: `persist:userflex-client-${partitionClientId}-${profile.id}`,
+    pages: new Map(),
+    pageOrder: [],
+    activePageId: null,
+    loginHandler: null,
+    detachedWindow: null,
+    detachedShellReady: false,
+    closing: false,
+    cleaned: false,
+  };
+  const firstPage = createProfilePageView(workspace);
+  workspace.activePageId = firstPage.id;
+  const browserSession = firstPage.view.webContents.session;
 
   if (connection.mode === 'proxy' && connection.proxy) {
     await browserSession.setProxy({
@@ -610,26 +956,17 @@ async function openProfile(profileId) {
       proxyBypassRules: '<-loopback>',
     });
     const proxyHost = String(connection.proxy.host || '').toLowerCase();
-    loginHandler = (event, targetWebContents, _details, authInfo, callback) => {
-      if (targetWebContents !== view.webContents) return;
+    workspace.loginHandler = (event, targetWebContents, _details, authInfo, callback) => {
+      const belongsToWorkspace = Array.from(workspace.pages.values()).some((page) => page.view.webContents === targetWebContents);
+      if (!belongsToWorkspace) return;
       if (!authInfo?.isProxy || String(authInfo.host || '').toLowerCase() !== proxyHost) return;
       event.preventDefault();
       callback(connection.proxy.username || '', connection.proxy.password || '');
     };
-    app.on('login', loginHandler);
+    app.on('login', workspace.loginHandler);
   } else {
     await browserSession.setProxy({ mode: 'direct' });
   }
-
-  const tab = {
-    profile,
-    connection,
-    delivery,
-    view,
-    loginHandler,
-    loading: false,
-  };
-  attachProfileViewEvents(tab);
 
   try {
     if (connection.locked === true && connection.mode !== 'proxy') {
@@ -647,12 +984,13 @@ async function openProfile(profileId) {
       if (!delivery?.ready || !delivery?.materialIncluded) {
         throw new UserflexError('La sesión administrada todavía no está lista.', 'MANAGED_SESSION_NOT_READY');
       }
-      await restoreManagedSession(view.webContents, browserSession, profile, delivery);
+      await restoreManagedSession(firstPage.view.webContents, browserSession, profile, delivery);
     } else {
-      await view.webContents.loadURL(profile.url);
+      await firstPage.view.webContents.loadURL(profile.url);
     }
 
-    profileTabs.set(profile.id, tab);
+    profileTabs.set(profile.id, workspace);
+    profileOrder.push(profile.id);
     selectProfileTab(profile.id);
     return {
       ok: true,
@@ -663,7 +1001,7 @@ async function openProfile(profileId) {
       sessionVersion: Number(delivery?.version || 0),
     };
   } catch (error) {
-    cleanupProfileTab(tab, false);
+    cleanupWorkspace(workspace);
     throw error;
   }
 }
@@ -745,10 +1083,41 @@ ipcMain.handle('userflex-browser:action', (event, input) => {
   const profileId = typeof input?.profileId === 'string' ? input.profileId : activeProfileId;
   if (action === 'select') return { ok: selectProfileTab(profileId) };
   if (action === 'close') return { ok: closeProfileTab(profileId) };
+  if (action === 'reorder') return { ok: reorderProfiles(profileId, input?.targetIndex) };
+  if (action === 'detach') return { ok: detachProfile(profileId, { x: Number(input?.screenX), y: Number(input?.screenY) }) };
+  if (action === 'detach-if-outside') return { ok: detachIfOutside(profileId, { x: Number(input?.screenX), y: Number(input?.screenY) }) };
   if (['back', 'forward', 'reload', 'home'].includes(action)) return { ok: tabNavigation(action, profileId) };
   if (action === 'catalog-home') return { ok: showCatalogTab('home') };
   if (action === 'new-tab') return { ok: showCatalogTab('pending') };
   if (action === 'close-pending') return { ok: showCatalogTab('home') };
+  return { ok: false };
+});
+
+ipcMain.handle('userflex-profile-window:get-state', (event) => {
+  const workspace = workspaceForDetachedSender(event.sender);
+  return workspace ? detachedState(workspace) : null;
+});
+
+ipcMain.handle('userflex-profile-window:action', async (event, input) => {
+  const workspace = workspaceForDetachedSender(event.sender);
+  if (!workspace) return { ok: false };
+  const action = String(input?.action || '');
+  const pageId = typeof input?.pageId === 'string' ? input.pageId : workspace.activePageId;
+  if (action === 'select-page') return { ok: setDetachedActivePage(workspace, pageId) };
+  if (action === 'close-page') return { ok: closeDetachedPage(workspace, pageId) };
+  if (action === 'reorder-page') return { ok: reorderDetachedPages(workspace, pageId, input?.targetIndex) };
+  if (action === 'new-page') {
+    try {
+      const page = await createProfilePage(workspace, workspace.profile.url, true);
+      return { ok: true, pageId: page.id };
+    } catch (error) {
+      return { ok: false, error: serializeError(error) };
+    }
+  }
+  if (['back', 'forward', 'reload', 'home'].includes(action)) {
+    const page = workspace.pages.get(pageId) || activePage(workspace);
+    return { ok: pageNavigation(workspace, page, action) };
+  }
   return { ok: false };
 });
 
