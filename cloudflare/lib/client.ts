@@ -3,11 +3,11 @@ import { Env, HttpError, audit, decryptProxy, json, sb } from './core';
 import { managedSessionMaterial } from './profile-sessions';
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
-  const assignments = await sb(
+  const memberships = await sb(
     env,
-    `userflex_assignments?select=id,profile_id,proxy_id&client_id=eq.${id.clientId}&enabled=eq.true&order=created_at.asc`,
+    `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&order=created_at.asc`,
   );
-  if (!assignments?.length) {
+  if (!memberships?.length) {
     return json({
       ok: true,
       profiles: [],
@@ -16,10 +16,9 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     });
   }
 
-  const limited = assignments.slice(0, id.plan.max_profiles);
-  const profileIds = limited.map((assignment: any) => assignment.profile_id);
+  const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults, sessions] = await Promise.all([
+  const [profiles, defaults, sessions, assignments] = await Promise.all([
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready&id=in.(${ids})&enabled=eq.true`,
@@ -32,17 +31,24 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       env,
       `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip&profile_id=in.(${ids})`,
     ),
+    sb(
+      env,
+      `userflex_assignments?select=profile_id,proxy_id&client_id=eq.${id.clientId}&profile_id=in.(${ids})&enabled=eq.true`,
+    ),
   ]);
 
   const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
-  const result = limited
-    .map((assignment: any) => {
-      const profile: any = profileMap.get(assignment.profile_id);
+  const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
+  const result = profileIds
+    .map((profileId: string) => {
+      const profile: any = profileMap.get(profileId);
       if (!profile) return null;
       const managed = profile.session_mode === 'managed-first-party';
       const session: any = sessionMap.get(profile.id);
+      const assignment: any = assignmentMap.get(profile.id);
+      const assignmentProxyId = assignment?.proxy_id || null;
       const profileProxyId = defaultProxyMap.get(profile.id) || null;
       return {
         id: profile.id,
@@ -53,7 +59,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         tags: profile.tags || [],
         managedConnection: managed
           ? Boolean(profileProxyId)
-          : Boolean(assignment.proxy_id || profileProxyId),
+          : Boolean(assignmentProxyId || profileProxyId),
         sessionMode: profile.session_mode,
         sessionReady: profile.session_ready === true && (!managed || session?.status === 'ready'),
         sessionVersion: Number(session?.session_version || 0),
@@ -78,14 +84,15 @@ export async function clientLaunch(
   id: ClientIdentity,
   profileId: string,
 ) {
-  const assignments = await sb(
-    env,
-    `userflex_assignments?select=id,proxy_id&client_id=eq.${id.clientId}&profile_id=eq.${profileId}&enabled=eq.true&limit=1`,
-  );
-  const assignment = assignments?.[0];
-  if (!assignment) throw new HttpError(403, 'PROFILE_NOT_ASSIGNED');
-
-  const [profiles, defaults] = await Promise.all([
+  const [memberships, assignments, profiles, defaults] = await Promise.all([
+    sb(
+      env,
+      `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
+    ),
+    sb(
+      env,
+      `userflex_assignments?select=id,proxy_id&client_id=eq.${id.clientId}&profile_id=eq.${profileId}&enabled=eq.true&limit=1`,
+    ),
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready&id=eq.${profileId}&enabled=eq.true&limit=1`,
@@ -95,15 +102,21 @@ export async function clientLaunch(
       `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
     ),
   ]);
+  if (!memberships?.[0]) {
+    throw new HttpError(403, 'PROFILE_NOT_INCLUDED_IN_PLAN', 'Este perfil no está incluido en tu plan activo.');
+  }
+
+  const assignment = assignments?.[0] || null;
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 
   const managed = profile.session_mode === 'managed-first-party';
   const defaultProxyId = defaults?.[0]?.proxy_id || null;
-  const effectiveProxyId = managed ? defaultProxyId : (assignment.proxy_id || defaultProxyId);
+  const assignmentProxyId = assignment?.proxy_id || null;
+  const effectiveProxyId = managed ? defaultProxyId : (assignmentProxyId || defaultProxyId);
   const proxySource = managed
     ? (defaultProxyId ? 'profile-locked' : 'direct')
-    : assignment.proxy_id ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
+    : assignmentProxyId ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
   let connection: any = { mode: 'direct', locked: false };
 
   if (effectiveProxyId) {
