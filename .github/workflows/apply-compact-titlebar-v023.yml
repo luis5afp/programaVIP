@@ -1,0 +1,34 @@
+name: Apply compact titlebar v0.2.23
+
+on:
+  push:
+    branches:
+      - feature/compact-detached-titlebar-v023
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, 'Apply compact titlebar v0.2.23') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/compact-detached-titlebar-v023
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply compact titlebar changes
+        run: node scripts/apply-compact-titlebar-v023.mjs
+      - name: Remove temporary migration helpers
+        run: rm -f scripts/apply-compact-titlebar-v023.mjs .github/workflows/apply-compact-titlebar-v023.yml
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Apply compact titlebar v0.2.23"
+          git push origin HEAD:feature/compact-detached-titlebar-v023
