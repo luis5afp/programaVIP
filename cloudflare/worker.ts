@@ -4,6 +4,7 @@ import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './li
 import { publicClientUpdateRoutes } from './lib/client-updates';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
+import { profilePlanAccessRoutes } from './lib/profile-plan-access';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProfileSessionRoutes, publicSessionManagerRoutes } from './lib/profile-sessions';
 import {
@@ -15,7 +16,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -83,6 +84,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (profileProxyResponse) return profileProxyResponse;
   const profileSessionResponse = await adminProfileSessionRoutes(request, env, admin);
   if (profileSessionResponse) return profileSessionResponse;
+  const profilePlanResponse = await profilePlanAccessRoutes(request, env, admin);
+  if (profilePlanResponse) return profilePlanResponse;
   const planAccessResponse = await planAccessRoutes(request, env, admin);
   if (planAccessResponse) return planAccessResponse;
   return adminRoutes(request, env, admin);
