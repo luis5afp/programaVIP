@@ -23,6 +23,18 @@ async function verifyPlans(env: Env, ids: string[]) {
   }
 }
 
+async function syncPlanProfileCount(env: Env, planId: string) {
+  const rows = await sb(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${planId}`);
+  await sb(env, `userflex_plans?id=eq.${planId}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      max_profiles: Math.max(1, rows.length),
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
 async function replaceProfilePlans(env: Env, profileId: string, planIds: string[]) {
   const existing = await sb(
     env,
@@ -45,10 +57,13 @@ async function replaceProfilePlans(env: Env, profileId: string, planIds: string[
 
   const affectedPlanIds = [...new Set([...previousPlanIds, ...planIds])];
   await Promise.all(
-    affectedPlanIds.map((planId) => sb(env, 'rpc/userflex_disable_disallowed_assignments', {
-      method: 'POST',
-      body: JSON.stringify({ p_plan_id: planId }),
-    })),
+    affectedPlanIds.map(async (planId) => {
+      await syncPlanProfileCount(env, planId);
+      await sb(env, 'rpc/userflex_disable_disallowed_assignments', {
+        method: 'POST',
+        body: JSON.stringify({ p_plan_id: planId }),
+      });
+    }),
   );
 }
 
