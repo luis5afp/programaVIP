@@ -19,9 +19,16 @@ button { font: inherit; }
   display: flex;
   align-items: end;
   gap: 5px;
-  padding: 6px 9px 0;
+  padding: 6px 148px 0 9px;
   border-bottom: 1px solid #151b26;
+  -webkit-app-region: drag;
 }
+
+.profile-badge,
+.page-tabs,
+.page-tab,
+.page-close,
+.new-page-button { -webkit-app-region: no-drag; }
 .profile-badge {
   height: 32px;
   max-width: 210px;

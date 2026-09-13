@@ -25,9 +25,16 @@ body.catalog-mode .toolbar { display: none; }
   align-items: end;
   justify-content: flex-start;
   gap: 6px;
-  padding: 7px 10px 0;
+  padding: 7px 148px 0 10px;
   border-bottom: 1px solid #151b26;
+  -webkit-app-region: drag;
 }
+
+.catalog-button,
+.new-tab-button,
+.tabs,
+.tab,
+.tab-close { -webkit-app-region: no-drag; }
 
 .catalog-button,
 .new-tab-button {
