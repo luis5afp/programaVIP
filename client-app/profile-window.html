@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; font-src 'self';" />
+  <title>userFLOW · Perfil</title>
+  <link rel="stylesheet" href="./profile-window.css" />
+</head>
+<body>
+  <header class="profile-chrome">
+    <div class="tabs-row">
+      <div class="profile-badge">
+        <img id="profile-icon" class="profile-icon hidden" alt="" />
+        <span id="profile-fallback" class="profile-fallback">P</span>
+        <strong id="profile-label">Perfil</strong>
+      </div>
+      <div id="page-tabs" class="page-tabs" role="tablist" aria-label="Pestañas del perfil"></div>
+      <button id="new-page-button" class="new-page-button" type="button" title="Nueva pestaña del perfil" aria-label="Nueva pestaña del perfil">+</button>
+    </div>
+    <div class="toolbar">
+      <div class="nav-actions">
+        <button id="back-button" class="nav-button" type="button" title="Atrás" aria-label="Atrás">‹</button>
+        <button id="forward-button" class="nav-button" type="button" title="Adelante" aria-label="Adelante">›</button>
+        <button id="reload-button" class="nav-button" type="button" title="Recargar" aria-label="Recargar">↻</button>
+        <button id="home-button" class="nav-button home-button" type="button" title="Inicio del perfil" aria-label="Inicio del perfil">⌂</button>
+      </div>
+      <div class="address-shell">
+        <span class="lock-icon">◆</span>
+        <span id="address" class="address-url">—</span>
+      </div>
+      <div id="network-state" class="network-state">Aislado</div>
+    </div>
+  </header>
+  <script src="./profile-window-renderer.js"></script>
+</body>
+</html>
