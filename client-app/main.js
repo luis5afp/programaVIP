@@ -27,6 +27,7 @@ let authMeta = null;
 let heartbeatTimer = null;
 const profileTabs = new Map();
 let profileOrder = [];
+let profileDragMonitor = null;
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -555,6 +556,7 @@ function createBrowserWindow() {
     if (!browserWindow?.isDestroyed()) browserWindow.show();
   });
   browserWindow.on('closed', () => {
+    stopProfileDragMonitor();
     const workspaces = Array.from(profileTabs.values());
     browserWindow = null;
     browserShellReady = false;
@@ -645,6 +647,7 @@ function closeProfileTab(profileId) {
 }
 
 function closePrivateBrowser() {
+  stopProfileDragMonitor();
   const workspaces = Array.from(profileTabs.values());
   profileTabs.clear();
   profileOrder = [];
@@ -885,7 +888,50 @@ function createDetachedProfileWindow(workspace, point = null) {
   return window;
 }
 
+function stopProfileDragMonitor() {
+  if (profileDragMonitor?.timer) clearInterval(profileDragMonitor.timer);
+  profileDragMonitor = null;
+}
+
+function beginProfileDragMonitor(profileId) {
+  stopProfileDragMonitor();
+  if (!browserWindow || browserWindow.isDestroyed()) return false;
+  const workspace = profileTabs.get(profileId);
+  if (!workspace || workspace.detachedWindow) return false;
+
+  const monitor = { profileId, timer: null };
+  monitor.timer = setInterval(() => {
+    if (profileDragMonitor !== monitor) return;
+    const current = profileTabs.get(profileId);
+    if (!browserWindow || browserWindow.isDestroyed() || !current || current.detachedWindow) {
+      stopProfileDragMonitor();
+      return;
+    }
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = browserWindow.getBounds();
+    const windowMargin = 18;
+    const tabDetachDistance = 34;
+    const outsideWindow = cursor.x < bounds.x - windowMargin
+      || cursor.x > bounds.x + bounds.width + windowMargin
+      || cursor.y < bounds.y - windowMargin
+      || cursor.y > bounds.y + bounds.height + windowMargin;
+    const leftTabStrip = cursor.y > bounds.y + TAB_STRIP_HEIGHT + tabDetachDistance;
+    if (!outsideWindow && !leftTabStrip) return;
+    stopProfileDragMonitor();
+    detachProfile(profileId, cursor);
+  }, 25);
+  profileDragMonitor = monitor;
+  return true;
+}
+
+function endProfileDragMonitor(profileId) {
+  const detached = Boolean(profileTabs.get(profileId)?.detachedWindow);
+  if (!profileDragMonitor || profileDragMonitor.profileId === profileId) stopProfileDragMonitor();
+  return detached;
+}
+
 function detachProfile(profileId, point = null) {
+  if (profileDragMonitor?.profileId === profileId) stopProfileDragMonitor();
   const workspace = profileTabs.get(profileId);
   if (!workspace || workspace.detachedWindow) return false;
   const page = activePage(workspace);
@@ -1093,6 +1139,8 @@ ipcMain.handle('userflex-browser:action', (event, input) => {
   if (action === 'select') return { ok: selectProfileTab(profileId) };
   if (action === 'close') return { ok: closeProfileTab(profileId) };
   if (action === 'reorder') return { ok: reorderProfiles(profileId, input?.targetIndex) };
+  if (action === 'profile-drag-begin') return { ok: beginProfileDragMonitor(profileId) };
+  if (action === 'profile-drag-end') return { ok: true, detached: endProfileDragMonitor(profileId) };
   if (action === 'detach') return { ok: detachProfile(profileId, { x: Number(input?.screenX), y: Number(input?.screenY) }) };
   if (action === 'detach-if-outside') return { ok: detachIfOutside(profileId, { x: Number(input?.screenX), y: Number(input?.screenY) }) };
   if (['back', 'forward', 'reload', 'home'].includes(action)) return { ok: tabNavigation(action, profileId) };

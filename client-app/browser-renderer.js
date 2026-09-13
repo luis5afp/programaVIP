@@ -10,8 +10,8 @@ const address = document.getElementById('address');
 const networkState = document.getElementById('network-state');
 
 let state = { activeProfileId: null, catalogMode: 'home', pendingTab: false, tabs: [] };
-let draggedProfileId = null;
-let dragDropped = false;
+let profilePointerDrag = null;
+let queuedState = null;
 
 function activeTab() {
   return state.tabs.find((tab) => tab.id === state.activeProfileId) || null;
@@ -26,6 +26,7 @@ function tabIcon(tab) {
     const image = document.createElement('img');
     image.className = 'tab-icon';
     image.alt = '';
+    image.draggable = false;
     image.src = tab.imageUrl;
     return image;
   }
@@ -35,8 +36,83 @@ function tabIcon(tab) {
   return fallback;
 }
 
-function clearDragMarkers() {
-  document.querySelectorAll('.tab.drag-over').forEach((node) => node.classList.remove('drag-over'));
+function profileTabNodes() {
+  return Array.from(tabsElement.querySelectorAll('.tab[data-profile-id]'));
+}
+
+function clearDragVisuals() {
+  document.querySelectorAll('.tab.drag-over, .tab.dragging').forEach((node) => {
+    node.classList.remove('drag-over', 'dragging');
+  });
+}
+
+function targetIndexFromClientX(clientX) {
+  const nodes = profileTabNodes();
+  if (!nodes.length) return 0;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const rect = nodes[index].getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) return index;
+  }
+  return nodes.length - 1;
+}
+
+function markTargetIndex(index, profileId) {
+  const nodes = profileTabNodes();
+  nodes.forEach((node, nodeIndex) => {
+    node.classList.toggle('drag-over', nodeIndex === index && node.dataset.profileId !== profileId);
+    node.classList.toggle('dragging', node.dataset.profileId === profileId);
+  });
+}
+
+function beginProfilePointerDrag(item, tab, index, event) {
+  if (event.button !== 0 || event.target.closest('.tab-close')) return;
+  event.preventDefault();
+  queuedState = null;
+  profilePointerDrag = {
+    profileId: tab.id,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    targetIndex: index,
+    moved: false,
+  };
+  try { item.setPointerCapture(event.pointerId); } catch {}
+  void run('profile-drag-begin', tab.id);
+}
+
+function moveProfilePointerDrag(event) {
+  const drag = profilePointerDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+  if (!drag.moved && distance < 5) return;
+  drag.moved = true;
+  drag.targetIndex = targetIndexFromClientX(event.clientX);
+  markTargetIndex(drag.targetIndex, drag.profileId);
+}
+
+async function endProfilePointerDrag(item, event, canceled = false) {
+  const drag = profilePointerDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const pending = queuedState;
+  profilePointerDrag = null;
+  queuedState = null;
+  clearDragVisuals();
+  try {
+    if (item.hasPointerCapture(event.pointerId)) item.releasePointerCapture(event.pointerId);
+  } catch {}
+
+  const result = await run('profile-drag-end', drag.profileId);
+  if (canceled) {
+    if (pending) {
+      state = pending;
+      renderTabs();
+    }
+    return;
+  }
+  if (!result?.detached) {
+    if (drag.moved) await run('reorder', drag.profileId, { targetIndex: drag.targetIndex });
+    else await run('select', drag.profileId);
+  }
 }
 
 function makeProfileTab(tab, index) {
@@ -46,7 +122,6 @@ function makeProfileTab(tab, index) {
   item.setAttribute('aria-selected', tab.id === state.activeProfileId ? 'true' : 'false');
   item.tabIndex = 0;
   item.title = `${tab.label || 'Perfil'} · arrastra para reordenar o sacar a otra ventana`;
-  item.draggable = true;
   item.dataset.profileId = tab.id;
 
   const title = document.createElement('span');
@@ -65,44 +140,16 @@ function makeProfileTab(tab, index) {
   });
 
   item.append(tabIcon(tab), title, close);
-  item.addEventListener('click', () => void run('select', tab.id));
   item.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       void run('select', tab.id);
     }
   });
-  item.addEventListener('dragstart', (event) => {
-    draggedProfileId = tab.id;
-    dragDropped = false;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', tab.id);
-  });
-  item.addEventListener('dragover', (event) => {
-    if (!draggedProfileId || draggedProfileId === tab.id) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    item.classList.add('drag-over');
-  });
-  item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
-  item.addEventListener('drop', (event) => {
-    event.preventDefault();
-    dragDropped = true;
-    item.classList.remove('drag-over');
-    if (!draggedProfileId || draggedProfileId === tab.id) return;
-    void run('reorder', draggedProfileId, { targetIndex: index });
-  });
-  item.addEventListener('dragend', (event) => {
-    const id = draggedProfileId;
-    clearDragMarkers();
-    draggedProfileId = null;
-    if (!id || dragDropped) {
-      dragDropped = false;
-      return;
-    }
-    dragDropped = false;
-    void run('detach-if-outside', id, { screenX: event.screenX, screenY: event.screenY });
-  });
+  item.addEventListener('pointerdown', (event) => beginProfilePointerDrag(item, tab, index, event));
+  item.addEventListener('pointermove', moveProfilePointerDrag);
+  item.addEventListener('pointerup', (event) => void endProfilePointerDrag(item, event, false));
+  item.addEventListener('pointercancel', (event) => void endProfilePointerDrag(item, event, true));
   return item;
 }
 
@@ -164,19 +211,6 @@ forwardButton.addEventListener('click', () => void run('forward'));
 reloadButton.addEventListener('click', () => void run('reload'));
 homeButton.addEventListener('click', () => void run('home'));
 
-tabsElement.addEventListener('dragover', (event) => {
-  if (!draggedProfileId) return;
-  event.preventDefault();
-});
-tabsElement.addEventListener('drop', (event) => {
-  if (!draggedProfileId) return;
-  event.preventDefault();
-  dragDropped = true;
-  const profileId = draggedProfileId;
-  const rect = tabsElement.getBoundingClientRect();
-  if (event.clientX >= rect.right - 24) void run('reorder', profileId, { targetIndex: Math.max(0, state.tabs.length - 1) });
-});
-
 document.addEventListener('keydown', (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === 't') {
     event.preventDefault();
@@ -209,7 +243,18 @@ document.addEventListener('keydown', (event) => {
 });
 
 window.userflexBrowser.onState((next) => {
-  state = next || { activeProfileId: null, catalogMode: 'home', pendingTab: false, tabs: [] };
+  const normalized = next || { activeProfileId: null, catalogMode: 'home', pendingTab: false, tabs: [] };
+  if (profilePointerDrag) {
+    const stillAttached = normalized.tabs.some((tab) => tab.id === profilePointerDrag.profileId);
+    if (stillAttached) {
+      queuedState = normalized;
+      return;
+    }
+    profilePointerDrag = null;
+    queuedState = null;
+    clearDragVisuals();
+  }
+  state = normalized;
   renderTabs();
 });
 

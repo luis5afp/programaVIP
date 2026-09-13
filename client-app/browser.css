@@ -30,6 +30,7 @@ body.catalog-mode .toolbar { display: none; }
   -webkit-app-region: drag;
 }
 
+/* Pointer Events own tab dragging; only the empty titlebar gaps move the window. */
 .catalog-button,
 .new-tab-button,
 .tabs,
@@ -91,9 +92,11 @@ body.catalog-mode .toolbar { display: none; }
   align-items: center;
   gap: 7px;
   padding: 0 5px 0 9px;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   transition: background .14s ease, border-color .14s ease, color .14s ease;
 }
+.tab.dragging { cursor: grabbing; opacity: .78; }
 .tab:hover { background: #161e2b; color: #eef2ff; }
 .tab.active {
   background: #1b2230;
