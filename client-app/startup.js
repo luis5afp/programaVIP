@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
 const UPDATE_PROXY_BASE = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
+const PROFILE_ZOOM_FACTOR = 0.85;
 
 // Capture Electron's packaged default user-data directory before changing the
 // visible application name. Keep that directory fixed for every future launch
@@ -17,6 +18,24 @@ app.setName('userFLOW');
 // chrome (title bar, caption buttons and system surfaces) in dark mode too, so
 // the OS frame visually continues the app instead of showing a white strip.
 nativeTheme.themeSource = 'dark';
+
+// Every remote profile page opens at 85% so the web workspace stays compact.
+// Local userFLOW surfaces (login, catalog, updater and tab chrome) keep 100%.
+// Reapply the factor after navigations/reloads because some sites can reset
+// their renderer zoom while changing document or origin.
+app.on('web-contents-created', (_event, contents) => {
+  const applyProfileZoom = () => {
+    try {
+      const url = contents.getURL();
+      if (/^https?:\/\//i.test(url)) contents.setZoomFactor(PROFILE_ZOOM_FACTOR);
+    } catch {
+      // Zoom is a presentation enhancement and must never block navigation.
+    }
+  };
+  contents.on('did-navigate', applyProfileZoom);
+  contents.on('did-navigate-in-page', applyProfileZoom);
+  contents.on('did-finish-load', applyProfileZoom);
+});
 
 // Keep Electron alive while bootstrap hands off from the updater splash to the
 // real Client window. bootstrap.js now waits for the main window before closing
