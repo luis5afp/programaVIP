@@ -64,17 +64,10 @@ function markTargetIndex(index, profileId) {
   });
 }
 
-function flushQueuedState() {
-  if (!queuedState) return;
-  const next = queuedState;
-  queuedState = null;
-  state = next;
-  renderTabs();
-}
-
 function beginProfilePointerDrag(item, tab, index, event) {
   if (event.button !== 0 || event.target.closest('.tab-close')) return;
   event.preventDefault();
+  queuedState = null;
   profilePointerDrag = {
     profileId: tab.id,
     pointerId: event.pointerId,
@@ -100,18 +93,26 @@ function moveProfilePointerDrag(event) {
 async function endProfilePointerDrag(item, event, canceled = false) {
   const drag = profilePointerDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
+  const pending = queuedState;
   profilePointerDrag = null;
+  queuedState = null;
   clearDragVisuals();
   try {
     if (item.hasPointerCapture(event.pointerId)) item.releasePointerCapture(event.pointerId);
   } catch {}
 
   const result = await run('profile-drag-end', drag.profileId);
-  if (!canceled && !result?.detached) {
+  if (canceled) {
+    if (pending) {
+      state = pending;
+      renderTabs();
+    }
+    return;
+  }
+  if (!result?.detached) {
     if (drag.moved) await run('reorder', drag.profileId, { targetIndex: drag.targetIndex });
     else await run('select', drag.profileId);
   }
-  flushQueuedState();
 }
 
 function makeProfileTab(tab, index) {
@@ -247,7 +248,6 @@ window.userflexBrowser.onState((next) => {
     const stillAttached = normalized.tabs.some((tab) => tab.id === profilePointerDrag.profileId);
     if (stillAttached) {
       queuedState = normalized;
-      state = normalized;
       return;
     }
     profilePointerDrag = null;
