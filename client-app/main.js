@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 60_000;
+const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
 
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
@@ -16,7 +17,10 @@ app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 let mainWindow = null;
 let browserWindow = null;
 let browserShellReady = false;
+let catalogView = null;
+let activeContentView = null;
 let activeProfileId = null;
+let pendingCatalogTab = false;
 let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
@@ -115,15 +119,16 @@ async function apiRequest(pathName, options = {}) {
   return payload;
 }
 
+function authError(error) {
+  return error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code);
+}
+
 async function catalog() {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   try {
     return await apiRequest('/api/client/catalog');
   } catch (error) {
-    if (error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code)) {
-      closePrivateBrowser();
-      await clearAuth();
-    }
+    if (authError(error)) await returnToLogin();
     throw error;
   }
 }
@@ -136,8 +141,9 @@ function serializeError(error) {
   };
 }
 
-function sendMain(channel, payload) {
+function sendClient(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+  if (catalogView && !catalogView.webContents.isDestroyed()) catalogView.webContents.send(channel, payload);
 }
 
 function startHeartbeat() {
@@ -146,18 +152,12 @@ function startHeartbeat() {
     if (!accessToken) return;
     try {
       const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
-      sendMain('userflex:heartbeat', result);
+      sendClient('userflex:heartbeat', result);
       if (result?.revoke === true || result?.active === false) {
-        closePrivateBrowser();
-        await clearAuth();
-        sendMain('userflex:auth-invalidated', { message: 'La sesión del cliente fue revocada.' });
+        await returnToLogin();
       }
     } catch (error) {
-      if (error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code)) {
-        closePrivateBrowser();
-        await clearAuth();
-        sendMain('userflex:auth-invalidated', serializeError(error));
-      }
+      if (authError(error)) await returnToLogin();
     }
   }, HEARTBEAT_MS);
 }
@@ -168,12 +168,13 @@ function stopHeartbeat() {
 }
 
 function createMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 900,
     minHeight: 620,
-    title: 'userFLEX Client',
+    title: 'userFLOW',
     backgroundColor: '#080b10',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -187,6 +188,36 @@ function createMainWindow() {
     mainWindow = null;
   });
   void mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  return mainWindow;
+}
+
+function isEmbeddedCatalogSender(sender) {
+  try {
+    return new URL(sender.getURL()).searchParams.get('embedded') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function enterWorkspace(sender) {
+  if (isEmbeddedCatalogSender(sender)) return;
+  setTimeout(() => {
+    if (!accessToken) return;
+    const sourceWindow = BrowserWindow.fromWebContents(sender);
+    const workspace = createBrowserWindow();
+    showCatalogTab('home');
+    workspace.show();
+    workspace.focus();
+    if (sourceWindow && sourceWindow === mainWindow && !sourceWindow.isDestroyed()) sourceWindow.close();
+  }, 0);
+}
+
+async function returnToLogin() {
+  await clearAuth();
+  const loginWindow = createMainWindow();
+  loginWindow.show();
+  loginWindow.focus();
+  closePrivateBrowser();
 }
 
 function proxyRules(proxy) {
@@ -310,6 +341,8 @@ function browserTabPayload(tab) {
 function browserState() {
   return {
     activeProfileId,
+    catalogMode: activeProfileId ? null : (pendingCatalogTab ? 'pending' : 'home'),
+    pendingTab: !activeProfileId && pendingCatalogTab,
     tabs: Array.from(profileTabs.values()).map(browserTabPayload),
   };
 }
@@ -319,17 +352,40 @@ function sendBrowserState() {
   browserWindow.webContents.send('userflex-browser:state', browserState());
 }
 
-function layoutActiveProfileView() {
-  if (!browserWindow || browserWindow.isDestroyed() || !activeProfileId) return;
-  const tab = profileTabs.get(activeProfileId);
-  if (!tab || tab.view.webContents.isDestroyed()) return;
+function contentTop() {
+  return activeProfileId ? BROWSER_CHROME_HEIGHT : TAB_STRIP_HEIGHT;
+}
+
+function layoutActiveContent() {
+  if (!browserWindow || browserWindow.isDestroyed() || !activeContentView || activeContentView.webContents.isDestroyed()) return;
   const [width, height] = browserWindow.getContentSize();
-  tab.view.setBounds({
+  const top = contentTop();
+  activeContentView.setBounds({
     x: 0,
-    y: BROWSER_CHROME_HEIGHT,
+    y: top,
     width: Math.max(1, width),
-    height: Math.max(1, height - BROWSER_CHROME_HEIGHT),
+    height: Math.max(1, height - top),
   });
+}
+
+function setActiveContent(view) {
+  if (!browserWindow || browserWindow.isDestroyed()) return;
+  if (activeContentView && activeContentView !== view) {
+    try {
+      browserWindow.contentView.removeChildView(activeContentView);
+    } catch {
+      // It may already be detached.
+    }
+  }
+  activeContentView = view || null;
+  if (activeContentView) {
+    try {
+      browserWindow.contentView.addChildView(activeContentView);
+    } catch {
+      // It may already be attached.
+    }
+  }
+  layoutActiveContent();
 }
 
 function cleanupProfileTab(tab, removeView = true) {
@@ -342,18 +398,38 @@ function cleanupProfileTab(tab, removeView = true) {
       // The view may already be detached during window teardown.
     }
   }
+  if (activeContentView === tab.view) activeContentView = null;
   if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+}
+
+function createCatalogView() {
+  if (catalogView && !catalogView.webContents.isDestroyed()) return catalogView;
+  catalogView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: false,
+    },
+  });
+  catalogView.setBackgroundColor('#070a0f');
+  catalogView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  void catalogView.webContents.loadFile(path.join(__dirname, 'index.html'), { query: { embedded: '1' } });
+  return catalogView;
 }
 
 function createBrowserWindow() {
   if (browserWindow && !browserWindow.isDestroyed()) return browserWindow;
   browserShellReady = false;
+  activeContentView = null;
   browserWindow = new BrowserWindow({
     width: 1380,
     height: 900,
     minWidth: 960,
     minHeight: 680,
-    title: 'userFLEX Browser',
+    title: 'userFLOW',
+    show: false,
     backgroundColor: '#090c12',
     webPreferences: {
       preload: path.join(__dirname, 'browser-preload.cjs'),
@@ -363,37 +439,50 @@ function createBrowserWindow() {
       devTools: false,
     },
   });
-  browserWindow.on('resize', layoutActiveProfileView);
+  browserWindow.on('resize', layoutActiveContent);
   browserWindow.webContents.on('did-finish-load', () => {
     browserShellReady = true;
     sendBrowserState();
+    layoutActiveContent();
+    if (!browserWindow?.isDestroyed()) browserWindow.show();
   });
   browserWindow.on('closed', () => {
     const tabs = Array.from(profileTabs.values());
     browserWindow = null;
     browserShellReady = false;
     activeProfileId = null;
+    pendingCatalogTab = false;
+    activeContentView = null;
     profileTabs.clear();
     for (const tab of tabs) cleanupProfileTab(tab, false);
+    if (catalogView && !catalogView.webContents.isDestroyed()) catalogView.webContents.close();
+    catalogView = null;
   });
   void browserWindow.loadFile(path.join(__dirname, 'browser.html'));
   return browserWindow;
+}
+
+function showCatalogTab(mode = 'home') {
+  const window = createBrowserWindow();
+  activeProfileId = null;
+  pendingCatalogTab = mode === 'pending';
+  setActiveContent(createCatalogView());
+  sendBrowserState();
+  window.show();
+  window.focus();
+  return true;
 }
 
 function selectProfileTab(profileId) {
   const tab = profileTabs.get(profileId);
   if (!tab) return false;
   const window = createBrowserWindow();
-  if (activeProfileId && activeProfileId !== profileId) {
-    const previous = profileTabs.get(activeProfileId);
-    if (previous) window.contentView.removeChildView(previous.view);
-  }
   activeProfileId = profileId;
-  window.contentView.addChildView(tab.view);
-  layoutActiveProfileView();
+  pendingCatalogTab = false;
+  setActiveContent(tab.view);
+  sendBrowserState();
   window.show();
   window.focus();
-  sendBrowserState();
   return true;
 }
 
@@ -411,7 +500,7 @@ function closeProfileTab(profileId) {
     activeProfileId = null;
     const nextId = ids[index + 1] || ids[index - 1] || null;
     if (nextId && profileTabs.has(nextId)) selectProfileTab(nextId);
-    else if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
+    else showCatalogTab('home');
   } else {
     sendBrowserState();
   }
@@ -422,7 +511,18 @@ function closePrivateBrowser() {
   const tabs = Array.from(profileTabs.values());
   profileTabs.clear();
   activeProfileId = null;
+  pendingCatalogTab = false;
   for (const tab of tabs) cleanupProfileTab(tab, true);
+  if (catalogView && !catalogView.webContents.isDestroyed()) {
+    try {
+      if (browserWindow && !browserWindow.isDestroyed()) browserWindow.contentView.removeChildView(catalogView);
+    } catch {
+      // Already detached.
+    }
+    catalogView.webContents.close();
+  }
+  catalogView = null;
+  activeContentView = null;
   if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
 }
 
@@ -568,19 +668,20 @@ async function openProfile(profileId) {
   }
 }
 
-ipcMain.handle('userflex:bootstrap', async () => {
+ipcMain.handle('userflex:bootstrap', async (event) => {
   try {
     if (!accessToken) await loadAuth();
     if (!accessToken) return { authenticated: false };
     const data = await catalog();
     startHeartbeat();
+    enterWorkspace(event.sender);
     return { authenticated: true, auth: authMeta, catalog: data };
   } catch (error) {
     return { authenticated: false, error: serializeError(error) };
   }
 });
 
-ipcMain.handle('userflex:login', async (_event, input) => {
+ipcMain.handle('userflex:login', async (event, input) => {
   try {
     const identifier = String(input?.identifier || '').trim();
     const password = String(input?.password || '');
@@ -606,6 +707,7 @@ ipcMain.handle('userflex:login', async (_event, input) => {
     await saveAuth(result.accessToken, meta);
     const data = await catalog();
     startHeartbeat();
+    enterWorkspace(event.sender);
     return { ok: true, auth: meta, catalog: data };
   } catch (error) {
     return { ok: false, error: serializeError(error) };
@@ -632,7 +734,7 @@ ipcMain.handle('userflex:launch-profile', async (_event, profileId) => {
 
 ipcMain.handle('userflex-browser:get-state', (event) => {
   if (!browserWindow || browserWindow.isDestroyed() || event.sender !== browserWindow.webContents) {
-    return { activeProfileId: null, tabs: [] };
+    return { activeProfileId: null, catalogMode: 'home', pendingTab: false, tabs: [] };
   }
   return browserState();
 });
@@ -644,24 +746,19 @@ ipcMain.handle('userflex-browser:action', (event, input) => {
   if (action === 'select') return { ok: selectProfileTab(profileId) };
   if (action === 'close') return { ok: closeProfileTab(profileId) };
   if (['back', 'forward', 'reload', 'home'].includes(action)) return { ok: tabNavigation(action, profileId) };
-  if (action === 'catalog') {
-    if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
-    mainWindow.show();
-    mainWindow.focus();
-    return { ok: true };
-  }
+  if (action === 'catalog-home') return { ok: showCatalogTab('home') };
+  if (action === 'new-tab') return { ok: showCatalogTab('pending') };
+  if (action === 'close-pending') return { ok: showCatalogTab('home') };
   return { ok: false };
 });
 
 ipcMain.handle('userflex:logout', async () => {
   try {
     if (accessToken) await apiRequest('/api/client/logout', { method: 'POST' }).catch(() => null);
-    closePrivateBrowser();
-    await clearAuth();
+    await returnToLogin();
     return { ok: true };
   } catch (error) {
-    closePrivateBrowser();
-    await clearAuth();
+    await returnToLogin();
     return { ok: false, error: serializeError(error) };
   }
 });

@@ -4,26 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; connect-src 'none'; font-src 'self';" />
-  <title>userFLOW Browser</title>
+  <title>userFLOW</title>
   <link rel="stylesheet" href="./browser.css" />
 </head>
-<body>
+<body class="catalog-mode">
   <header class="browser-chrome">
     <div class="tabs-row">
-      <button id="catalog-button" class="brand-button" type="button" title="Volver al catálogo">
-        <span class="brand-mark"><img src="./assets/userflow.png" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit" /></span>
-        <span class="brand-name">userFLOW</span>
-      </button>
+      <button id="catalog-button" class="catalog-button active" type="button" title="Catálogo" aria-label="Abrir catálogo">⌂</button>
       <div id="tabs" class="tabs" role="tablist" aria-label="Perfiles abiertos"></div>
-      <button id="new-tab-button" class="new-tab-button" type="button" title="Abrir otro perfil desde el catálogo">+</button>
-      <span class="private-indicator"><span class="private-dot"></span>Perfiles privados</span>
+      <button id="new-tab-button" class="new-tab-button" type="button" title="Nueva pestaña" aria-label="Nueva pestaña">+</button>
     </div>
     <div class="toolbar">
       <div class="nav-actions">
         <button id="back-button" class="nav-button" type="button" title="Atrás" aria-label="Atrás">‹</button>
         <button id="forward-button" class="nav-button" type="button" title="Adelante" aria-label="Adelante">›</button>
         <button id="reload-button" class="nav-button" type="button" title="Recargar" aria-label="Recargar">↻</button>
-        <button id="home-button" class="nav-button home-button" type="button" title="Página principal del perfil" aria-label="Página principal">⌂</button>
+        <button id="home-button" class="nav-button home-button" type="button" title="Inicio del perfil" aria-label="Inicio del perfil">⌂</button>
       </div>
       <div class="address-shell">
         <span class="lock-icon">◆</span>
