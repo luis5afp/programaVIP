@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode } from '../types';
+import type { Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -10,6 +10,12 @@ type CaptureLaunch = {
   launchUrl: string;
   expiresAt: string | null;
 } | null;
+
+type ProfilePlanMembership = {
+  profile_id: string;
+  plan_id: string;
+  created_at: string;
+};
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -37,6 +43,9 @@ function launchSessionManager(launchUrl: string) {
 
 export function ProfilesView() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [profilePlanMemberships, setProfilePlanMemberships] = useState<ProfilePlanMembership[]>([]);
+  const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
   const [proxies, setProxies] = useState<ProxyRecord[]>([]);
   const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
@@ -53,16 +62,20 @@ export function ProfilesView() {
 
   async function load() {
     try {
-      const [profileRows, proxyRows, defaultRows, stateRows] = await Promise.all([
+      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows] = await Promise.all([
         api.profiles.list(),
         api.proxies.list(),
         api.profileProxyDefaults.list(),
         api.profileSessions.list(),
+        api.plans.list(),
+        api.profilePlans.list(),
       ]);
       setProfiles(profileRows);
       setProxies(proxyRows);
       setProxyDefaults(defaultRows);
       setSessionStates(stateRows);
+      setPlans(planRows);
+      setProfilePlanMemberships(membershipRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -90,12 +103,19 @@ export function ProfilesView() {
     return sessionStates.find((item) => item.profile_id === profileId) || null;
   }
 
+  function planIdsFor(profileId: string) {
+    return profilePlanMemberships
+      .filter((item) => item.profile_id === profileId)
+      .map((item) => item.plan_id);
+  }
+
   function openEditor(value: Exclude<Editor, null>) {
     const current = value === 'new' ? null : value;
     replaceObjectUrl(null);
     setImageFile(null);
     setImageUrl(current?.image_url || '');
     setSessionMode(current?.session_mode || 'manual-login');
+    setSelectedPlanIds(current ? planIdsFor(current.id) : []);
     setEditor(value);
     setError(null);
   }
@@ -105,6 +125,7 @@ export function ProfilesView() {
     setImageFile(null);
     setImageUrl('');
     setSessionMode('manual-login');
+    setSelectedPlanIds([]);
     setEditor(null);
   }
 
@@ -154,6 +175,12 @@ export function ProfilesView() {
     return proxyDefaults.find((item) => item.profile_id === profileId)?.proxy_id || null;
   }
 
+  function togglePlan(planId: string) {
+    setSelectedPlanIds((current) => current.includes(planId)
+      ? current.filter((id) => id !== planId)
+      : [...current, planId]);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -191,6 +218,8 @@ export function ProfilesView() {
         ? await api.profiles.update(editor.id, input)
         : await api.profiles.create(input);
 
+      if (editor === 'new') setEditor(savedProfile);
+      await api.profilePlans.set(savedProfile.id, selectedPlanIds);
       await api.profileProxyDefaults.set(savedProfile.id, proxyId);
       if (sessionMode === 'managed-first-party') {
         await api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined);
@@ -254,7 +283,9 @@ export function ProfilesView() {
   const filteredProfiles = normalizedSearch
     ? profiles.filter((profile) => {
         const proxyName = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id))?.name || '';
-        const searchable = [profileLabel(profile), profile.name, profile.url, proxyName, ...(profile.tags || [])]
+        const profilePlanIds = planIdsFor(profile.id);
+        const planNames = plans.filter((plan) => profilePlanIds.includes(plan.id)).map((plan) => plan.name);
+        const searchable = [profileLabel(profile), profile.name, profile.url, proxyName, ...planNames, ...(profile.tags || [])]
           .join(' ');
         return normalizeSearchValue(searchable).includes(normalizedSearch);
       })
@@ -264,7 +295,7 @@ export function ProfilesView() {
     <>
       <PageHead
         title="Perfiles / Webs"
-        description="Cada perfil puede mantener una sesión Chromium administrada. El proxy es opcional: si se configura, fija la salida de red del perfil; sin proxy se usa conexión directa."
+        description="Cada perfil puede pertenecer a uno o varios planes y mantener una sesión Chromium administrada. El proxy es opcional."
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -295,7 +326,7 @@ export function ProfilesView() {
         </Card>
       ) : filteredProfiles.length === 0 ? (
         <Card>
-          <Empty title="No se encontraron perfiles" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre o URL.`} />
+          <Empty title="No se encontraron perfiles" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre, plan o URL.`} />
         </Card>
       ) : (
         <div className="grid three">
@@ -303,6 +334,7 @@ export function ProfilesView() {
             const selectedProxy = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id));
             const session = stateFor(profile.id);
             const managed = profile.session_mode === 'managed-first-party';
+            const profilePlanIds = planIdsFor(profile.id);
             return (
               <Card className="profile-card" key={profile.id}>
                 <div className="profile-image">
@@ -316,6 +348,11 @@ export function ProfilesView() {
                   <h3>{profileLabel(profile)}</h3>
                   <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
                   <div className="profile-tags">
+                    <Badge tone={profilePlanIds.length > 0 ? 'neutral' : 'warn'}>
+                      {profilePlanIds.length === 0
+                        ? 'Sin plan'
+                        : `${profilePlanIds.length} ${profilePlanIds.length === 1 ? 'plan' : 'planes'}`}
+                    </Badge>
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>
                         Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
@@ -406,6 +443,57 @@ export function ProfilesView() {
 
             <Field label="O usar imagen por URL HTTPS" className="span-2" help="Opcional. Si subes o pegas una imagen, se guardará automáticamente y esta URL será reemplazada.">
               <input className="input" name="imageUrl" type="url" value={imageUrl} onChange={(event) => changeImageUrl(event.target.value)} placeholder="https://.../imagen.jpg" />
+            </Field>
+
+            <Field
+              label={`Disponible en planes (${selectedPlanIds.length})`}
+              className="span-2"
+              help="Puedes incluir este perfil en uno, varios o todos los planes. Los planes nuevos que crees después no se seleccionarán automáticamente."
+            >
+              <div style={{ border: '1px solid #dbe2ea', borderRadius: 12, padding: 12 }}>
+                <div className="toolbar" style={{ margin: '0 0 10px' }}>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => setSelectedPlanIds(plans.map((plan) => plan.id))}
+                    disabled={plans.length === 0}
+                  >
+                    Todos los planes
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => setSelectedPlanIds([])}
+                    disabled={selectedPlanIds.length === 0}
+                  >
+                    Ninguno
+                  </button>
+                </div>
+                {plans.length === 0 ? (
+                  <div className="help">Todavía no hay planes creados. Puedes guardar el perfil y asignarlo a un plan más adelante.</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                    {plans.map((plan) => (
+                      <label
+                        key={plan.id}
+                        style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 10px', border: '1px solid #e5eaf0', borderRadius: 10, cursor: 'pointer' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPlanIds.includes(plan.id)}
+                          onChange={() => togglePlan(plan.id)}
+                        />
+                        <span style={{ minWidth: 0 }}>
+                          <span className="table-primary">{plan.name}</span>
+                          <span className="table-secondary" style={{ display: 'block' }}>
+                            {plan.enabled ? (plan.duration_days ? `${plan.duration_days} días` : 'Sin duración fija') : 'Inactivo'}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </Field>
 
             <Field

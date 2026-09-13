@@ -54,7 +54,7 @@ export function PlansView() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (selectedProfileIds.length === 0) {
-      setError('Selecciona al menos un perfil permitido para este plan.');
+      setError('Selecciona al menos un perfil incluido en este plan.');
       return;
     }
     const form = new FormData(event.currentTarget);
@@ -63,7 +63,7 @@ export function PlansView() {
       name: String(form.get('name') || '').trim(),
       duration_days: durationRaw ? Number(durationRaw) : null,
       max_devices: Number(form.get('maxDevices') || 1),
-      max_profiles: Number(form.get('maxProfiles') || 1),
+      max_profiles: selectedProfileIds.length,
       profile_ids: selectedProfileIds,
       enabled: String(form.get('enabled')) === 'true',
     };
@@ -101,7 +101,7 @@ export function PlansView() {
     <>
       <PageHead
         title="Planes"
-        description="Define duración, límites y exactamente qué perfiles/webs puede utilizar cada plan."
+        description="Define duración, dispositivos y exactamente qué perfiles/webs incluye cada plan."
         actions={
           <button className="button primary" onClick={() => openEditor('new')} disabled={profiles.length === 0}>
             <Plus size={14} />
@@ -121,8 +121,7 @@ export function PlansView() {
                   <th>Plan</th>
                   <th>Duración</th>
                   <th>Dispositivos</th>
-                  <th>Máx. asignados</th>
-                  <th>Perfiles permitidos</th>
+                  <th>Perfiles incluidos</th>
                   <th>Estado</th>
                   <th />
                 </tr>
@@ -135,9 +134,8 @@ export function PlansView() {
                       <td className="table-primary">{plan.name}</td>
                       <td>{plan.duration_days === null ? 'Sin límite definido' : `${plan.duration_days} días`}</td>
                       <td>{plan.max_devices}</td>
-                      <td>{plan.max_profiles}</td>
                       <td>
-                        <div className="table-primary">{plan.profile_ids.length} permitidos</div>
+                        <div className="table-primary">{plan.profile_ids.length} perfiles</div>
                         <div className="table-secondary">
                           {names.length > 0
                             ? `${names.slice(0, 3).join(' · ')}${names.length > 3 ? ` · +${names.length - 3}` : ''}`
@@ -189,18 +187,15 @@ export function PlansView() {
             <Field label="Máximo de dispositivos">
               <input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue={current?.max_devices ?? 1} required />
             </Field>
-            <Field label="Máximo de perfiles" help="Cantidad máxima que se puede asignar al cliente; puede ser menor que la lista de permitidos.">
-              <input className="input" name="maxProfiles" type="number" min="1" max="500" defaultValue={current?.max_profiles ?? 5} required />
-            </Field>
-            <Field label="Estado">
+            <Field label="Estado" className="span-2">
               <select className="select" name="enabled" defaultValue={current?.enabled === false ? 'false' : 'true'}>
                 <option value="true">Activo</option>
                 <option value="false">Inactivo</option>
               </select>
             </Field>
             <Field
-              label={`Perfiles permitidos (${selectedProfileIds.length})`}
-              help="Sólo estos perfiles podrán asignarse y abrirse para clientes que tengan este plan."
+              label={`Perfiles incluidos (${selectedProfileIds.length})`}
+              help="Los clientes de este plan sólo podrán recibir perfiles seleccionados aquí. La cantidad del plan se calcula automáticamente según esta selección."
               className="span-2"
             >
               <div style={{ border: '1px solid #dbe2ea', borderRadius: 12, padding: 12 }}>
