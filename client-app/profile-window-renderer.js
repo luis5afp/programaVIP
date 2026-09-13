@@ -11,7 +11,8 @@ const address = document.getElementById('address');
 const networkState = document.getElementById('network-state');
 
 let state = { profileId: null, profileLabel: 'Perfil', activePageId: null, pages: [], networkLabel: 'Aislado' };
-let draggedPageId = null;
+let pagePointerDrag = null;
+let queuedState = null;
 
 function activePage() {
   return state.pages.find((page) => page.id === state.activePageId) || null;
@@ -21,13 +22,87 @@ async function run(action, payload = {}) {
   return window.userflexProfileWindow.action(action, payload);
 }
 
+function pageTabNodes() {
+  return Array.from(tabsElement.querySelectorAll('.page-tab[data-page-id]'));
+}
+
+function clearPageDragVisuals() {
+  document.querySelectorAll('.page-tab.drag-over, .page-tab.dragging').forEach((node) => {
+    node.classList.remove('drag-over', 'dragging');
+  });
+}
+
+function targetIndexFromClientX(clientX) {
+  const nodes = pageTabNodes();
+  if (!nodes.length) return 0;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const rect = nodes[index].getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) return index;
+  }
+  return nodes.length - 1;
+}
+
+function markPageTarget(index, pageId) {
+  pageTabNodes().forEach((node, nodeIndex) => {
+    node.classList.toggle('drag-over', nodeIndex === index && node.dataset.pageId !== pageId);
+    node.classList.toggle('dragging', node.dataset.pageId === pageId);
+  });
+}
+
+function flushQueuedState() {
+  if (!queuedState) return;
+  const next = queuedState;
+  queuedState = null;
+  state = next;
+  render();
+}
+
+function beginPagePointerDrag(item, page, index, event) {
+  if (event.button !== 0 || event.target.closest('.page-close')) return;
+  event.preventDefault();
+  pagePointerDrag = {
+    pageId: page.id,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    targetIndex: index,
+    moved: false,
+  };
+  try { item.setPointerCapture(event.pointerId); } catch {}
+}
+
+function movePagePointerDrag(event) {
+  const drag = pagePointerDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+  if (!drag.moved && distance < 5) return;
+  drag.moved = true;
+  drag.targetIndex = targetIndexFromClientX(event.clientX);
+  markPageTarget(drag.targetIndex, drag.pageId);
+}
+
+async function endPagePointerDrag(item, event, canceled = false) {
+  const drag = pagePointerDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  pagePointerDrag = null;
+  clearPageDragVisuals();
+  try {
+    if (item.hasPointerCapture(event.pointerId)) item.releasePointerCapture(event.pointerId);
+  } catch {}
+
+  if (!canceled) {
+    if (drag.moved) await run('reorder-page', { pageId: drag.pageId, targetIndex: drag.targetIndex });
+    else await run('select-page', { pageId: drag.pageId });
+  }
+  flushQueuedState();
+}
+
 function makePageTab(page, index) {
   const item = document.createElement('div');
   item.className = `page-tab${page.id === state.activePageId ? ' active' : ''}`;
   item.setAttribute('role', 'tab');
   item.setAttribute('aria-selected', page.id === state.activePageId ? 'true' : 'false');
   item.tabIndex = 0;
-  item.draggable = true;
   item.dataset.pageId = page.id;
   item.title = page.title || page.url || 'Pestaña';
 
@@ -47,35 +122,16 @@ function makePageTab(page, index) {
   });
 
   item.append(title, close);
-  item.addEventListener('click', () => void run('select-page', { pageId: page.id }));
   item.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       void run('select-page', { pageId: page.id });
     }
   });
-  item.addEventListener('dragstart', (event) => {
-    draggedPageId = page.id;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', page.id);
-  });
-  item.addEventListener('dragover', (event) => {
-    if (!draggedPageId || draggedPageId === page.id) return;
-    event.preventDefault();
-    item.classList.add('drag-over');
-  });
-  item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
-  item.addEventListener('drop', (event) => {
-    event.preventDefault();
-    item.classList.remove('drag-over');
-    if (!draggedPageId || draggedPageId === page.id) return;
-    void run('reorder-page', { pageId: draggedPageId, targetIndex: index });
-    draggedPageId = null;
-  });
-  item.addEventListener('dragend', () => {
-    draggedPageId = null;
-    document.querySelectorAll('.drag-over').forEach((node) => node.classList.remove('drag-over'));
-  });
+  item.addEventListener('pointerdown', (event) => beginPagePointerDrag(item, page, index, event));
+  item.addEventListener('pointermove', movePagePointerDrag);
+  item.addEventListener('pointerup', (event) => void endPagePointerDrag(item, event, false));
+  item.addEventListener('pointercancel', (event) => void endPagePointerDrag(item, event, true));
   return item;
 }
 
@@ -87,6 +143,7 @@ function render() {
   profileFallback.textContent = String(state.profileLabel || 'P').slice(0, 1).toUpperCase();
   if (state.profileImageUrl) {
     profileIcon.src = state.profileImageUrl;
+    profileIcon.draggable = false;
     profileIcon.classList.remove('hidden');
     profileFallback.classList.add('hidden');
   } else {
@@ -131,7 +188,19 @@ document.addEventListener('keydown', (event) => {
 });
 
 window.userflexProfileWindow.onState((next) => {
-  state = next || state;
+  const normalized = next || state;
+  if (pagePointerDrag) {
+    const stillExists = normalized.pages.some((page) => page.id === pagePointerDrag.pageId);
+    if (stillExists) {
+      queuedState = normalized;
+      state = normalized;
+      return;
+    }
+    pagePointerDrag = null;
+    queuedState = null;
+    clearPageDragVisuals();
+  }
+  state = normalized;
   render();
 });
 
