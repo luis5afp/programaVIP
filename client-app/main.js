@@ -537,6 +537,8 @@ function createBrowserWindow() {
     title: 'userFLOW',
     show: false,
     backgroundColor: '#090c12',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#0c1018', symbolColor: '#cbd5e1', height: 47 },
     webPreferences: {
       preload: path.join(__dirname, 'browser-preload.cjs'),
       contextIsolation: true,
@@ -839,6 +841,8 @@ function createDetachedProfileWindow(workspace, point = null) {
     title: `userFLOW · ${profileLabel(workspace.profile)}`,
     show: false,
     backgroundColor: '#090c12',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#0c1018', symbolColor: '#cbd5e1', height: 47 },
     webPreferences: {
       preload: path.join(__dirname, 'profile-preload.cjs'),
       contextIsolation: true,
