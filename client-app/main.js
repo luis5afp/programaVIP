@@ -909,12 +909,14 @@ function beginProfileDragMonitor(profileId) {
     }
     const cursor = screen.getCursorScreenPoint();
     const bounds = browserWindow.getBounds();
-    const margin = 18;
-    const outside = cursor.x < bounds.x - margin
-      || cursor.x > bounds.x + bounds.width + margin
-      || cursor.y < bounds.y - margin
-      || cursor.y > bounds.y + bounds.height + margin;
-    if (!outside) return;
+    const windowMargin = 18;
+    const tabDetachDistance = 34;
+    const outsideWindow = cursor.x < bounds.x - windowMargin
+      || cursor.x > bounds.x + bounds.width + windowMargin
+      || cursor.y < bounds.y - windowMargin
+      || cursor.y > bounds.y + bounds.height + windowMargin;
+    const leftTabStrip = cursor.y > bounds.y + TAB_STRIP_HEIGHT + tabDetachDistance;
+    if (!outsideWindow && !leftTabStrip) return;
     stopProfileDragMonitor();
     detachProfile(profileId, cursor);
   }, 25);
