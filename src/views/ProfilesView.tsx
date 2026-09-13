@@ -20,6 +20,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.1.2/userFLEX-Session-Manager-0.1.2-Setup.exe';
+const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
@@ -207,7 +208,7 @@ export function ProfilesView() {
       const input = {
         name: label,
         url: String(form.get('url') || '').trim(),
-        platform: null,
+        platform: String(form.get('category') || '').trim() || null,
         image_url: finalImageUrl,
         tags: [label],
         enabled: String(form.get('enabled')) === 'true',
@@ -279,13 +280,17 @@ export function ProfilesView() {
   const previewUrl = imageObjectUrl || imageUrl.trim() || null;
   const currentProxyId = current ? defaultProxyId(current.id) : null;
   const currentState = current ? stateFor(current.id) : null;
+  const categoryOptions = Array.from(new Map(
+    [...DEFAULT_CATEGORIES, ...profiles.map((profile) => profile.platform || '').filter(Boolean)]
+      .map((name) => [normalizeSearchValue(String(name)), String(name).trim()]),
+  ).values());
   const normalizedSearch = normalizeSearchValue(searchQuery.trim());
   const filteredProfiles = normalizedSearch
     ? profiles.filter((profile) => {
         const proxyName = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id))?.name || '';
         const profilePlanIds = planIdsFor(profile.id);
         const planNames = plans.filter((plan) => profilePlanIds.includes(plan.id)).map((plan) => plan.name);
-        const searchable = [profileLabel(profile), profile.name, profile.url, proxyName, ...planNames, ...(profile.tags || [])]
+        const searchable = [profileLabel(profile), profile.name, profile.url, profile.platform || '', proxyName, ...planNames, ...(profile.tags || [])]
           .join(' ');
         return normalizeSearchValue(searchable).includes(normalizedSearch);
       })
@@ -295,7 +300,7 @@ export function ProfilesView() {
     <>
       <PageHead
         title="Perfiles / Webs"
-        description="Cada perfil puede pertenecer a uno o varios planes y mantener una sesión Chromium administrada. El proxy es opcional."
+        description="Cada perfil puede pertenecer a uno o varios planes, tener una categoría visible en userFLOW y mantener una sesión Chromium administrada. El proxy es opcional."
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -326,7 +331,7 @@ export function ProfilesView() {
         </Card>
       ) : filteredProfiles.length === 0 ? (
         <Card>
-          <Empty title="No se encontraron perfiles" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre, plan o URL.`} />
+          <Empty title="No se encontraron perfiles" description={`No hay coincidencias para “${searchQuery.trim()}”. Prueba con otra parte del nombre, categoría, plan o URL.`} />
         </Card>
       ) : (
         <div className="grid three">
@@ -348,6 +353,7 @@ export function ProfilesView() {
                   <h3>{profileLabel(profile)}</h3>
                   <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
                   <div className="profile-tags">
+                    <Badge tone={profile.platform ? 'neutral' : 'warn'}>{profile.platform || 'Sin categoría'}</Badge>
                     <Badge tone={profilePlanIds.length > 0 ? 'neutral' : 'warn'}>
                       {profilePlanIds.length === 0
                         ? 'Sin plan'
@@ -419,6 +425,24 @@ export function ProfilesView() {
             </Field>
             <Field label="URL HTTPS" className="span-2">
               <input className="input" name="url" type="url" defaultValue={current?.url || ''} required placeholder="https://..." />
+            </Field>
+            <Field
+              label="Categoría"
+              className="span-2"
+              help="Escoge una categoría existente o escribe un nombre nuevo. Las categorías nuevas aparecerán automáticamente en userFLOW cuando el plan tenga al menos un perfil de esa categoría."
+            >
+              <input
+                className="input"
+                name="category"
+                list="profile-category-options"
+                defaultValue={current?.platform || 'Chat'}
+                required
+                maxLength={80}
+                placeholder="Chat, Imagen, Video..."
+              />
+              <datalist id="profile-category-options">
+                {categoryOptions.map((categoryName) => <option value={categoryName} key={categoryName} />)}
+              </datalist>
             </Field>
 
             <div className="span-2 field">
