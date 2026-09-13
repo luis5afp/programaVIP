@@ -1,4 +1,4 @@
-import { app, Menu, dialog } from 'electron';
+import { app, Menu, dialog, nativeTheme } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -12,6 +12,11 @@ const STABLE_USER_DATA = app.getPath('userData');
 const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'userFLEX Client');
 app.setPath('userData', STABLE_USER_DATA);
 app.setName('userFLOW');
+
+// userFLOW is a dark application. Ask Electron/Windows to render native window
+// chrome (title bar, caption buttons and system surfaces) in dark mode too, so
+// the OS frame visually continues the app instead of showing a white strip.
+nativeTheme.themeSource = 'dark';
 
 // Keep Electron alive while bootstrap hands off from the updater splash to the
 // real Client window. bootstrap.js now waits for the main window before closing
