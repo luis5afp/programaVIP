@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -35,6 +35,10 @@
       "browser.css",
       "browser-renderer.js",
       "browser-preload.cjs",
+      "profile-window.html",
+      "profile-window.css",
+      "profile-window-renderer.js",
+      "profile-preload.cjs",
       "assets/**",
       "package.json"
     ],
