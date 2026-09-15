@@ -396,7 +396,6 @@ function browserTabPayload(workspace) {
     networkLabel: workspace.connection?.mode === 'proxy'
       ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
       : 'Conexión directa',
-    allowExternalBrowsing: authMeta?.client?.allowExternalBrowsing === true,
   };
 }
 
@@ -436,6 +435,7 @@ function detachedState(workspace) {
     networkLabel: workspace.connection?.mode === 'proxy'
       ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
       : 'Conexión directa',
+    allowExternalBrowsing: authMeta?.client?.allowExternalBrowsing === true,
   };
 }
 
