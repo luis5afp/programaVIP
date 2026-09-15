@@ -34,7 +34,7 @@ async function verifyProfiles(env: Env, ids: string[]) {
 async function planDetails(env: Env, rows?: any[]) {
   const plans = rows || await sb(
     env,
-    'userflex_plans?select=id,name,duration_days,max_devices,max_profiles,enabled,created_at,updated_at&order=name.asc',
+    'userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&order=name.asc',
   );
   if (!plans.length) return [];
   const ids = plans.map((plan: any) => plan.id).join(',');
@@ -110,7 +110,6 @@ export async function planAccessRoutes(
     const row = {
       name: text(body.name, 'name', 80),
       duration_days: body.duration_days === null ? null : integer(body.duration_days, 1, 3650, 'duration_days'),
-      max_devices: integer(body.max_devices, 1, 50, 'max_devices'),
       max_profiles: integer(body.max_profiles, 1, 500, 'max_profiles'),
       enabled: body.enabled !== false,
     };
@@ -150,7 +149,6 @@ export async function planAccessRoutes(
         ? null
         : integer(body.duration_days, 1, 3650, 'duration_days');
     }
-    if (body.max_devices !== undefined) patch.max_devices = integer(body.max_devices, 1, 50, 'max_devices');
     if (body.max_profiles !== undefined) patch.max_profiles = integer(body.max_profiles, 1, 500, 'max_profiles');
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
 
