@@ -13,6 +13,7 @@ import {
   text,
   uuid,
 } from './core';
+import { enrichProxyLocation } from './proxy-geolocation';
 import {
   proxyBrowserCompatible,
   validateProxy,
@@ -118,6 +119,10 @@ function validationFailure(result: ProxyValidationResult) {
   return result.error || 'No se pudo comprobar la conexión del proxy.';
 }
 
+async function checkedProxy(input: { host: string; port: number; username?: string | null; password?: string | null }) {
+  return enrichProxyLocation(await validateProxy(input));
+}
+
 export async function adminProxyRoutes(
   request: Request,
   env: Env,
@@ -139,7 +144,7 @@ export async function adminProxyRoutes(
     const port = integer(body.port, 1, 65535, 'port');
     const username = optional(body.username, 160);
     const password = body.password ? text(body.password, 'password', 512) : null;
-    const validation = await validateProxy({ host, port, username, password });
+    const validation = await checkedProxy({ host, port, username, password });
 
     if (validation.status === 'invalid') {
       throw new HttpError(422, 'PROXY_VALIDATION_FAILED', validationFailure(validation));
@@ -185,7 +190,7 @@ export async function adminProxyRoutes(
     const proxyId = uuid(validateMatch[1], 'proxyId');
     const current = await storedProxy(env, proxyId);
     const password = await storedPassword(env, current);
-    const validation = await validateProxy({
+    const validation = await checkedProxy({
       host: current.host,
       port: Number(current.port),
       username: current.username || null,
@@ -203,6 +208,9 @@ export async function adminProxyRoutes(
       validationStatus: validation.status,
       publicIp: validation.publicIp,
       latencyMs: validation.latencyMs,
+      countryCode: validation.countryCode,
+      city: validation.city,
+      timezone: validation.timezone,
     });
     return json(safeProxy(updated));
   }
@@ -249,7 +257,7 @@ export async function adminProxyRoutes(
 
     let validation: ProxyValidationResult | null = null;
     if (connectionChanged) {
-      validation = await validateProxy({ host: nextHost, port: nextPort, username: nextUsername, password: nextPassword });
+      validation = await checkedProxy({ host: nextHost, port: nextPort, username: nextUsername, password: nextPassword });
       if (validation.status === 'invalid') {
         throw new HttpError(422, 'PROXY_VALIDATION_FAILED', validationFailure(validation));
       }
