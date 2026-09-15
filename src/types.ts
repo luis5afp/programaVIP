@@ -3,9 +3,26 @@ export type SubscriptionStatus = 'active' | 'suspended' | 'cancelled';
 export type DeviceStatus = 'active' | 'revoked';
 export type SessionMode = 'manual-login' | 'managed-first-party';
 export type ManagedSessionStatus = 'empty' | 'active' | 'needs_auth' | 'expired';
+export type AdminRole = 'owner' | 'admin';
 
 export interface AdminSession {
+  id: string;
   username: string;
+  display_name: string;
+  email: string | null;
+  role: AdminRole;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  display_name: string;
+  email: string | null;
+  role: AdminRole;
+  enabled: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Plan {
@@ -177,4 +194,5 @@ export type ViewKey =
   | 'assignments'
   | 'devices'
   | 'activity'
+  | 'administrators'
   | 'system';
