@@ -3,6 +3,12 @@ import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb }
 import { managedSessionMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 
+function inetHost(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  return raw.split('/')[0] || null;
+}
+
 export async function clientCatalog(env: Env, id: ClientIdentity) {
   const memberships = await sb(
     env,
@@ -40,10 +46,22 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     ),
   ]);
 
+  const proxyIds = [...new Set([
+    ...(defaults || []).map((row: any) => String(row.proxy_id || '')).filter(Boolean),
+    ...(assignments || []).map((row: any) => String(row.proxy_id || '')).filter(Boolean),
+  ])];
+  const proxyRows = proxyIds.length
+    ? await sb(
+        env,
+        `userflex_proxies?select=id,proxy_type,validation_status,public_ip&id=in.(${proxyIds.join(',')})`,
+      )
+    : [];
+
   const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
   const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
+  const proxyMap = new Map((proxyRows || []).map((row: any) => [row.id, row]));
   const result = profileIds
     .map((profileId: string) => {
       const profile: any = profileMap.get(profileId);
@@ -53,6 +71,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       const assignment: any = assignmentMap.get(profile.id);
       const assignmentProxyId = assignment?.proxy_id || null;
       const profileProxyId = defaultProxyMap.get(profile.id) || null;
+      const profileProxy: any = profileProxyId ? proxyMap.get(profileProxyId) : null;
+      const currentPublicIp = inetHost(profileProxy?.public_ip) || session?.expected_egress_ip || null;
       return {
         id: profile.id,
         name: profile.name,
@@ -67,7 +87,12 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         sessionReady: profile.session_ready === true && (!managed || session?.status === 'ready'),
         sessionVersion: Number(session?.session_version || 0),
         networkIdentity: managed
-          ? { locked: Boolean(profileProxyId), publicIp: profileProxyId ? session?.expected_egress_ip || null : null }
+          ? {
+              locked: Boolean(profileProxyId),
+              publicIp: profileProxyId ? currentPublicIp : null,
+              proxyType: profileProxy?.proxy_type || null,
+              proxyStatus: profileProxy?.validation_status || null,
+            }
           : { locked: false, publicIp: null },
       };
     })
@@ -123,23 +148,31 @@ export async function clientLaunch(
     ? (defaultProxyId ? 'profile-locked' : 'direct')
     : assignmentProxyId ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
   let connection: any = { mode: 'direct', locked: false };
+  let effectiveProxy: any = null;
 
   if (effectiveProxyId) {
     const rows = await sb(
       env,
-      `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv&enabled=eq.true&id=eq.${effectiveProxyId}&limit=1`,
+      `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv,proxy_type,validation_status,public_ip&enabled=eq.true&id=eq.${effectiveProxyId}&limit=1`,
     );
     const proxy = rows?.[0];
     if (!proxy && managed && defaultProxyId) {
       throw new HttpError(409, 'MANAGED_PROXY_UNAVAILABLE', 'El proxy del perfil no está disponible. Se bloqueó la salida directa para proteger la IP.');
     }
     if (proxy) {
+      effectiveProxy = proxy;
+      if (proxy.proxy_type === 'ssh') {
+        throw new HttpError(409, 'PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse directamente en userFLOW.');
+      }
       connection = {
         mode: 'proxy',
         locked: managed,
         proxy: {
           host: proxy.host,
           port: proxy.port,
+          type: proxy.proxy_type || 'http',
+          validationStatus: proxy.validation_status || null,
+          publicIp: inetHost(proxy.public_ip),
           username: proxy.username || null,
           password: proxy.password_ciphertext
             ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv)
@@ -161,12 +194,13 @@ export async function clientLaunch(
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'La sesión administrada todavía no está lista.');
     }
     const lockedNetwork = connection.mode === 'proxy' && defaultProxyId !== null;
+    const currentProxyIp = lockedNetwork ? inetHost(effectiveProxy?.public_ip) : null;
     sessionDelivery = {
       ready: true,
       mode: profile.session_mode,
       materialIncluded: true,
       version: session.version,
-      expectedPublicIp: lockedNetwork ? session.publicIp : null,
+      expectedPublicIp: lockedNetwork ? (currentProxyIp || session.publicIp) : null,
       networkLocked: lockedNetwork,
       capturedAt: session.capturedAt,
       validatedAt: session.validatedAt,
@@ -180,6 +214,7 @@ export async function clientLaunch(
     deviceId: id.deviceId,
     usesProxy: connection.mode === 'proxy',
     proxySource,
+    proxyType: connection.proxy?.type || null,
     managed,
     networkLocked: connection.locked === true,
     sessionVersion: sessionDelivery.version || 0,
