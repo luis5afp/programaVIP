@@ -11,6 +11,7 @@ import { ProxiesView } from './views/ProxiesView';
 import { AssignmentsView } from './views/AssignmentsView';
 import { DevicesView } from './views/DevicesView';
 import { ActivityView } from './views/ActivityView';
+import { AdministratorsView } from './views/AdministratorsView';
 import { SystemView } from './views/SystemView';
 
 export default function App() {
@@ -46,6 +47,7 @@ export default function App() {
     case 'assignments': content = <AssignmentsView />; break;
     case 'devices': content = <DevicesView />; break;
     case 'activity': content = <ActivityView initialTab={activityTab} initialHistorySearch={historySearch} />; break;
+    case 'administrators': content = session.role === 'owner' ? <AdministratorsView session={session} /> : <DashboardView />; break;
     case 'system': content = <SystemView />; break;
     default: content = <DashboardView />;
   }
