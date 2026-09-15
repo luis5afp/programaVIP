@@ -1,4 +1,5 @@
 import type { AdminIdentity } from './auth';
+import { touchProfileClients } from './client-revalidation';
 import { Env, HttpError, audit, bodyJson, json, sb, uuid } from './core';
 
 export async function profileProxyDefaultRoutes(
@@ -34,6 +35,7 @@ export async function profileProxyDefaultRoutes(
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
+    await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.default_proxy.clear', 'profile', profileId);
     return json({ ok: true, profile_id: profileId, proxy_id: null });
   }
@@ -51,6 +53,7 @@ export async function profileProxyDefaultRoutes(
     }),
   });
 
+  await touchProfileClients(env, profileId);
   await audit(env, request, 'admin', admin.userId, 'profile.default_proxy.set', 'profile', profileId, {
     proxyId,
   });

@@ -16,7 +16,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -64,7 +64,7 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path.startsWith('/api/client/')) {
     const identity = await requireClient(request, env);
     if (path === '/api/client/catalog' && method === 'GET') return clientCatalog(env, identity);
-    if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(identity);
+    if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(env, identity);
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
     if (launch && method === 'POST') return clientLaunch(request, env, identity, launch[1]);
