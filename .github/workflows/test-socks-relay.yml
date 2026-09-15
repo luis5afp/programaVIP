@@ -1,0 +1,48 @@
+name: Test SOCKS relay
+
+on:
+  pull_request:
+    paths:
+      - 'client-app/proxy-bridge.js'
+      - 'client-app/proxy-bridge.test.js'
+      - 'client-app/package.json'
+      - 'session-manager/proxy-bridge.js'
+      - 'session-manager/package.json'
+      - '.github/workflows/test-socks-relay.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'client-app/proxy-bridge.js'
+      - 'client-app/proxy-bridge.test.js'
+      - 'client-app/package.json'
+      - 'session-manager/proxy-bridge.js'
+      - 'session-manager/package.json'
+      - '.github/workflows/test-socks-relay.yml'
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install relay dependency
+        run: npm install
+
+      - name: Validate relay JavaScript
+        run: |
+          node --check proxy-bridge.js
+          node --check proxy-bridge.test.js
+          node --check ../session-manager/proxy-bridge.js
+
+      - name: Verify shared relay implementation
+        run: cmp proxy-bridge.js ../session-manager/proxy-bridge.js
+
+      - name: Run relay regression test
+        run: node --test proxy-bridge.test.js
