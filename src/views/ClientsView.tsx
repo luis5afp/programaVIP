@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, KeyRound, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { CalendarClock, History, KeyRound, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Client, Plan } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
@@ -19,7 +19,7 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
-export function ClientsView() {
+export function ClientsView({ onHistory }: { onHistory: (client: Client) => void }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -263,6 +263,10 @@ export function ClientsView() {
                           <button className="button secondary small" onClick={() => setSubscriptionClient(client)}>
                             <CalendarClock size={12} />
                             Plan
+                          </button>
+                          <button className="button secondary small" onClick={() => onHistory(client)}>
+                            <History size={12} />
+                            Historial
                           </button>
                           <button className="button secondary small" onClick={() => void toggle(client)}>
                             {client.status === 'active' ? 'Suspender' : 'Activar'}

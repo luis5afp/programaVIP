@@ -1,5 +1,6 @@
 import { AdminIdentity } from './auth';
 import { touchClientConfig, touchProfileClients } from './client-revalidation';
+import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
   Env,
   HttpError,
@@ -167,6 +168,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: new Date().toISOString() }),
     });
+    await closeOpenProfileUsageForClient(env, clientId, 'credentials_reset');
     await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'client.credentials.reset', 'client', clientId);
     return json({ ok: true, username });
@@ -189,6 +191,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         p_expires_at: expiresAt,
       }),
     });
+    await closeOpenProfileUsageForClient(env, clientId, 'subscription_changed');
     await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'client.subscription.update', 'client', clientId, { planId, expiresAt });
     return json({ ok: true });
@@ -223,6 +226,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ revoked_at: new Date().toISOString() }),
       });
+      await closeOpenProfileUsageForClient(env, clientId, 'client_suspended');
     }
     await audit(env, request, 'admin', admin.userId, 'client.update', 'client', clientId);
     return json((await clientDetails(env, rows))[0]);
@@ -230,6 +234,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (clientMatch && method === 'DELETE') {
     const clientId = uuid(clientMatch[1], 'clientId');
+    await closeOpenProfileUsageForClient(env, clientId, 'client_deleted');
     await sb(env, `userflex_clients?id=eq.${clientId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await audit(env, request, 'admin', admin.userId, 'client.delete', 'client', clientId);
     return json({ ok: true });
@@ -453,6 +458,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const device = rows?.[0];
     if (!device) throw new HttpError(404, 'DEVICE_NOT_FOUND');
     await sb(env, `userflex_client_sessions?device_id=eq.${device.id}&revoked_at=is.null`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
+    await closeOpenProfileUsageForDevice(env, device.id, 'device_revoked');
     await touchClientConfig(env, device.client_id);
     await audit(env, request, 'admin', admin.userId, 'device.revoke', 'device', device.id, { clientId: device.client_id });
     return json(device);

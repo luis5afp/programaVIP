@@ -8,6 +8,7 @@ import type {
   HealthInfo,
   Plan,
   Profile,
+  ProfileUsage,
   ProfileProxyDefault,
   ProfileSessionState,
   ProxyRecord,
@@ -194,6 +195,10 @@ export const api = {
     list: () => request<Device[]>('/api/devices'),
     revoke: (id: string) => request<Device>(`/api/devices/${id}/revoke`, { method: 'POST' }),
     reactivate: (id: string) => request<Device>(`/api/devices/${id}/reactivate`, { method: 'POST' }),
+  },
+
+  profileUsage: {
+    list: () => request<ProfileUsage[]>('/api/profile-usage?limit=2000'),
   },
 
   audit: {
