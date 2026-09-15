@@ -19,6 +19,11 @@ import {
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
 const MAX_SESSION_MATERIAL_BYTES = 1_500_000;
 
+function inetHost(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return raw ? raw.split('/')[0] || null : null;
+}
+
 function safeState(profileId: string, credential: any, session: any) {
   return {
     profile_id: profileId,
@@ -52,7 +57,7 @@ async function defaultProxy(env: Env, profileId: string) {
   if (!proxyId) return null;
   const proxies = await sb(
     env,
-    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled&id=eq.${proxyId}&limit=1`,
+    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip&id=eq.${proxyId}&limit=1`,
   );
   return proxies?.[0] || null;
 }
@@ -150,6 +155,9 @@ export async function adminProfileSessionRoutes(
     if (!credentials) throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'Guarda correo/usuario y contraseña primero.');
     const proxy = await defaultProxy(env, profileId);
     if (proxy && proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
+    if (proxy?.proxy_type === 'ssh') {
+      throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
+    }
 
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
@@ -170,6 +178,7 @@ export async function adminProfileSessionRoutes(
       jobId: jobs?.[0]?.id || null,
       expiresAt,
       proxyId: proxy?.id || null,
+      proxyType: proxy?.proxy_type || null,
       networkMode: proxy ? 'proxy' : 'direct',
     });
     return json({ ok: true, launch_url: launchUrl, expires_at: expiresAt });
@@ -233,6 +242,9 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     if (proxy && proxy.enabled !== true) {
       throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
     }
+    if (proxy?.proxy_type === 'ssh') {
+      throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
+    }
     return json({
       ok: true,
       job: { id: job.id, expiresAt: job.expires_at },
@@ -246,6 +258,9 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         name: proxy.name,
         host: proxy.host,
         port: proxy.port,
+        type: proxy.proxy_type || 'http',
+        validationStatus: proxy.validation_status || null,
+        publicIp: inetHost(proxy.public_ip),
         username: proxy.username || null,
         password: proxy.password_ciphertext ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv) : null,
       } : null,
