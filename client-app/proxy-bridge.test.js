@@ -136,7 +136,7 @@ test('transparent SOCKS relay carries a complete HTTP response through an upstre
     socket.once('error', reject);
   });
 
-  socket.end('GET /probe HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+  socket.write('GET /probe HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
   await responseFinished;
 
   assert.match(rawResponse, /HTTP\/1\.1 200 OK/);
