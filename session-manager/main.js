@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startSocksHttpBridge } from './proxy-bridge.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let active = null;
@@ -80,14 +81,21 @@ function assertCaptureUrl(rawUrl) {
 }
 
 async function discoverPublicIp(browserSession) {
-  try {
-    const response = await browserSession.fetch('https://api.ipify.org?format=json', { cache: 'no-store' });
-    if (!response.ok) return null;
-    const payload = await response.json();
-    return typeof payload?.ip === 'string' ? payload.ip : null;
-  } catch {
-    return null;
+  const endpoints = [
+    'https://api.ipify.org?format=json',
+    'https://api64.ipify.org?format=json',
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await browserSession.fetch(endpoint, { cache: 'no-store' });
+      if (!response.ok) continue;
+      const payload = await response.json();
+      if (typeof payload?.ip === 'string' && payload.ip.trim()) return payload.ip.trim();
+    } catch {
+      // Try the next independent IP endpoint.
+    }
   }
+  return null;
 }
 
 async function startCapture(rawUrl) {
@@ -130,19 +138,31 @@ async function startCapture(rawUrl) {
 
   const browserSession = browserWindow.webContents.session;
   let loginHandler = null;
+  let proxyBridge = null;
   if (proxy?.host && proxy?.port) {
+    const proxyType = String(proxy.type || 'http').toLowerCase();
+    if (proxyType === 'ssh') throw new Error('El proxy SSH necesita un túnel local y todavía no está soportado por Session Manager.');
+
+    let proxyRules = `${proxyType === 'https' ? 'https' : 'http'}://${proxy.host}:${proxy.port}`;
+    if (proxyType === 'socks4' || proxyType === 'socks5') {
+      proxyBridge = await startSocksHttpBridge(proxy);
+      proxyRules = proxyBridge.proxyRules;
+    }
+
     await browserSession.setProxy({
       mode: 'fixed_servers',
-      proxyRules: `http://${proxy.host}:${proxy.port}`,
+      proxyRules,
       proxyBypassRules: '<-loopback>',
     });
 
-    loginHandler = (event, webContents, request, authInfo, callback) => {
-      if (webContents.id !== browserWindow.webContents.id || !authInfo.isProxy) return;
-      event.preventDefault();
-      callback(proxy.username || '', proxy.password || '');
-    };
-    app.on('login', loginHandler);
+    if (proxyType !== 'socks4' && proxyType !== 'socks5') {
+      loginHandler = (event, webContents, request, authInfo, callback) => {
+        if (webContents.id !== browserWindow.webContents.id || !authInfo.isProxy) return;
+        event.preventDefault();
+        callback(proxy.username || '', proxy.password || '');
+      };
+      app.on('login', loginHandler);
+    }
   } else {
     await browserSession.setProxy({ mode: 'direct' });
   }
@@ -182,6 +202,7 @@ async function startCapture(rawUrl) {
 
   browserWindow.on('closed', () => {
     if (loginHandler) app.removeListener('login', loginHandler);
+    if (proxyBridge) void proxyBridge.close().catch(() => null);
     if (active?.window === browserWindow) active = null;
   });
 
@@ -190,6 +211,7 @@ async function startCapture(rawUrl) {
     token,
     profile,
     proxy,
+    proxyBridge,
     networkMode: proxy ? 'proxy' : 'direct',
     browserWindow,
     window: browserWindow,
@@ -225,6 +247,7 @@ ipcMain.handle('userflex:save-session', async (event) => {
   })()`);
 
   const publicIp = await discoverPublicIp(browserSession);
+  if (active.proxy && !publicIp) throw new Error('No se pudo validar la IP de salida mediante el proxy seleccionado.');
   const material = {
     format: 'userflex-browser-session-v1',
     profileId: profile.id,

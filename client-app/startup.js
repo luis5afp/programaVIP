@@ -1,10 +1,84 @@
-import { app, Menu, dialog, nativeTheme } from 'electron';
+import { app, Menu, dialog, nativeTheme, session } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { startSocksHttpBridge } from './proxy-bridge.js';
 
 const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
-const UPDATE_PROXY_BASE = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
+const USERFLEX_API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
+const UPDATE_PROXY_BASE = `${USERFLEX_API_ORIGIN}/api/client-update`;
 const PROFILE_ZOOM_FACTOR = 0.85;
+const runtimeProxyByEndpoint = new Map();
+const bridgesBySession = new WeakMap();
+const openBridges = new Set();
+
+function proxyEndpointKey(host, port) {
+  return `${String(host || '').trim().toLowerCase()}:${Number(port || 0)}`;
+}
+
+function rememberRuntimeProxy(proxy) {
+  const host = String(proxy?.host || '').trim();
+  const port = Number(proxy?.port || 0);
+  const type = String(proxy?.type || 'http').trim().toLowerCase();
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return;
+  runtimeProxyByEndpoint.set(proxyEndpointKey(host, port), {
+    host,
+    port,
+    type,
+    username: typeof proxy?.username === 'string' ? proxy.username : '',
+    password: typeof proxy?.password === 'string' ? proxy.password : '',
+  });
+}
+
+function proxyRuleEndpoint(rule) {
+  const match = String(rule || '').trim().match(/^http:\/\/(\[[^\]]+\]|[^/:]+):(\d+)$/i);
+  if (!match) return null;
+  const host = match[1].replace(/^\[|\]$/g, '');
+  const port = Number(match[2]);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { host, port };
+}
+
+function installRuntimeProxyAdapter(log) {
+  const prototype = Object.getPrototypeOf(session.defaultSession);
+  const nativeSetProxy = prototype?.setProxy;
+  if (typeof nativeSetProxy !== 'function') return () => {};
+
+  prototype.setProxy = async function userflexSetProxy(config = {}) {
+    const previousBridge = bridgesBySession.get(this);
+    if (previousBridge) {
+      bridgesBySession.delete(this);
+      openBridges.delete(previousBridge);
+      await previousBridge.close().catch(() => null);
+    }
+
+    const endpoint = proxyRuleEndpoint(config?.proxyRules);
+    const runtimeProxy = endpoint ? runtimeProxyByEndpoint.get(proxyEndpointKey(endpoint.host, endpoint.port)) : null;
+    if (runtimeProxy?.type === 'socks4' || runtimeProxy?.type === 'socks5') {
+      const bridge = await startSocksHttpBridge(runtimeProxy);
+      bridgesBySession.set(this, bridge);
+      openBridges.add(bridge);
+      void log(`Proxy ${runtimeProxy.type.toUpperCase()} preparado mediante puente local seguro.`);
+      return nativeSetProxy.call(this, { ...config, proxyRules: bridge.proxyRules });
+    }
+
+    if (runtimeProxy?.type === 'https' && endpoint) {
+      void log('Proxy HTTPS aplicado con el protocolo detectado.');
+      return nativeSetProxy.call(this, {
+        ...config,
+        proxyRules: `https://${endpoint.host.includes(':') ? `[${endpoint.host}]` : endpoint.host}:${endpoint.port}`,
+      });
+    }
+
+    return nativeSetProxy.call(this, config);
+  };
+
+  return async () => {
+    prototype.setProxy = nativeSetProxy;
+    const bridges = Array.from(openBridges);
+    openBridges.clear();
+    await Promise.allSettled(bridges.map((bridge) => bridge.close()));
+  };
+}
 
 // Capture Electron's packaged default user-data directory before changing the
 // visible application name. Keep that directory fixed for every future launch
@@ -148,12 +222,13 @@ async function startAfterReady() {
       return nativeSetPath(name, value);
     };
 
-    // Some client networks cannot reach the Supabase Storage hostname directly.
-    // Keep compatibility with legacy updater URLs while routing only those reads
-    // through the userFLEX Cloudflare Worker.
+    // Keep the fetch adapter active for the whole process. Besides routing the
+    // updater through Cloudflare when needed, it remembers the detected proxy
+    // protocol returned by /launch before main.js configures Chromium.
     const nativeFetch = globalThis.fetch.bind(globalThis);
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = async (input, init) => {
       const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+      let requestInput = input;
       if (typeof rawUrl === 'string' && rawUrl.startsWith(DIRECT_UPDATE_BASE)) {
         const parsed = new URL(rawUrl);
         const relative = parsed.pathname.split('/userflex-client-releases/')[1] || '';
@@ -166,11 +241,32 @@ async function startAfterReady() {
         }
         if (rewritten) {
           void log(`Updater request via Cloudflare: ${relative}`);
-          return nativeFetch(rewritten, init);
+          requestInput = rewritten;
         }
       }
-      return nativeFetch(input, init);
+
+      const response = await nativeFetch(requestInput, init);
+      if (
+        response.ok
+        && typeof rawUrl === 'string'
+        && rawUrl.startsWith(USERFLEX_API_ORIGIN)
+        && /\/api\/client\/profiles\/[0-9a-f-]{36}\/launch(?:\?|$)/i.test(rawUrl)
+      ) {
+        try {
+          const payload = await response.clone().json();
+          rememberRuntimeProxy(payload?.connection?.proxy);
+        } catch {
+          // A malformed launch response will be handled by main.js itself.
+        }
+      }
+      return response;
     };
+
+    const disposeProxyAdapter = installRuntimeProxyAdapter(log);
+    app.once('before-quit', () => {
+      globalThis.fetch = nativeFetch;
+      void disposeProxyAdapter();
+    });
 
     const disableAutomaticInstallerLaunch = enableAutomaticInstallerLaunch(log);
     try {
@@ -179,7 +275,8 @@ async function startAfterReady() {
     } finally {
       disableAutomaticInstallerLaunch();
       app.setPath = nativeSetPath;
-      globalThis.fetch = nativeFetch;
+      // Do not restore global fetch here. The proxy protocol metadata is learned
+      // when profiles are launched later, after bootstrap.js has finished loading.
       app.removeListener('window-all-closed', bootstrapWindowHold);
     }
   } catch (error) {
