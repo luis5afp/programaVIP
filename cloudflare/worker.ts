@@ -16,7 +16,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.5';
+const APP_VERSION = '1.2.6';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);

@@ -5,6 +5,25 @@ import type { Plan, Profile } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Plan | 'new' | null;
+type PeriodValue = '30' | '60' | '90' | '180' | '365' | 'permanent' | 'custom';
+
+function periodFromDays(days: number | null): PeriodValue {
+  if (days === null) return 'permanent';
+  if ([30, 60, 90, 180, 365].includes(days)) return String(days) as PeriodValue;
+  return 'custom';
+}
+
+function durationDisplay(days: number | null) {
+  if (days === null) return 'Permanente';
+  const labels: Record<number, string> = {
+    30: '1 mes',
+    60: '2 meses',
+    90: '3 meses',
+    180: '6 meses',
+    365: '1 año',
+  };
+  return labels[days] ? `${labels[days]} · ${days} días` : `${days} días · personalizado`;
+}
 
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
@@ -15,6 +34,8 @@ export function PlansView() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
+  const [period, setPeriod] = useState<PeriodValue>('30');
+  const [durationDays, setDurationDays] = useState('30');
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -38,11 +59,16 @@ export function PlansView() {
   function openEditor(next: Exclude<Editor, null>) {
     setEditor(next);
     setSelectedProfileIds(next === 'new' ? [] : [...(next.profile_ids || [])]);
+    const days = next === 'new' ? 30 : next.duration_days;
+    setPeriod(periodFromDays(days));
+    setDurationDays(days === null ? '' : String(days));
   }
 
   function closeEditor() {
     setEditor(null);
     setSelectedProfileIds([]);
+    setPeriod('30');
+    setDurationDays('30');
   }
 
   function toggleProfile(profileId: string) {
@@ -58,11 +84,14 @@ export function PlansView() {
       return;
     }
     const form = new FormData(event.currentTarget);
-    const durationRaw = String(form.get('durationDays') || '').trim();
+    const durationValue = period === 'permanent' ? null : Number(durationDays);
+    if (durationValue !== null && (!Number.isInteger(durationValue) || durationValue < 1 || durationValue > 3650)) {
+      setError('La duración personalizada debe estar entre 1 y 3650 días.');
+      return;
+    }
     const input = {
       name: String(form.get('name') || '').trim(),
-      duration_days: durationRaw ? Number(durationRaw) : null,
-      max_devices: Number(form.get('maxDevices') || 1),
+      duration_days: durationValue,
       max_profiles: selectedProfileIds.length,
       profile_ids: selectedProfileIds,
       enabled: String(form.get('enabled')) === 'true',
@@ -101,7 +130,7 @@ export function PlansView() {
     <>
       <PageHead
         title="Planes"
-        description="Define duración, dispositivos y exactamente qué perfiles/webs incluye cada plan."
+        description="Define el período y exactamente qué perfiles/webs incluye cada plan. El límite de dispositivos se administra por cliente."
         actions={
           <button className="button primary" onClick={() => openEditor('new')} disabled={profiles.length === 0}>
             <Plus size={14} />
@@ -119,8 +148,7 @@ export function PlansView() {
               <thead>
                 <tr>
                   <th>Plan</th>
-                  <th>Duración</th>
-                  <th>Dispositivos</th>
+                  <th>Período</th>
                   <th>Perfiles incluidos</th>
                   <th>Estado</th>
                   <th />
@@ -132,8 +160,7 @@ export function PlansView() {
                   return (
                     <tr key={plan.id}>
                       <td className="table-primary">{plan.name}</td>
-                      <td>{plan.duration_days === null ? 'Sin límite definido' : `${plan.duration_days} días`}</td>
-                      <td>{plan.max_devices}</td>
+                      <td>{durationDisplay(plan.duration_days)}</td>
                       <td>
                         <div className="table-primary">{plan.profile_ids.length} perfiles</div>
                         <div className="table-secondary">
@@ -181,11 +208,43 @@ export function PlansView() {
             <Field label="Nombre" className="span-2">
               <input className="input" name="name" defaultValue={current?.name || ''} required maxLength={80} />
             </Field>
-            <Field label="Duración (días)" help="Déjalo vacío si la fecha se definirá solo por suscripción.">
-              <input className="input" name="durationDays" type="number" min="1" max="3650" defaultValue={current?.duration_days ?? 30} />
+            <Field label="Período">
+              <select
+                className="select"
+                value={period}
+                onChange={(event) => {
+                  const next = event.target.value as PeriodValue;
+                  setPeriod(next);
+                  if (next === 'permanent') setDurationDays('');
+                  else if (next !== 'custom') setDurationDays(next);
+                  else if (!durationDays) setDurationDays('30');
+                }}
+              >
+                <option value="30">1 mes</option>
+                <option value="60">2 meses</option>
+                <option value="90">3 meses</option>
+                <option value="180">6 meses</option>
+                <option value="365">1 año</option>
+                <option value="permanent">Permanente</option>
+                <option value="custom">Configurar</option>
+              </select>
             </Field>
-            <Field label="Máximo de dispositivos">
-              <input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue={current?.max_devices ?? 1} required />
+            <Field
+              label="Duración (días)"
+              help={period === 'custom' ? 'Configura manualmente entre 1 y 3650 días.' : period === 'permanent' ? 'Permanente: el plan no tiene una duración fija en días.' : 'Se calcula automáticamente según el período seleccionado.'}
+            >
+              <input
+                className="input"
+                name="durationDays"
+                type="number"
+                min="1"
+                max="3650"
+                value={durationDays}
+                onChange={(event) => setDurationDays(event.target.value)}
+                disabled={period !== 'custom'}
+                placeholder={period === 'permanent' ? 'Sin límite' : undefined}
+                required={period === 'custom'}
+              />
             </Field>
             <Field label="Estado" className="span-2">
               <select className="select" name="enabled" defaultValue={current?.enabled === false ? 'false' : 'true'}>

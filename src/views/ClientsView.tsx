@@ -53,6 +53,7 @@ export function ClientsView() {
         name: String(form.get('name') || '').trim(),
         email: String(form.get('email') || '').trim(),
         phone: String(form.get('phone') || '').trim(),
+        maxDevices: Number(form.get('maxDevices') || 1),
         planId: String(form.get('planId') || ''),
         startsAt: new Date(`${String(form.get('startsAt'))}T00:00:00Z`).toISOString(),
         expiresAt: new Date(`${String(form.get('expiresAt'))}T23:59:59Z`).toISOString(),
@@ -76,6 +77,7 @@ export function ClientsView() {
         email: String(form.get('email') || '').trim(),
         phone: String(form.get('phone') || '').trim() || null,
         status: String(form.get('status')) as Client['status'],
+        max_devices: Number(form.get('maxDevices') || 1),
         allow_external_browsing: form.get('allowExternalBrowsing') === 'on',
       });
       setEditClient(null);
@@ -149,6 +151,7 @@ export function ClientsView() {
           client.phone || '',
           client.credential?.username || '',
           client.subscription?.plan?.name || '',
+          String(client.max_devices || 1),
           client.status,
         ].join(' ');
         return normalizeSearchValue(searchable).includes(normalizedSearch);
@@ -202,6 +205,7 @@ export function ClientsView() {
                   <th>Cliente</th>
                   <th>Login PC</th>
                   <th>Plan / vencimiento</th>
+                  <th>Dispositivos</th>
                   <th>Estado</th>
                   <th>Acciones</th>
                 </tr>
@@ -236,6 +240,10 @@ export function ClientsView() {
                         ) : (
                           <Badge tone="bad">Sin plan</Badge>
                         )}
+                      </td>
+                      <td>
+                        <div className="table-primary">Máx. {client.max_devices || 1}</div>
+                        <div className="table-secondary">por cliente</div>
                       </td>
                       <td>
                         <Badge tone={client.status === 'active' && !expired ? 'ok' : 'bad'}>
@@ -288,6 +296,7 @@ export function ClientsView() {
             <Field label="Nombre"><input className="input" name="name" required maxLength={120} /></Field>
             <Field label="Correo"><input className="input" name="email" type="email" required /></Field>
             <Field label="Teléfono"><input className="input" name="phone" maxLength={40} /></Field>
+            <Field label="Máximo de dispositivos" help="Límite exclusivo para este cliente."><input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue="1" required /></Field>
             <Field label="Plan">
               <select className="select" name="planId" required>
                 {plans.filter((plan) => plan.enabled).map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
@@ -316,7 +325,10 @@ export function ClientsView() {
             <Field label="Nombre"><input className="input" name="name" defaultValue={editClient.name} required maxLength={120} /></Field>
             <Field label="Correo"><input className="input" name="email" type="email" defaultValue={editClient.email} required /></Field>
             <Field label="Teléfono"><input className="input" name="phone" defaultValue={editClient.phone || ''} maxLength={40} /></Field>
-            <Field label="Estado">
+            <Field label="Máximo de dispositivos" help="Controla cuántos equipos activos puede registrar este cliente.">
+              <input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue={editClient.max_devices || 1} required />
+            </Field>
+            <Field label="Estado" className="span-2">
               <select className="select" name="status" defaultValue={editClient.status}>
                 <option value="active">Activo</option>
                 <option value="suspended">Suspendido</option>

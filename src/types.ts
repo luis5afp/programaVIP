@@ -12,7 +12,6 @@ export interface Plan {
   id: string;
   name: string;
   duration_days: number | null;
-  max_devices: number;
   max_profiles: number;
   profile_ids: string[];
   enabled: boolean;
@@ -26,6 +25,7 @@ export interface Client {
   email: string;
   phone: string | null;
   status: ClientStatus;
+  max_devices: number;
   allow_external_browsing: boolean;
   created_at: string;
   updated_at: string;
