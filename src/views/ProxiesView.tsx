@@ -1,15 +1,53 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { KeyRound, Network, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Clock3, KeyRound, MapPin, Network, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../api';
-import type { ProxyRecord } from '../types';
+import type { ProxyRecord, ProxyValidationStatus } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = ProxyRecord | 'new' | null;
+
+function flagEmoji(code: string | null) {
+  if (!code || !/^[A-Z]{2}$/i.test(code)) return '🌐';
+  return code.toUpperCase().split('').map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0))).join('');
+}
+
+function validationLabel(status: ProxyValidationStatus) {
+  if (status === 'valid') return 'Validado';
+  if (status === 'reachable') return 'Alcanzable';
+  if (status === 'invalid') return 'Inválido';
+  if (status === 'unverifiable') return 'No verificable';
+  return 'Pendiente';
+}
+
+function validationTone(status: ProxyValidationStatus): 'ok' | 'warn' | 'bad' | 'neutral' {
+  if (status === 'valid') return 'ok';
+  if (status === 'invalid') return 'bad';
+  if (status === 'reachable' || status === 'unverifiable') return 'warn';
+  return 'neutral';
+}
+
+function protocolLabel(item: ProxyRecord) {
+  return item.proxy_type === 'unknown' ? '—' : item.proxy_type.toUpperCase();
+}
+
+function locationLabel(item: ProxyRecord) {
+  const parts = [item.city, item.region, item.country].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'Ubicación pendiente';
+}
+
+function checkedLabel(value: string | null) {
+  if (!value) return 'Sin comprobar';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'Sin comprobar';
+  return date.toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+}
 
 export function ProxiesView() {
   const [items, setItems] = useState<ProxyRecord[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -39,6 +77,8 @@ export function ProxiesView() {
     };
 
     try {
+      setSaving(true);
+      setError(null);
       if (editor && editor !== 'new') await api.proxies.update(editor.id, input);
       else {
         await api.proxies.create({
@@ -54,6 +94,21 @@ export function ProxiesView() {
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function validate(item: ProxyRecord) {
+    try {
+      setCheckingId(item.id);
+      setError(null);
+      const updated = await api.proxies.validate(item.id);
+      setItems((current) => current.map((row) => row.id === item.id ? updated : row));
+    } catch (validationError: any) {
+      setError(validationError.message);
+    } finally {
+      setCheckingId(null);
     }
   }
 
@@ -73,7 +128,7 @@ export function ProxiesView() {
     <>
       <PageHead
         title="Proxies"
-        description="Inventario central. Las contraseñas se cifran en el Worker y nunca se devuelven al navegador Admin."
+        description="Cada proxy se comprueba desde el Worker. El protocolo, IP de salida, país, ciudad y zona horaria se detectan automáticamente; las contraseñas permanecen cifradas."
         actions={
           <button className="button primary" onClick={() => setEditor('new')}>
             <Plus size={14} />
@@ -84,17 +139,20 @@ export function ProxiesView() {
       <ErrorBanner message={error} />
       <Card>
         {items.length === 0 ? (
-          <Empty title="No hay proxies" description="Agrega un proxy si algún perfil necesita una conexión administrada." />
+          <Empty title="No hay proxies" description="Agrega un proxy; userFLEX comprobará la conexión y detectará su tipo automáticamente." />
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Proxy</th>
-                  <th>Servidor</th>
-                  <th>Usuario</th>
-                  <th>Clave</th>
+                  <th>Nombre</th>
                   <th>Estado</th>
+                  <th>Ubicación / salida</th>
+                  <th>Tipo</th>
+                  <th>Host</th>
+                  <th>Puerto</th>
+                  <th>Login</th>
+                  <th>Contraseña</th>
                   <th />
                 </tr>
               </thead>
@@ -106,8 +164,41 @@ export function ProxiesView() {
                         <Network size={13} style={{ verticalAlign: -2, marginRight: 6 }} />
                         {item.name}
                       </div>
+                      <div className="table-secondary">
+                        <Clock3 size={11} style={{ verticalAlign: -2, marginRight: 4 }} />
+                        {checkedLabel(item.last_checked_at)}
+                        {item.last_latency_ms !== null ? ` · ${item.last_latency_ms} ms` : ''}
+                      </div>
                     </td>
-                    <td className="mono">{item.host}:{item.port}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <Badge tone={item.enabled ? 'ok' : 'bad'}>{item.enabled ? 'ACTIVO' : 'INACTIVO'}</Badge>
+                        <Badge tone={validationTone(item.validation_status)}>{validationLabel(item.validation_status)}</Badge>
+                      </div>
+                      {item.validation_error && (
+                        <div className="table-secondary" style={{ maxWidth: 250, marginTop: 5 }} title={item.validation_error}>
+                          {item.validation_error}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="table-primary" style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>{flagEmoji(item.country_code)}</span>
+                        <span>{item.public_ip || '—'}</span>
+                      </div>
+                      <div className="table-secondary" style={{ marginTop: 4 }}>
+                        <MapPin size={11} style={{ verticalAlign: -2, marginRight: 4 }} />
+                        {locationLabel(item)}
+                      </div>
+                      {item.timezone && <div className="table-secondary">{item.timezone}</div>}
+                    </td>
+                    <td>
+                      <Badge tone={item.proxy_type === 'unknown' ? 'neutral' : item.browser_compatible ? 'ok' : 'warn'}>
+                        {protocolLabel(item)}
+                      </Badge>
+                    </td>
+                    <td className="mono">{item.host}</td>
+                    <td className="mono">{item.port}</td>
                     <td>{item.username || '—'}</td>
                     <td>
                       {item.has_password ? (
@@ -116,9 +207,12 @@ export function ProxiesView() {
                         <Badge>Sin clave</Badge>
                       )}
                     </td>
-                    <td><Badge tone={item.enabled ? 'ok' : 'bad'}>{item.enabled ? 'Activo' : 'Inactivo'}</Badge></td>
                     <td>
-                      <div className="toolbar" style={{ margin: 0 }}>
+                      <div className="toolbar" style={{ margin: 0, minWidth: 245 }}>
+                        <button className="button secondary small" disabled={checkingId === item.id} onClick={() => void validate(item)}>
+                          <RefreshCw size={12} className={checkingId === item.id ? 'spin' : ''} />
+                          {checkingId === item.id ? 'Comprobando…' : 'Comprobar'}
+                        </button>
                         <button className="button secondary small" onClick={() => setEditor(item)}>
                           <Pencil size={12} />
                           Editar
@@ -140,11 +234,13 @@ export function ProxiesView() {
       {editor && (
         <Modal
           title={current ? `Editar proxy · ${current.name}` : 'Nuevo proxy'}
-          onClose={() => setEditor(null)}
+          onClose={() => !saving && setEditor(null)}
           actions={
             <>
-              <button className="button secondary" onClick={() => setEditor(null)}>Cancelar</button>
-              <button className="button primary" form="proxy-form" type="submit">Guardar cifrado</button>
+              <button className="button secondary" disabled={saving} onClick={() => setEditor(null)}>Cancelar</button>
+              <button className="button primary" form="proxy-form" type="submit" disabled={saving}>
+                {saving ? <><RefreshCw size={14} className="spin" />Comprobando conexión…</> : 'Guardar y comprobar'}
+              </button>
             </>
           }
         >
@@ -152,10 +248,10 @@ export function ProxiesView() {
             <Field label="Nombre" className="span-2">
               <input className="input" name="name" defaultValue={current?.name || ''} required maxLength={100} />
             </Field>
-            <Field label="Host">
-              <input className="input" name="host" defaultValue={current?.host || ''} required maxLength={255} />
+            <Field label="Host" help="IP o dominio del servidor proxy, sin http:// ni socks5://.">
+              <input className="input" name="host" defaultValue={current?.host || ''} required maxLength={255} autoComplete="off" />
             </Field>
-            <Field label="Puerto">
+            <Field label="Puerto" help="El tipo se detecta automáticamente; no tienes que elegir HTTP, SOCKS o SSH.">
               <input className="input" name="port" type="number" min="1" max="65535" defaultValue={current?.port || ''} required />
             </Field>
             <Field label="Usuario">
@@ -163,7 +259,7 @@ export function ProxiesView() {
             </Field>
             <Field
               label={current?.has_password ? 'Nueva contraseña (opcional)' : 'Contraseña'}
-              help={current?.has_password ? 'Déjala vacía para conservar la clave cifrada actual.' : 'Viaja por HTTPS al Worker y se almacena cifrada.'}
+              help={current?.has_password ? 'Déjala vacía para conservar la clave cifrada actual.' : 'Se usa para comprobar el proxy y después se almacena cifrada.'}
             >
               <input className="input" name="password" type="password" autoComplete="new-password" />
             </Field>
@@ -181,6 +277,9 @@ export function ProxiesView() {
                 </label>
               </Field>
             )}
+            <div className="span-2" style={{ padding: '12px 14px', border: '1px solid #dbe3ef', borderRadius: 12, background: '#f8fafc', fontSize: 12, lineHeight: 1.55, color: '#64748b' }}>
+              Al guardar, userFLEX intenta detectar automáticamente HTTP, HTTPS, SOCKS4, SOCKS5 o SSH. Para proxies públicos también comprueba una salida real a Internet y obtiene IP, país, ciudad y zona horaria. Las IP privadas (por ejemplo 192.168.x.x) no pueden comprobarse desde Cloudflare y aparecerán como “No verificable”.
+            </div>
           </form>
         </Modal>
       )}
