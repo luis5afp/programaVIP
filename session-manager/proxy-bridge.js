@@ -128,7 +128,6 @@ function serveLocalSocks5(clientSocket, proxy, sockets) {
       sockets.add(upstream);
       upstream.once('close', () => sockets.delete(upstream));
       upstream.once('error', destroyPair);
-      clientSocket.once('error', destroyPair);
 
       clientSocket.write(SUCCESS_REPLY);
       if (pending.length) upstream.write(pending);
@@ -175,6 +174,7 @@ function serveLocalSocks5(clientSocket, proxy, sockets) {
     }
   };
 
+  clientSocket.once('error', destroyPair);
   clientSocket.on('data', onData);
   clientSocket.once('end', destroyPair);
   clientSocket.once('close', () => {
