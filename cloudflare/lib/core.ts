@@ -19,7 +19,7 @@ export class HttpError extends Error {
 
 export const ADMIN_COOKIE = 'uf_admin_session';
 export const ADMIN_MAX_AGE = 8 * 60 * 60;
-export const CLIENT_SESSION_SECONDS = 12 * 60 * 60;
+export const CLIENT_SESSION_SECONDS = 24 * 60 * 60;
 export const PBKDF2_ITERATIONS = 310_000;
 export const DEFAULT_AUTH_ORIGIN = 'https://creatortools-reconstruction-lab.luis5afp.workers.dev';
 

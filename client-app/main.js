@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const HEARTBEAT_MS = 60_000;
+const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
 const PROFILE_WINDOW_CHROME_HEIGHT = 88;
@@ -123,7 +123,7 @@ async function apiRequest(pathName, options = {}) {
 }
 
 function authError(error) {
-  return error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE'].includes(error?.code);
+  return error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(error?.code);
 }
 
 async function catalog() {
@@ -149,18 +149,51 @@ function sendClient(channel, payload) {
   if (catalogView && !catalogView.webContents.isDestroyed()) catalogView.webContents.send(channel, payload);
 }
 
+function configRevisionFrom(payload) {
+  return payload?.configRevision || payload?.client?.configRevision || null;
+}
+
+function mergeValidationMeta(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  authMeta = authMeta || {};
+  if (payload.client) authMeta.client = { ...(authMeta.client || {}), ...payload.client };
+  const revision = configRevisionFrom(payload);
+  if (revision) authMeta.client = { ...(authMeta.client || {}), configRevision: revision };
+  if (payload.plan) authMeta.plan = { ...(authMeta.plan || {}), ...payload.plan };
+  if (payload.expiresAt) authMeta.subscription = { ...(authMeta.subscription || {}), expiresAt: payload.expiresAt };
+  if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
+}
+
+async function syncClientConfiguration(payload, reason = 'server', knownCatalog = null) {
+  const previousRevision = authMeta?.client?.configRevision || null;
+  const nextRevision = configRevisionFrom(payload);
+  const configChanged = Boolean(previousRevision && nextRevision && previousRevision !== nextRevision);
+  mergeValidationMeta(payload);
+  let freshCatalog = knownCatalog;
+  if (configChanged && !freshCatalog) freshCatalog = await catalog();
+  if (freshCatalog) mergeValidationMeta(freshCatalog);
+  if (accessToken && authMeta) await saveAuth(accessToken, authMeta).catch(() => null);
+  return { configChanged, catalog: freshCatalog, auth: authMeta, validationReason: reason };
+}
+
+async function runHeartbeat(reason = 'scheduled') {
+  if (!accessToken) return;
+  try {
+    const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
+    if (result?.revoke === true || result?.active === false) {
+      await returnToLogin();
+      return;
+    }
+    const sync = await syncClientConfiguration(result, reason);
+    sendClient('userflex:heartbeat', { ...result, ...sync });
+  } catch (error) {
+    if (authError(error)) await returnToLogin();
+  }
+}
+
 function startHeartbeat() {
   stopHeartbeat();
-  heartbeatTimer = setInterval(async () => {
-    if (!accessToken) return;
-    try {
-      const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
-      sendClient('userflex:heartbeat', result);
-      if (result?.revoke === true || result?.active === false) await returnToLogin();
-    } catch (error) {
-      if (authError(error)) await returnToLogin();
-    }
-  }, HEARTBEAT_MS);
+  heartbeatTimer = setInterval(() => void runHeartbeat('12h'), HEARTBEAT_MS);
 }
 
 function stopHeartbeat() {
@@ -980,6 +1013,10 @@ async function openProfile(profileId) {
   }
 
   const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, { method: 'POST' });
+  const sync = await syncClientConfiguration(launch, 'profile-launch');
+  if (sync.configChanged && sync.catalog) {
+    sendClient('userflex:heartbeat', { active: true, revoke: false, ...sync });
+  }
   const profile = launch?.profile;
   const connection = launch?.connection || { mode: 'direct', locked: false };
   const delivery = launch?.sessionDelivery || null;
@@ -1066,6 +1103,7 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
     if (!accessToken) await loadAuth();
     if (!accessToken) return { authenticated: false };
     const data = await catalog();
+    await syncClientConfiguration(data, 'bootstrap', data);
     startHeartbeat();
     enterWorkspace(event.sender);
     return { authenticated: true, auth: authMeta, catalog: data };
@@ -1099,9 +1137,10 @@ ipcMain.handle('userflex:login', async (event, input) => {
     };
     await saveAuth(result.accessToken, meta);
     const data = await catalog();
+    await syncClientConfiguration(data, 'login', data);
     startHeartbeat();
     enterWorkspace(event.sender);
-    return { ok: true, auth: meta, catalog: data };
+    return { ok: true, auth: authMeta, catalog: data };
   } catch (error) {
     return { ok: false, error: serializeError(error) };
   }
@@ -1110,6 +1149,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
 ipcMain.handle('userflex:catalog', async () => {
   try {
     const data = await catalog();
+    await syncClientConfiguration(data, 'catalog', data);
     return { ok: true, catalog: data, auth: authMeta };
   } catch (error) {
     return { ok: false, error: serializeError(error) };
@@ -1121,6 +1161,13 @@ ipcMain.handle('userflex:launch-profile', async (_event, profileId) => {
     if (!/^[0-9a-f-]{36}$/i.test(String(profileId || ''))) throw new UserflexError('Perfil inválido.', 'PROFILE_INVALID');
     return await openProfile(String(profileId));
   } catch (error) {
+    if (error?.code === 'PROFILE_NOT_INCLUDED_IN_PLAN') {
+      try {
+        const data = await catalog();
+        const sync = await syncClientConfiguration(data, 'profile-rejected', data);
+        sendClient('userflex:heartbeat', { active: true, revoke: false, ...sync, configChanged: true });
+      } catch {}
+    }
     return { ok: false, error: serializeError(error) };
   }
 });

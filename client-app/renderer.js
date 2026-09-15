@@ -331,9 +331,17 @@ logoutButton.addEventListener('click', async () => {
 });
 
 window.userflex.onHeartbeat((payload) => {
+  if (payload?.auth) auth = payload.auth;
+  if (payload?.catalog) {
+    catalog = payload.catalog;
+    renderClient();
+  } else {
+    renderAccount();
+  }
   serverState.textContent = payload?.active === false ? 'Sin autorización' : 'Conectado';
   serverState.classList.toggle('bad', payload?.active === false);
-  heartbeatTime.textContent = `Última conexión ${new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}`;
+  const stamp = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  heartbeatTime.textContent = payload?.configChanged ? `Configuración actualizada ${stamp}` : `Última conexión ${stamp}`;
 });
 
 window.userflex.onAuthInvalidated((payload) => {

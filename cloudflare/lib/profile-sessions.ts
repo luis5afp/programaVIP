@@ -1,4 +1,5 @@
 import { AdminIdentity } from './auth';
+import { touchProfileClients } from './client-revalidation';
 import {
   Env,
   HttpError,
@@ -130,6 +131,7 @@ export async function adminProfileSessionRoutes(
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_mode: 'managed-first-party', updated_at: new Date().toISOString() }),
     });
+    await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.credentials.update', 'profile', profileId, {
       loginUsername,
       passwordChanged: Boolean(password),
@@ -186,6 +188,7 @@ export async function adminProfileSessionRoutes(
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_ready: false, updated_at: new Date().toISOString() }),
     });
+    await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.session.clear', 'profile', profileId);
     return json({ ok: true });
   }
@@ -292,6 +295,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'completed', used_at: now }),
     });
+    await touchProfileClients(env, job.profile_id);
     return json({ ok: true, profile_id: job.profile_id, version, public_ip: publicIp });
   }
 

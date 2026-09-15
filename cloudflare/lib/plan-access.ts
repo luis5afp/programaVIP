@@ -1,4 +1,5 @@
 import { AdminIdentity } from './auth';
+import { touchClientConfig, touchPlanClients } from './client-revalidation';
 import {
   Env,
   HttpError,
@@ -160,6 +161,7 @@ export async function planAccessRoutes(
     });
     if (!rows?.[0]) throw new HttpError(404, 'PLAN_NOT_FOUND');
     if (profileIds) await replacePlanProfiles(env, planId, profileIds);
+    await touchPlanClients(env, [planId]);
     const detailed = (await planDetails(env, rows))[0];
     await audit(env, request, 'admin', admin.userId, 'plan.update', 'plan', planId, {
       profileCount: detailed.profile_ids.length,
@@ -194,6 +196,7 @@ export async function planAccessRoutes(
       }),
     });
     const id = String(Array.isArray(result) ? result[0] : result);
+    await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'assignment.upsert', 'assignment', id, {
       clientId,
       profileId,
@@ -230,6 +233,7 @@ export async function planAccessRoutes(
       }),
     });
     const id = String(Array.isArray(result) ? result[0] : result);
+    await touchClientConfig(env, existing.client_id);
     await audit(env, request, 'admin', admin.userId, 'assignment.update', 'assignment', id, {
       proxyAssigned: Boolean(proxyId),
       enabled,

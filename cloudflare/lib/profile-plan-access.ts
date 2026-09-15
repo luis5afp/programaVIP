@@ -1,4 +1,5 @@
 import { AdminIdentity } from './auth';
+import { touchPlanClients } from './client-revalidation';
 import { Env, HttpError, audit, bodyJson, json, sb, uuid } from './core';
 
 function selectedPlanIds(value: unknown): string[] {
@@ -65,6 +66,7 @@ async function replaceProfilePlans(env: Env, profileId: string, planIds: string[
       });
     }),
   );
+  return affectedPlanIds;
 }
 
 export async function profilePlanAccessRoutes(
@@ -92,7 +94,8 @@ export async function profilePlanAccessRoutes(
       verifyProfile(env, profileId),
       verifyPlans(env, planIds),
     ]);
-    await replaceProfilePlans(env, profileId, planIds);
+    const affectedPlanIds = await replaceProfilePlans(env, profileId, planIds);
+    await touchPlanClients(env, affectedPlanIds);
     await audit(env, request, 'admin', admin.userId, 'profile.plans.update', 'profile', profileId, {
       planCount: planIds.length,
     });

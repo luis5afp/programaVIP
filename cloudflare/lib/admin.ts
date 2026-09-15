@@ -1,4 +1,5 @@
 import { AdminIdentity } from './auth';
+import { touchClientConfig, touchProfileClients } from './client-revalidation';
 import {
   Env,
   HttpError,
@@ -160,6 +161,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: new Date().toISOString() }),
     });
+    await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'client.credentials.reset', 'client', clientId);
     return json({ ok: true, username });
   }
@@ -181,6 +183,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         p_expires_at: expiresAt,
       }),
     });
+    await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'client.subscription.update', 'client', clientId, { planId, expiresAt });
     return json({ ok: true });
   }
@@ -305,12 +308,14 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     }
     const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
     if (!rows?.[0]) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+    await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId);
     return json(rows[0]);
   }
 
   if (profileMatch && method === 'DELETE') {
     const profileId = uuid(profileMatch[1], 'profileId');
+    await touchProfileClients(env, profileId);
     await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await audit(env, request, 'admin', admin.userId, 'profile.delete', 'profile', profileId);
     return json({ ok: true });
@@ -417,7 +422,10 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (assignmentMatch && method === 'DELETE') {
     const assignmentId = uuid(assignmentMatch[1], 'assignmentId');
+    const existingRows = await sb(env, `userflex_assignments?select=client_id&id=eq.${assignmentId}&limit=1`);
+    const existing = existingRows?.[0];
     await sb(env, `userflex_assignments?id=eq.${assignmentId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    if (existing?.client_id) await touchClientConfig(env, existing.client_id);
     await audit(env, request, 'admin', admin.userId, 'assignment.delete', 'assignment', assignmentId);
     return json({ ok: true });
   }
@@ -437,6 +445,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const device = rows?.[0];
     if (!device) throw new HttpError(404, 'DEVICE_NOT_FOUND');
     await sb(env, `userflex_client_sessions?device_id=eq.${device.id}&revoked_at=is.null`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
+    await touchClientConfig(env, device.client_id);
     await audit(env, request, 'admin', admin.userId, 'device.revoke', 'device', device.id, { clientId: device.client_id });
     return json(device);
   }
@@ -450,6 +459,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (row.status === 'limit_reached') throw new HttpError(409, 'DEVICE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de dispositivos.');
     if (row.status === 'subscription_inactive') throw new HttpError(409, 'SUBSCRIPTION_INACTIVE', 'El cliente no tiene una suscripción activa.');
     const rows = await sb(env, `userflex_devices?select=id,client_id,name,os,status,last_seen_at,created_at&id=eq.${deviceId}&limit=1`);
+    if (rows?.[0]?.client_id) await touchClientConfig(env, rows[0].client_id);
     await audit(env, request, 'admin', admin.userId, 'device.reactivate', 'device', deviceId);
     return json(rows?.[0]);
   }

@@ -1,5 +1,5 @@
 import { ClientIdentity } from './auth';
-import { Env, HttpError, audit, decryptProxy, json, sb } from './core';
+import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
 import { managedSessionMaterial } from './profile-sessions';
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
@@ -11,6 +11,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     return json({
       ok: true,
       profiles: [],
+      client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+      configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
     });
@@ -73,6 +75,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   return json({
     ok: true,
     profiles: result,
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
   });
@@ -180,6 +184,8 @@ export async function clientLaunch(
 
   return json({
     ok: true,
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    configRevision: id.client.updated_at,
     lease: {
       expiresAt: id.subscription.expires_at,
       serverTime: new Date().toISOString(),
@@ -199,13 +205,22 @@ export async function clientLaunch(
   });
 }
 
-export async function clientHeartbeat(id: ClientIdentity) {
+export async function clientHeartbeat(env: Env, id: ClientIdentity) {
+  const sessionExpiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
+  await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ expires_at: sessionExpiresAt, last_seen_at: new Date().toISOString() }),
+  });
   return json({
     ok: true,
     active: true,
     revoke: false,
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
+    sessionExpiresAt,
     serverTime: new Date().toISOString(),
   });
 }
