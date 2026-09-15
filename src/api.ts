@@ -176,6 +176,7 @@ export const api = {
         enabled: boolean;
       }>,
     ) => request<ProxyRecord>(`/api/proxies/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    validate: (id: string) => request<ProxyRecord>(`/api/proxies/${id}/validate`, { method: 'POST' }),
     remove: (id: string) => request<{ ok: true }>(`/api/proxies/${id}`, { method: 'DELETE' }),
   },
 
