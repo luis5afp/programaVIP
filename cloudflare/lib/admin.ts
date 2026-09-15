@@ -432,7 +432,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   }
 
   if (path === '/api/devices' && method === 'GET') {
-    const rows = await sb(env, 'userflex_devices?select=id,client_id,name,os,status,last_seen_at,created_at&order=last_seen_at.desc.nullslast');
+    const rows = await sb(env, 'userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,created_at&order=last_seen_at.desc.nullslast');
     const clientIds = [...new Set(rows.map((row: any) => row.client_id))];
     const clients = clientIds.length ? await sb(env, `userflex_clients?select=id,name,email&id=in.(${clientIds.join(',')})`) : [];
     const clientsById = new Map(clients.map((item: any) => [item.id, item]));
@@ -459,7 +459,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (!row) throw new HttpError(404, 'DEVICE_NOT_FOUND');
     if (row.status === 'limit_reached') throw new HttpError(409, 'DEVICE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de dispositivos.');
     if (row.status === 'subscription_inactive') throw new HttpError(409, 'SUBSCRIPTION_INACTIVE', 'El cliente no tiene una suscripción activa.');
-    const rows = await sb(env, `userflex_devices?select=id,client_id,name,os,status,last_seen_at,created_at&id=eq.${deviceId}&limit=1`);
+    const rows = await sb(env, `userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,created_at&id=eq.${deviceId}&limit=1`);
     if (rows?.[0]?.client_id) await touchClientConfig(env, rows[0].client_id);
     await audit(env, request, 'admin', admin.userId, 'device.reactivate', 'device', deviceId);
     return json(rows?.[0]);
