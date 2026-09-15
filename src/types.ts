@@ -112,6 +112,7 @@ export interface Device {
   name: string;
   os: string | null;
   status: DeviceStatus;
+  last_ip: string | null;
   last_seen_at: string | null;
   created_at: string;
   client?: Pick<Client, 'id' | 'name' | 'email'>;
