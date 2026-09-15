@@ -1,10 +1,10 @@
 {
   "name": "userflow-client",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
-  "main": "startup.js",
+  "main": "entry.js",
   "scripts": {
     "prestart": "node build/prepare-icon.mjs",
     "start": "electron .",
@@ -26,6 +26,7 @@
       "output": "dist"
     },
     "files": [
+      "entry.js",
       "startup.js",
       "bootstrap.js",
       "main.js",
