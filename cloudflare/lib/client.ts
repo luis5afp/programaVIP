@@ -1,6 +1,7 @@
 import { ClientIdentity } from './auth';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
 import { managedSessionMaterial } from './profile-sessions';
+import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
   const memberships = await sb(
@@ -173,6 +174,8 @@ export async function clientLaunch(
     };
   }
 
+  const usage = await openProfileUsage(request, env, id, { id: profile.id, name: profile.name, url: profile.url });
+
   await audit(env, request, 'client', id.clientId, 'profile.launch', 'profile', profileId, {
     deviceId: id.deviceId,
     usesProxy: connection.mode === 'proxy',
@@ -202,6 +205,7 @@ export async function clientLaunch(
     },
     connection,
     sessionDelivery,
+    usage,
   });
 }
 
@@ -226,6 +230,7 @@ export async function clientHeartbeat(env: Env, id: ClientIdentity) {
 }
 
 export async function clientLogout(env: Env, id: ClientIdentity) {
+  await closeOpenProfileUsageForSession(env, id.sessionId, 'logout');
   await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },

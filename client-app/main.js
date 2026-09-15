@@ -29,6 +29,8 @@ let heartbeatTimer = null;
 const profileTabs = new Map();
 let profileOrder = [];
 let profileDragMonitor = null;
+const pendingUsageCloseRequests = new Set();
+let quitAfterUsageFlush = false;
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -121,6 +123,34 @@ async function apiRequest(pathName, options = {}) {
     throw new UserflexError(payload?.error || `HTTP ${response.status}`, payload?.code || 'HTTP_ERROR', response.status);
   }
   return payload;
+}
+
+function closeWorkspaceUsage(workspace, reason = 'profile_closed') {
+  if (!workspace?.usageId || workspace.usageClosed === true) return Promise.resolve(true);
+  if (workspace.usageClosePromise) return workspace.usageClosePromise;
+  const request = apiRequest(`/api/client/profile-usage/${workspace.usageId}/close`, {
+    method: 'POST',
+    body: { reason },
+    timeout: 8_000,
+  })
+    .then(() => { workspace.usageClosed = true; return true; })
+    .catch(() => false)
+    .finally(() => {
+      pendingUsageCloseRequests.delete(request);
+      workspace.usageClosePromise = null;
+    });
+  workspace.usageClosePromise = request;
+  pendingUsageCloseRequests.add(request);
+  return request;
+}
+
+async function flushUsageCloseRequests(timeoutMs = 1800) {
+  const pending = Array.from(pendingUsageCloseRequests);
+  if (!pending.length) return;
+  await Promise.race([
+    Promise.allSettled(pending),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
 }
 
 function authError(error) {
@@ -534,9 +564,10 @@ function cleanupPage(workspace, page) {
   if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
 }
 
-function cleanupWorkspace(workspace) {
+function cleanupWorkspace(workspace, reason = 'profile_closed') {
   if (!workspace || workspace.cleaned) return;
   workspace.cleaned = true;
+  void closeWorkspaceUsage(workspace, reason);
   if (workspace.loginHandler) app.removeListener('login', workspace.loginHandler);
   for (const page of workspace.pages.values()) cleanupPage(workspace, page);
   workspace.pages.clear();
@@ -1014,7 +1045,13 @@ async function openProfile(profileId) {
     return { ok: true, reused: true };
   }
 
-  const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, { method: 'POST' });
+  const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, {
+    method: 'POST',
+    headers: {
+      'X-Userflow-Profile-Usage': '1',
+      'X-Userflow-Client-Version': app.getVersion(),
+    },
+  });
   const sync = await syncClientConfiguration(launch, 'profile-launch');
   if (sync.configChanged && sync.catalog) {
     sendClient('userflex:heartbeat', { active: true, revoke: false, ...sync });
@@ -1038,6 +1075,9 @@ async function openProfile(profileId) {
     detachedShellReady: false,
     closing: false,
     cleaned: false,
+    usageId: launch?.usage?.id || null,
+    usageClosed: false,
+    usageClosePromise: null,
   };
   const firstPage = createProfilePageView(workspace);
   workspace.activePageId = firstPage.id;
@@ -1095,7 +1135,7 @@ async function openProfile(profileId) {
       sessionVersion: Number(delivery?.version || 0),
     };
   } catch (error) {
-    cleanupWorkspace(workspace);
+    cleanupWorkspace(workspace, 'launch_failed');
     throw error;
   }
 }
@@ -1247,6 +1287,15 @@ ipcMain.handle('userflex:logout', async () => {
     await returnToLogin();
     return { ok: false, error: serializeError(error) };
   }
+});
+
+app.on('before-quit', (event) => {
+  if (quitAfterUsageFlush) return;
+  for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
+  if (pendingUsageCloseRequests.size === 0) return;
+  event.preventDefault();
+  quitAfterUsageFlush = true;
+  void flushUsageCloseRequests().finally(() => app.quit());
 });
 
 app.whenReady().then(async () => {

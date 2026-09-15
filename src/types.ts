@@ -118,6 +118,24 @@ export interface Device {
   client?: Pick<Client, 'id' | 'name' | 'email'>;
 }
 
+export interface ProfileUsage {
+  id: string;
+  client_id: string | null;
+  device_id: string | null;
+  profile_id: string | null;
+  client_name: string;
+  client_email: string | null;
+  device_name: string | null;
+  device_os: string | null;
+  profile_name: string;
+  profile_url: string | null;
+  client_version: string | null;
+  ip: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  close_reason: string | null;
+}
+
 export interface AuditLog {
   id: string;
   actor_type: 'admin' | 'client' | 'system';
@@ -158,5 +176,6 @@ export type ViewKey =
   | 'proxies'
   | 'assignments'
   | 'devices'
+  | 'history'
   | 'audit'
   | 'system';

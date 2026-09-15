@@ -5,6 +5,7 @@ import {
   CircleUserRound,
   Gauge,
   Globe2,
+  History,
   Laptop,
   LogOut,
   Network,
@@ -23,6 +24,7 @@ const items: Array<{ id: ViewKey; label: string; icon: typeof Gauge }> = [
   { id: 'proxies', label: 'Proxies', icon: Network },
   { id: 'assignments', label: 'Asignaciones', icon: Cable },
   { id: 'devices', label: 'Dispositivos', icon: Laptop },
+  { id: 'history', label: 'Historial', icon: History },
   { id: 'audit', label: 'Auditoría', icon: ShieldCheck },
   { id: 'system', label: 'Servidor & Sistema', icon: ServerCog },
 ];

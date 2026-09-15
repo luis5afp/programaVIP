@@ -1,6 +1,7 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
+import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
@@ -16,7 +17,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.6';
+const APP_VERSION = '1.2.7';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -68,6 +69,8 @@ async function api(request: Request, env: Env): Promise<Response> {
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
     if (launch && method === 'POST') return clientLaunch(request, env, identity, launch[1]);
+    const usageClose = path.match(/^\/api\/client\/profile-usage\/([0-9a-f-]{36})\/close$/i);
+    if (usageClose && method === 'POST') return clientCloseProfileUsage(request, env, identity, usageClose[1]);
     throw new HttpError(404, 'NOT_FOUND');
   }
 
@@ -80,6 +83,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path === '/api/profile-images' && method === 'POST') {
     return uploadProfileImage(request, env, admin);
   }
+  const profileUsageResponse = await adminProfileUsageRoutes(request, env, admin);
+  if (profileUsageResponse) return profileUsageResponse;
   const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
   if (profileProxyResponse) return profileProxyResponse;
   const profileSessionResponse = await adminProfileSessionRoutes(request, env, admin);
