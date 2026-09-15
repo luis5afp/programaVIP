@@ -5,12 +5,10 @@ import {
   CircleUserRound,
   Gauge,
   Globe2,
-  History,
   Laptop,
   LogOut,
   Network,
   ServerCog,
-  ShieldCheck,
   Users,
   WalletCards,
 } from 'lucide-react';
@@ -24,8 +22,7 @@ const items: Array<{ id: ViewKey; label: string; icon: typeof Gauge }> = [
   { id: 'proxies', label: 'Proxies', icon: Network },
   { id: 'assignments', label: 'Asignaciones', icon: Cable },
   { id: 'devices', label: 'Dispositivos', icon: Laptop },
-  { id: 'history', label: 'Historial', icon: History },
-  { id: 'audit', label: 'Auditoría', icon: ShieldCheck },
+  { id: 'activity', label: 'Actividad', icon: Activity },
   { id: 'system', label: 'Servidor & Sistema', icon: ServerCog },
 ];
 

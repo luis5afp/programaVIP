@@ -10,14 +10,14 @@ import { ProfilesView } from './views/ProfilesView';
 import { ProxiesView } from './views/ProxiesView';
 import { AssignmentsView } from './views/AssignmentsView';
 import { DevicesView } from './views/DevicesView';
-import { HistoryView } from './views/HistoryView';
-import { AuditView } from './views/AuditView';
+import { ActivityView } from './views/ActivityView';
 import { SystemView } from './views/SystemView';
 
 export default function App() {
   const [session, setSession] = useState<AdminSession | null | undefined>(undefined);
   const [view, setView] = useState<ViewKey>('dashboard');
   const [historySearch, setHistorySearch] = useState('');
+  const [activityTab, setActivityTab] = useState<'history' | 'audit'>('history');
 
   useEffect(() => {
     api.session()
@@ -39,17 +39,16 @@ export default function App() {
 
   let content;
   switch (view) {
-    case 'clients': content = <ClientsView onHistory={(client) => { setHistorySearch(client.name); setView('history'); }} />; break;
+    case 'clients': content = <ClientsView onHistory={(client) => { setHistorySearch(client.name); setActivityTab('history'); setView('activity'); }} />; break;
     case 'plans': content = <PlansView />; break;
     case 'profiles': content = <ProfilesView />; break;
     case 'proxies': content = <ProxiesView />; break;
     case 'assignments': content = <AssignmentsView />; break;
     case 'devices': content = <DevicesView />; break;
-    case 'history': content = <HistoryView initialSearch={historySearch} />; break;
-    case 'audit': content = <AuditView />; break;
+    case 'activity': content = <ActivityView initialTab={activityTab} initialHistorySearch={historySearch} />; break;
     case 'system': content = <SystemView />; break;
     default: content = <DashboardView />;
   }
 
-  return <Layout session={session} view={view} onView={(next) => { if (next === 'history') setHistorySearch(''); setView(next); }} onLogout={logout}>{content}</Layout>;
+  return <Layout session={session} view={view} onView={(next) => { if (next === 'activity') { setHistorySearch(''); setActivityTab('history'); } setView(next); }} onLogout={logout}>{content}</Layout>;
 }

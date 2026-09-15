@@ -176,6 +176,5 @@ export type ViewKey =
   | 'proxies'
   | 'assignments'
   | 'devices'
-  | 'history'
-  | 'audit'
+  | 'activity'
   | 'system';
