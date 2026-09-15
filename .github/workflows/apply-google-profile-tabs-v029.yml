@@ -1,0 +1,35 @@
+name: Apply userFLOW v0.2.29 Google profile tab patch
+
+on:
+  push:
+    branches: [feature/google-profile-tabs-v029]
+    paths:
+      - 'scripts/apply-google-profile-tabs-v029.mjs'
+      - '.github/workflows/apply-google-profile-tabs-v029.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/google-profile-tabs-v029
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply patch
+        run: node scripts/apply-google-profile-tabs-v029.mjs
+      - name: Remove temporary patch helpers
+        run: |
+          rm -f scripts/apply-google-profile-tabs-v029.mjs
+          rm -f .github/workflows/apply-google-profile-tabs-v029.yml
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add admin-gated Google tabs inside profiles v0.2.29"
+          git push origin HEAD:feature/google-profile-tabs-v029
