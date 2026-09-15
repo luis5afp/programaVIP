@@ -16,7 +16,13 @@
         <strong id="profile-label">Perfil</strong>
       </div>
       <div id="page-tabs" class="page-tabs" role="tablist" aria-label="Pestañas del perfil"></div>
-      <button id="new-page-button" class="new-page-button" type="button" title="Nueva pestaña del perfil" aria-label="Nueva pestaña del perfil">+</button>
+      <div id="new-page-wrap" class="new-page-wrap">
+        <button id="new-page-button" class="new-page-button" type="button" aria-label="Nueva pestaña del perfil">+</button>
+        <div id="new-page-menu" class="new-page-menu" role="menu" aria-label="Opciones de nueva pestaña">
+          <button id="new-profile-page-option" class="new-page-menu-button" type="button" role="menuitem">Nueva pestaña del perfil</button>
+          <button id="google-page-option" class="new-page-menu-button google-option hidden" type="button" role="menuitem">Abrir Google</button>
+        </div>
+      </div>
     </div>
     <div class="toolbar">
       <div class="nav-actions">

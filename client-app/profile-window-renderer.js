@@ -1,5 +1,9 @@
 const tabsElement = document.getElementById('page-tabs');
 const newPageButton = document.getElementById('new-page-button');
+const newPageWrap = document.getElementById('new-page-wrap');
+const newPageMenu = document.getElementById('new-page-menu');
+const newProfilePageOption = document.getElementById('new-profile-page-option');
+const googlePageOption = document.getElementById('google-page-option');
 const profileIcon = document.getElementById('profile-icon');
 const profileFallback = document.getElementById('profile-fallback');
 const profileLabel = document.getElementById('profile-label');
@@ -10,9 +14,10 @@ const homeButton = document.getElementById('home-button');
 const address = document.getElementById('address');
 const networkState = document.getElementById('network-state');
 
-let state = { profileId: null, profileLabel: 'Perfil', activePageId: null, pages: [], networkLabel: 'Aislado' };
+let state = { profileId: null, profileLabel: 'Perfil', activePageId: null, pages: [], networkLabel: 'Aislado', allowExternalBrowsing: false };
 let pagePointerDrag = null;
 let queuedState = null;
+let newPageHoverTimer = null;
 
 function activePage() {
   return state.pages.find((page) => page.id === state.activePageId) || null;
@@ -134,6 +139,20 @@ function makePageTab(page, index) {
   return item;
 }
 
+function closeNewPageMenu() {
+  if (newPageHoverTimer) clearTimeout(newPageHoverTimer);
+  newPageHoverTimer = null;
+  newPageMenu.classList.remove('open');
+}
+
+function scheduleNewPageMenu() {
+  if (newPageHoverTimer) clearTimeout(newPageHoverTimer);
+  newPageHoverTimer = setTimeout(() => {
+    googlePageOption.classList.toggle('hidden', state.allowExternalBrowsing !== true);
+    newPageMenu.classList.add('open');
+  }, 420);
+}
+
 function render() {
   tabsElement.replaceChildren();
   state.pages.forEach((page, index) => tabsElement.appendChild(makePageTab(page, index)));
@@ -157,10 +176,26 @@ function render() {
   homeButton.disabled = !current;
   address.textContent = current?.url || '—';
   networkState.textContent = state.networkLabel || 'Aislado';
+  googlePageOption.classList.toggle('hidden', state.allowExternalBrowsing !== true);
   document.title = `userFLOW · ${state.profileLabel || 'Perfil'}`;
 }
 
-newPageButton.addEventListener('click', () => void run('new-page'));
+newPageButton.addEventListener('click', () => {
+  closeNewPageMenu();
+  void run('new-page');
+});
+newPageWrap.addEventListener('mouseenter', scheduleNewPageMenu);
+newPageWrap.addEventListener('mouseleave', closeNewPageMenu);
+newProfilePageOption.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeNewPageMenu();
+  void run('new-page');
+});
+googlePageOption.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeNewPageMenu();
+  if (state.allowExternalBrowsing === true) void run('open-google');
+});
 backButton.addEventListener('click', () => void run('back', { pageId: state.activePageId }));
 forwardButton.addEventListener('click', () => void run('forward', { pageId: state.activePageId }));
 reloadButton.addEventListener('click', () => void run('reload', { pageId: state.activePageId }));

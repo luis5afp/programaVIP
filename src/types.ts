@@ -26,6 +26,7 @@ export interface Client {
   email: string;
   phone: string | null;
   status: ClientStatus;
+  allow_external_browsing: boolean;
   created_at: string;
   updated_at: string;
   credential?: {

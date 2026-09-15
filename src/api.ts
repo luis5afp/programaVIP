@@ -79,7 +79,7 @@ export const api = {
       username: string;
       password: string;
     }) => request<Client>('/api/clients', { method: 'POST', body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<Pick<Client, 'name' | 'email' | 'phone' | 'status'>>) =>
+    update: (id: string, input: Partial<Pick<Client, 'name' | 'email' | 'phone' | 'status' | 'allow_external_browsing'>>) =>
       request<Client>(`/api/clients/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     remove: (id: string) => request<{ ok: true }>(`/api/clients/${id}`, { method: 'DELETE' }),
     credentials: (id: string, username: string, password: string) =>

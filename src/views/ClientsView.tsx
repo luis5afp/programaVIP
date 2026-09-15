@@ -76,6 +76,7 @@ export function ClientsView() {
         email: String(form.get('email') || '').trim(),
         phone: String(form.get('phone') || '').trim() || null,
         status: String(form.get('status')) as Client['status'],
+        allow_external_browsing: form.get('allowExternalBrowsing') === 'on',
       });
       setEditClient(null);
       await load();
@@ -320,6 +321,12 @@ export function ClientsView() {
                 <option value="active">Activo</option>
                 <option value="suspended">Suspendido</option>
               </select>
+            </Field>
+            <Field label="Navegación adicional" className="span-2" help="Habilita la opción “Abrir Google” al mantener el cursor sobre + dentro de un perfil. La pestaña seguirá aislada dentro de ese mismo perfil.">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 40, cursor: 'pointer' }}>
+                <input type="checkbox" name="allowExternalBrowsing" defaultChecked={editClient.allow_external_browsing === true} />
+                <span>Permitir navegación web (Google) para este cliente</span>
+              </label>
             </Field>
           </form>
         </Modal>

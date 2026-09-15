@@ -11,7 +11,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     return json({
       ok: true,
       profiles: [],
-      client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+      client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
       configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
@@ -75,7 +75,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   return json({
     ok: true,
     profiles: result,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
@@ -184,7 +184,7 @@ export async function clientLaunch(
 
   return json({
     ok: true,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
     configRevision: id.client.updated_at,
     lease: {
       expiresAt: id.subscription.expires_at,
@@ -216,7 +216,7 @@ export async function clientHeartbeat(env: Env, id: ClientIdentity) {
     ok: true,
     active: true,
     revoke: false,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
