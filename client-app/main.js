@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
+const GOOGLE_URL = 'https://www.google.com/';
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
 const PROFILE_WINDOW_CHROME_HEIGHT = 88;
@@ -395,6 +396,7 @@ function browserTabPayload(workspace) {
     networkLabel: workspace.connection?.mode === 'proxy'
       ? (lockedIp ? `IP protegida · ${lockedIp}` : 'Proxy del perfil')
       : 'Conexión directa',
+    allowExternalBrowsing: authMeta?.client?.allowExternalBrowsing === true,
   };
 }
 
@@ -1213,6 +1215,17 @@ ipcMain.handle('userflex-profile-window:action', async (event, input) => {
   if (action === 'new-page') {
     try {
       const page = await createProfilePage(workspace, workspace.profile.url, true);
+      return { ok: true, pageId: page.id };
+    } catch (error) {
+      return { ok: false, error: serializeError(error) };
+    }
+  }
+  if (action === 'open-google') {
+    if (authMeta?.client?.allowExternalBrowsing !== true) {
+      return { ok: false, error: serializeError(new UserflexError('La navegación web adicional no está habilitada para este cliente.', 'EXTERNAL_BROWSING_DISABLED', 403)) };
+    }
+    try {
+      const page = await createProfilePage(workspace, GOOGLE_URL, true);
       return { ok: true, pageId: page.id };
     } catch (error) {
       return { ok: false, error: serializeError(error) };
