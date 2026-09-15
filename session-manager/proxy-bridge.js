@@ -176,7 +176,6 @@ function serveLocalSocks5(clientSocket, proxy, sockets) {
 
   clientSocket.once('error', destroyPair);
   clientSocket.on('data', onData);
-  clientSocket.once('end', destroyPair);
   clientSocket.once('close', () => {
     sockets.delete(clientSocket);
     if (!finished) {
