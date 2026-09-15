@@ -42,7 +42,7 @@ async function clientDetails(env: Env, rows?: any[]) {
   const subscriptions = await sb(env, `userflex_subscriptions?select=id,client_id,plan_id,starts_at,expires_at,status,offline_grace_minutes,created_at,updated_at&client_id=in.(${ids})&order=created_at.desc`);
   const planIds = [...new Set((subscriptions || []).map((subscription: any) => subscription.plan_id))];
   const plans = planIds.length
-    ? await sb(env, `userflex_plans?select=id,name,duration_days,max_devices,max_profiles,enabled,created_at,updated_at&id=in.(${planIds.join(',')})`)
+    ? await sb(env, `userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&id=in.(${planIds.join(',')})`)
     : [];
   const plansById = new Map(plans.map((plan: any) => [plan.id, plan]));
 
@@ -236,7 +236,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   }
 
   if (path === '/api/plans' && method === 'GET') {
-    return json(await sb(env, 'userflex_plans?select=id,name,duration_days,max_devices,max_profiles,enabled,created_at,updated_at&order=name.asc'));
+    return json(await sb(env, 'userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&order=name.asc'));
   }
 
   if (path === '/api/plans' && method === 'POST') {
