@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -11,7 +11,9 @@
     "predist:win": "node build/prepare-icon.mjs",
     "dist:win": "electron-builder --win nsis"
   },
-  "dependencies": {},
+  "dependencies": {
+    "socks": "^2.8.10"
+  },
   "devDependencies": {
     "electron": "^38.1.2",
     "electron-builder": "^26.0.12"
@@ -27,6 +29,7 @@
       "startup.js",
       "bootstrap.js",
       "main.js",
+      "proxy-bridge.js",
       "preload.cjs",
       "index.html",
       "renderer.js",
