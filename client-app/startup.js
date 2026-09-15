@@ -252,9 +252,12 @@ async function startAfterReady() {
         && rawUrl.startsWith(USERFLEX_API_ORIGIN)
         && /\/api\/client\/profiles\/[0-9a-f-]{36}\/launch(?:\?|$)/i.test(rawUrl)
       ) {
-        void response.clone().json().then((payload) => {
+        try {
+          const payload = await response.clone().json();
           rememberRuntimeProxy(payload?.connection?.proxy);
-        }).catch(() => null);
+        } catch {
+          // A malformed launch response will be handled by main.js itself.
+        }
       }
       return response;
     };
