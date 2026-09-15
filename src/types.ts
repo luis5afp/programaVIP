@@ -4,6 +4,8 @@ export type DeviceStatus = 'active' | 'revoked';
 export type SessionMode = 'manual-login' | 'managed-first-party';
 export type ManagedSessionStatus = 'empty' | 'active' | 'needs_auth' | 'expired';
 export type AdminRole = 'owner' | 'admin';
+export type ProxyProtocol = 'unknown' | 'http' | 'https' | 'socks4' | 'socks5' | 'ssh';
+export type ProxyValidationStatus = 'pending' | 'valid' | 'reachable' | 'invalid' | 'unverifiable';
 
 export interface AdminSession {
   id: string;
@@ -106,6 +108,19 @@ export interface ProxyRecord {
   username: string | null;
   enabled: boolean;
   has_password: boolean;
+  proxy_type: ProxyProtocol;
+  validation_status: ProxyValidationStatus;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_latency_ms: number | null;
+  public_ip: string | null;
+  country_code: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  timezone: string | null;
+  validation_error: string | null;
+  browser_compatible: boolean;
   created_at: string;
   updated_at: string;
 }
