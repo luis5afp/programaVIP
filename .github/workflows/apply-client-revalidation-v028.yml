@@ -1,0 +1,34 @@
+name: Apply userFLOW v0.2.28 revalidation patch
+
+on:
+  push:
+    branches: [feature/client-revalidation-v028]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/client-revalidation-v028
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply patch
+        run: node scripts/apply-client-revalidation-v028.mjs
+      - name: Remove temporary patch helpers
+        run: rm -f scripts/apply-client-revalidation-v028.mjs .github/workflows/apply-client-revalidation-v028.yml
+      - name: Commit generated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          git commit -m "Implement 12-hour heartbeat and client revalidation v0.2.28"
+          git push origin HEAD:feature/client-revalidation-v028
