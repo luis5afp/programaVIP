@@ -1,5 +1,6 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
+import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
@@ -17,7 +18,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.2.7';
+const APP_VERSION = '1.2.8';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -76,13 +77,24 @@ async function api(request: Request, env: Env): Promise<Response> {
 
   const admin = await requireAdmin(request, env);
   if (path === '/api/auth/session' && method === 'GET') {
-    return json({ ok: true, user: { username: admin.username } });
+    return json({
+      ok: true,
+      user: {
+        id: admin.userId,
+        username: admin.username,
+        display_name: admin.displayName,
+        email: admin.email,
+        role: admin.role,
+      },
+    });
   }
 
   requireSameOriginWrite(request);
   if (path === '/api/profile-images' && method === 'POST') {
     return uploadProfileImage(request, env, admin);
   }
+  const adminUserResponse = await adminUserRoutes(request, env, admin);
+  if (adminUserResponse) return adminUserResponse;
   const profileUsageResponse = await adminProfileUsageRoutes(request, env, admin);
   if (profileUsageResponse) return profileUsageResponse;
   const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
