@@ -118,8 +118,8 @@ async function createAdmin(request: Request, env: Env, admin: AdminIdentity) {
   const email = optional(body.email, 180);
   const role = parseRole(body.role);
   const password = typeof body.password === 'string' ? body.password : '';
-  if (password.length < 10 || password.length > 256) {
-    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 10 caracteres.');
+  if (password.length < 6 || password.length > 256) {
+    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 6 caracteres.');
   }
 
   const created = await sb(env, 'rpc/userflex_create_admin_user', {
@@ -199,8 +199,8 @@ async function setAdminPassword(request: Request, env: Env, admin: AdminIdentity
   await getAdminRecord(env, userId);
   const body = await bodyJson(request, 8192);
   const password = typeof body.password === 'string' ? body.password : '';
-  if (password.length < 10 || password.length > 256) {
-    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 10 caracteres.');
+  if (password.length < 6 || password.length > 256) {
+    throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 6 caracteres.');
   }
   await sb(env, 'rpc/userflex_set_admin_password', {
     method: 'POST',
