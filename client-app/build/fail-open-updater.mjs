@@ -8,6 +8,11 @@ const bootstrapPath = path.resolve(here, '..', 'bootstrap.js');
 const marker = '// userFLOW updater fail-open v1';
 let source = await fs.readFile(bootstrapPath, 'utf8');
 
+// GitHub's Windows runner may check out JavaScript with CRLF. Normalize the
+// source before applying the deterministic patch so the build behaves the same
+// on Windows and development machines using LF.
+source = source.replace(/\r\n/g, '\n');
+
 if (!source.includes(marker)) {
   source = source.replace(
     "  pushStatus({ phase: 'ready', message: `v${app.getVersion()} · Actualizado`, percent: null });",
