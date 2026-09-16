@@ -5,12 +5,14 @@ on:
   pull_request:
     paths:
       - 'client-app/**'
+      - 'session-manager/**'
       - '.github/workflows/build-client-app.yml'
       - 'supabase/migrations/*client_release*'
   push:
     branches: [main]
     paths:
       - 'client-app/**'
+      - 'session-manager/**'
       - '.github/workflows/build-client-app.yml'
       - 'supabase/migrations/*client_release*'
 
@@ -30,6 +32,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install Session Manager dependencies
+        working-directory: session-manager
+        run: npm install
+
+      - name: Build bundled Session Manager
+        working-directory: session-manager
+        run: npm run dist:win
+
+      - name: Stage Session Manager for userFLOW installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Get-ChildItem -Path ..\session-manager\dist -Filter 'userFLEX-Session-Manager-*-Setup.exe' |
+            Where-Object { $_.Name -notlike '*.__uninstaller.exe' } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $source) { throw "No Session Manager installer was generated." }
+
+          $targetDir = Join-Path $PWD 'build\session-manager'
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          $target = Join-Path $targetDir 'userFLEX-Session-Manager-Setup.exe'
+          Copy-Item -Path $source.FullName -Destination $target -Force
+          $staged = Get-Item -Path $target
+          Write-Host "Bundled Session Manager: $($source.Name) -> $($staged.FullName) ($($staged.Length) bytes)"
 
       - name: Install Client dependencies
         run: npm install
@@ -212,5 +239,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX con verificación de versión y actualización automática obligatoria antes del inicio de sesión."
+            gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX. Incluye userFLEX Session Manager y lo instala/actualiza automáticamente junto con userFLOW."
           }
