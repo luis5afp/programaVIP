@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.46",
+  "version": "0.2.47",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -15,13 +15,17 @@
     "socks": "^2.8.10"
   },
   "devDependencies": {
-    "electron": "^38.1.2",
+    "electron": "https://github.com/castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.0.12"
   },
   "build": {
     "appId": "com.userflex.client",
     "productName": "userFLOW",
     "asar": true,
+    "electronVersion": "44.1.0+wvcus",
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/v"
+    },
     "directories": {
       "output": "dist"
     },
@@ -30,6 +34,7 @@
       "startup.js",
       "bootstrap.js",
       "main.js",
+      "widevine-runtime.js",
       "proxy-bridge.js",
       "preload.cjs",
       "index.html",
