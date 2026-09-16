@@ -98,6 +98,44 @@ async function discoverPublicIp(browserSession) {
   return null;
 }
 
+async function resetNavigationNetwork(browserSession) {
+  await browserSession.clearCache().catch(() => null);
+  if (typeof browserSession.clearHostResolverCache === 'function') {
+    await browserSession.clearHostResolverCache().catch(() => null);
+  }
+  if (typeof browserSession.closeAllConnections === 'function') {
+    await browserSession.closeAllConnections().catch(() => null);
+  }
+}
+
+function isGenericNavigationFailure(error) {
+  if (!error || typeof error !== 'object') return false;
+  return error.code === 'ERR_FAILED' || Number(error.errno) === -2;
+}
+
+async function loadProfileUrl(browserWindow, browserSession, profileUrl) {
+  const target = new URL(profileUrl);
+  try {
+    await browserWindow.loadURL(target.toString());
+    return;
+  } catch (error) {
+    if (!isGenericNavigationFailure(error)) throw error;
+    console.warn(`Session Manager navigation to ${target.origin} returned ERR_FAILED; retrying once.`);
+  }
+
+  await resetNavigationNetwork(browserSession);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+
+  try {
+    await browserWindow.loadURL(target.toString());
+  } catch (error) {
+    const code = error && typeof error === 'object' && typeof error.code === 'string'
+      ? error.code
+      : 'ERR_FAILED';
+    throw new Error(`No se pudo abrir ${target.hostname} después de reintentar (${code}). Revisa la conexión a Internet y vuelve a intentar la captura.`);
+  }
+}
+
 async function startCapture(rawUrl) {
   const { endpoint, token } = assertCaptureUrl(rawUrl);
   const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
@@ -167,6 +205,10 @@ async function startCapture(rawUrl) {
     await browserSession.setProxy({ mode: 'direct' });
   }
 
+  if (typeof browserSession.closeAllConnections === 'function') {
+    await browserSession.closeAllConnections().catch(() => null);
+  }
+
   const allowedOrigin = new URL(profile.url).origin;
   const sendCredentials = () => {
     if (browserWindow.isDestroyed()) return;
@@ -219,7 +261,7 @@ async function startCapture(rawUrl) {
     allowedOrigin,
   };
 
-  await browserWindow.loadURL(profile.url);
+  await loadProfileUrl(browserWindow, browserSession, profile.url);
 }
 
 ipcMain.handle('userflex:save-session', async (event) => {
@@ -314,6 +356,6 @@ if (!gotLock) {
 function showFatalError(error) {
   const message = error instanceof Error ? error.message : String(error);
   const win = new BrowserWindow({ width: 620, height: 300, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el problema continúa, reinstala userFLEX Session Manager.</p></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el problema se repite, revisa primero tu conexión o el proxy del perfil. Reinstala Session Manager solo si el enlace userflex-session:// deja de abrir el programa.</p></body>`;
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
