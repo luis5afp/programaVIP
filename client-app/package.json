@@ -24,7 +24,7 @@
     "asar": true,
     "electronVersion": "44.1.0+wvcus",
     "electronDownload": {
-      "mirror": "https://github.com/castlabs/electron-releases/releases/download/v"
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "directories": {
       "output": "dist"
