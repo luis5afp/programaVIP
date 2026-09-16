@@ -1,14 +1,14 @@
 {
   "name": "userflow-client",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
   "main": "entry.js",
   "scripts": {
-    "prestart": "node build/prepare-icon.mjs",
+    "prestart": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs",
     "start": "electron .",
-    "predist:win": "node build/prepare-icon.mjs",
+    "predist:win": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs",
     "dist:win": "electron-builder --win nsis"
   },
   "dependencies": {
