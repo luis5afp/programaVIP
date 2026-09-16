@@ -9,10 +9,13 @@ const marker = '// userFLOW Widevine profile runtime v1';
 let source = (await fs.readFile(mainPath, 'utf8')).replace(/\r\n/g, '\n');
 
 if (!source.includes(marker)) {
-  const electronImport = "import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen } from 'electron';";
-  const widevineImport = `${electronImport}\nimport { enableProtectedContentForSession, ensureWidevineReady, widevineDiagnostics } from './widevine-runtime.js';`;
-  if (!source.includes(electronImport)) throw new Error('Could not locate Electron import in main.js');
-  source = source.replace(electronImport, widevineImport);
+  const electronImportPattern = /import \{ app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen(?:, session)? \} from 'electron';/;
+  const electronImport = source.match(electronImportPattern)?.[0] || null;
+  if (!electronImport) throw new Error('Could not locate Electron import in main.js');
+  source = source.replace(
+    electronImport,
+    `${electronImport}\nimport { enableProtectedContentForSession, ensureWidevineReady, widevineDiagnostics } from './widevine-runtime.js';`,
+  );
 
   const oldCreate = `  const firstPage = createProfilePageView(workspace);\n  workspace.activePageId = firstPage.id;\n  const browserSession = firstPage.view.webContents.session;`;
   const newCreate = `  ${marker}\n  // A renderer created before castLabs finishes loading Widevine cannot use the\n  // CDM for its lifetime. The updater is prewarmed during app startup; wait a\n  // bounded amount here before creating the isolated profile renderer. Normal\n  // browsing remains available if the component service is temporarily down.\n  const widevineReady = await ensureWidevineReady(12_000);\n  if (!widevineReady) console.warn('Widevine not ready for profile renderer', widevineDiagnostics());\n\n  const firstPage = createProfilePageView(workspace);\n  workspace.activePageId = firstPage.id;\n  const browserSession = firstPage.view.webContents.session;\n  enableProtectedContentForSession(browserSession);\n  workspace.widevineReady = widevineReady;`;
