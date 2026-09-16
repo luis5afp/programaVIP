@@ -15,6 +15,13 @@ const serverState = document.getElementById('server-state');
 const subscriptionStatus = document.getElementById('subscription-status');
 const categoryFilters = document.getElementById('category-filters');
 
+const installedVersion = String(window.userflex?.version || '').trim();
+if (installedVersion) {
+  for (const element of document.querySelectorAll('[data-userflow-version]')) {
+    element.textContent = `v${installedVersion}`;
+  }
+}
+
 let auth = null;
 let catalog = null;
 let query = '';
