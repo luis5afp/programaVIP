@@ -7,6 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const mainPath = path.resolve(here, '..', 'main.js');
 const marker = '// userFLOW profile security hardening v1';
 let source = await fs.readFile(mainPath, 'utf8');
+source = source.replace(/\r\n/g, '\n');
 
 if (!source.includes(marker)) {
   source = source.replace(
