@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.2.36",
+  "version": "0.2.37",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -45,6 +45,12 @@
       "profile-preload.cjs",
       "assets/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/session-manager/userFLEX-Session-Manager-Setup.exe",
+        "to": "session-manager/userFLEX-Session-Manager-Setup.exe"
+      }
     ],
     "win": {
       "icon": "assets/userflow.png",
