@@ -1,8 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const { version } = require('./package.json');
 
 contextBridge.exposeInMainWorld('userflex', {
-  version,
   bootstrap: () => ipcRenderer.invoke('userflex:bootstrap'),
   login: (input) => ipcRenderer.invoke('userflex:login', input),
   catalog: () => ipcRenderer.invoke('userflex:catalog'),
