@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('userflex', {
-  version: () => ipcRenderer.invoke('userflex:version'),
   bootstrap: () => ipcRenderer.invoke('userflex:bootstrap'),
   login: (input) => ipcRenderer.invoke('userflex:login', input),
   catalog: () => ipcRenderer.invoke('userflex:catalog'),
