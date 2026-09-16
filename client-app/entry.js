@@ -1,4 +1,5 @@
 import { app, session } from 'electron';
+import { prewarmWidevine } from './widevine-runtime.js';
 
 // Network switches that affect Chromium must be registered before Electron is
 // ready. main.js is intentionally loaded only after the updater/bootstrap flow,
@@ -42,6 +43,14 @@ app.whenReady().then(() => {
   };
   Object.defineProperty(setProxyWithTransportReset, '__userflowTransportReset', { value: true });
   prototype.setProxy = setProxyWithTransportReset;
+}).catch(() => {});
+
+// Start the castLabs component updater as soon as Electron is ready. This is
+// deliberately non-blocking so the userFLOW shell stays fast; openProfile()
+// performs a bounded wait before it creates a profile renderer, which gives the
+// Widevine CDM time to become available without making normal startup fragile.
+app.whenReady().then(() => {
+  void prewarmWidevine();
 }).catch(() => {});
 
 // Do not block Electron's native startup lifecycle here. startup.js owns the
