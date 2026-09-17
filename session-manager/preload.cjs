@@ -58,6 +58,13 @@ function netflixCaptureProblem() {
   return null;
 }
 
+function savedMessage(result) {
+  const count = Number(result?.cookieCount || 0);
+  const cookieText = count > 0 ? `${count} cookies verificadas` : 'cookies verificadas';
+  const ipText = result?.publicIp ? ` IP de salida: ${result.publicIp}.` : '';
+  return `Sesión guardada con ${cookieText}.${ipText}`;
+}
+
 function installOverlay() {
   if (document.getElementById('userflex-session-overlay')) return;
   const wrapper = document.createElement('div');
@@ -82,8 +89,9 @@ function installOverlay() {
     try {
       const result = await ipcRenderer.invoke('userflex:save-session');
       saved = true;
-      button.textContent = `Guardada · v${result.version}`;
-      message.textContent = result.publicIp ? `Sesión guardada. IP de salida: ${result.publicIp}` : 'Sesión guardada correctamente.';
+      const count = Number(result?.cookieCount || 0);
+      button.textContent = count > 0 ? `Guardada · v${result.version} · ${count} cookies` : `Guardada · v${result.version}`;
+      message.textContent = savedMessage(result);
     } catch (error) {
       button.disabled = false;
       button.textContent = 'Guardar sesión';
@@ -101,7 +109,7 @@ ipcRenderer.on('userflex:credentials', (_event, payload) => {
 
 ipcRenderer.on('userflex:saved', (_event, result) => {
   const message = document.getElementById('userflex-session-message');
-  if (message) message.textContent = result.publicIp ? `Sesión guardada. IP de salida: ${result.publicIp}` : 'Sesión guardada correctamente.';
+  if (message) message.textContent = savedMessage(result);
 });
 
 window.addEventListener('DOMContentLoaded', () => {
