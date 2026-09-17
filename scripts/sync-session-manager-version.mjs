@@ -3,14 +3,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const viewPath = path.join(__dirname, '..', 'src', 'views', 'ProfilesView.tsx');
-let source = fs.readFileSync(viewPath, 'utf8');
+const root = path.join(__dirname, '..');
+const viewPath = path.join(root, 'src', 'views', 'ProfilesView.tsx');
+const packagePath = path.join(root, 'session-manager', 'package.json');
+const sessionManagerPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+const version = String(sessionManagerPackage.version || '').trim();
 
+if (!/^\d+\.\d+\.\d+$/.test(version)) {
+  throw new Error(`Invalid Session Manager version: ${version || '(empty)'}`);
+}
+
+let source = fs.readFileSync(viewPath, 'utf8');
 source = source
-  .replace(/session-manager-v0\.1\.\d+\/userFLEX-Session-Manager-0\.1\.\d+-Setup\.exe/g,
-    'session-manager-v0.1.9/userFLEX-Session-Manager-0.1.9-Setup.exe')
-  .replace(/Instalar \/ actualizar Session Manager v0\.1\.\d+/g,
-    'Instalar / actualizar Session Manager v0.1.9');
+  .replace(/session-manager-v\d+\.\d+\.\d+\/userFLEX-Session-Manager-\d+\.\d+\.\d+-Setup\.exe/g,
+    `session-manager-v${version}/userFLEX-Session-Manager-${version}-Setup.exe`)
+  .replace(/Instalar \/ actualizar Session Manager v\d+\.\d+\.\d+/g,
+    `Instalar / actualizar Session Manager v${version}`);
 
 fs.writeFileSync(viewPath, source);
-console.log('Admin Session Manager download points to v0.1.9.');
+console.log(`Admin Session Manager download points to v${version}.`);
