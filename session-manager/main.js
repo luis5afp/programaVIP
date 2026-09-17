@@ -213,13 +213,6 @@ async function loadProfileUrl(browserWindow, browserSession, profileUrl, proxy) 
       throw new Error(navigationFailureMessage(error, target, proxy));
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const currentUrl = browserWindow.webContents.getURL();
-    if (currentUrl.startsWith('https://') && currentUrl !== target.toString()) {
-      console.warn(`Session Manager ignored transient ERR_FAILED after navigation continued to ${new URL(currentUrl).origin}.`);
-      return;
-    }
-
     console.warn(`Session Manager navigation to ${target.origin} returned ERR_FAILED; retrying once.`);
   }
 
