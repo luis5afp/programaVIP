@@ -1,14 +1,14 @@
 {
   "name": "userflow-client",
-  "version": "0.2.50",
+  "version": "0.2.51",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
   "main": "entry.js",
   "scripts": {
-    "prestart": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs && node build/harden-profile-security.mjs && node build/fast-secure-startup.mjs && node build/instant-main-startup.mjs && node build/repair-local-access.mjs && node build/finalize-client-ui.mjs && node build/fail-open-updater.mjs && node build/fix-splash-window-race.mjs && node build/direct-auto-update.mjs && node build/enable-widevine.mjs",
+    "prestart": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs && node build/harden-profile-security.mjs && node build/fast-secure-startup.mjs && node build/instant-main-startup.mjs && node build/repair-local-access.mjs && node build/finalize-client-ui.mjs && node build/fail-open-updater.mjs && node build/fix-splash-window-race.mjs && node build/direct-auto-update.mjs && node build/fix-netflix-managed-session.mjs && node build/enable-widevine.mjs",
     "start": "electron .",
-    "predist:win": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs && node build/harden-profile-security.mjs && node build/fast-secure-startup.mjs && node build/instant-main-startup.mjs && node build/repair-local-access.mjs && node build/finalize-client-ui.mjs && node build/fail-open-updater.mjs && node build/fix-splash-window-race.mjs && node build/direct-auto-update.mjs && node build/enable-widevine.mjs",
+    "predist:win": "node build/prepare-icon.mjs && node build/optimize-profile-runtime.mjs && node build/harden-profile-security.mjs && node build/fast-secure-startup.mjs && node build/instant-main-startup.mjs && node build/repair-local-access.mjs && node build/finalize-client-ui.mjs && node build/fail-open-updater.mjs && node build/fix-splash-window-race.mjs && node build/direct-auto-update.mjs && node build/fix-netflix-managed-session.mjs && node build/enable-widevine.mjs",
     "dist:win": "electron-builder --win nsis"
   },
   "dependencies": {
