@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainPath = path.join(__dirname, '..', 'main.js');
-let source = fs.readFileSync(mainPath, 'utf8');
+let source = fs.readFileSync(mainPath, 'utf8').replace(/\r\n/g, '\n');
 
 const cookiesAnchor = `  const cookies = await browserSession.cookies.get({});
   const storage = await browserWindow.webContents.executeJavaScript`;
