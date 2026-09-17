@@ -12,13 +12,12 @@ const cookiesReplacement = `  const cookies = await browserSession.cookies.get({
   const profileHost = new URL(profile.url).hostname.toLowerCase();
   const cookieMatchesProfile = (cookie) => {
     const domain = String(cookie?.domain || profileHost).replace(/^\\./, '').toLowerCase();
-    return Boolean(domain && (profileHost === domain || profileHost.endsWith(\`.${'${domain}'}\`)));
+    return Boolean(domain && (profileHost === domain || profileHost.endsWith('.' + domain)));
   };
   const cookieIsActive = (cookie) => !Number.isFinite(cookie?.expirationDate) || Number(cookie.expirationDate) > (Date.now() / 1000);
   const profileCookies = cookies.filter((cookie) => cookie?.name && cookieMatchesProfile(cookie) && cookieIsActive(cookie));
   const isNetflix = profileHost === 'netflix.com' || profileHost.endsWith('.netflix.com');
   let netflixAuthVerified = false;
-
   if (isNetflix) {
     const names = new Set(profileCookies.map((cookie) => String(cookie.name || '').toLowerCase()));
     const missing = ['netflixid', 'securenetflixid'].filter((name) => !names.has(name));
