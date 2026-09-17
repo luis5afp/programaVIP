@@ -43,19 +43,6 @@ if (!source.includes('function cookieDomainMatchesHost(')) {
   source = source.replace(helperPattern, hardenedCookieHelper);
 }
 
-const originalRestore = `  await browserSession.clearStorageData({ storages: ['cookies'] });
-  const cookies = Array.isArray(material.cookies) ? material.cookies : [];
-  for (const cookie of cookies) {
-    if (!cookie?.name) continue;
-    try {
-      await browserSession.cookies.set(cookieSetPayload(cookie, profile.url));
-    } catch {
-      // Ignore an individual expired/invalid cookie while restoring the rest.
-    }
-  }
-
-  await webContents.loadURL(profile.url);`;
-
 const hardenedRestore = `  await browserSession.clearStorageData({ storages: ['cookies'] });
   const cookies = Array.isArray(material.cookies) ? material.cookies : [];
   const targetHost = new URL(profile.url).hostname.toLowerCase();
@@ -96,8 +83,15 @@ const hardenedRestore = `  await browserSession.clearStorageData({ storages: ['c
   await webContents.loadURL(profile.url);`;
 
 if (!source.includes('const installedCookies = await browserSession.cookies.get({ url: profile.url });')) {
-  if (!source.includes(originalRestore)) throw new Error('Could not locate managed cookie restore block in main.js');
-  source = source.replace(originalRestore, hardenedRestore);
+  const functionStart = source.indexOf('async function restoreManagedSession(');
+  if (functionStart < 0) throw new Error('Could not locate restoreManagedSession in main.js');
+  const restoreStart = source.indexOf("  await browserSession.clearStorageData({ storages: ['cookies'] });", functionStart);
+  if (restoreStart < 0) throw new Error('Could not locate cookie reset in restoreManagedSession');
+  const loadMarker = '  await webContents.loadURL(profile.url);';
+  const loadStart = source.indexOf(loadMarker, restoreStart);
+  if (loadStart < 0) throw new Error('Could not locate profile navigation in restoreManagedSession');
+  const restoreEnd = loadStart + loadMarker.length;
+  source = source.slice(0, restoreStart) + hardenedRestore + source.slice(restoreEnd);
 }
 
 if (!source.includes('NETFLIX_AUTH_COOKIE_RESTORE_FAILED')) throw new Error('Managed cookie restore patch was not applied');
