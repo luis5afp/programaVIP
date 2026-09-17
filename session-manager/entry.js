@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, components, session } from 'electron';
 
 // Keep Session Manager and userFLOW on the same Chromium network/identity
 // settings so managed-session cookies are captured and later replayed under
@@ -15,6 +15,42 @@ function chromiumUserAgent() {
 
 const compatibleUserAgent = chromiumUserAgent();
 if (compatibleUserAgent) app.userAgentFallback = compatibleUserAgent;
+
+function secureRequestOrigin(value) {
+  try {
+    return new URL(String(value || '')).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+const configuredSessions = new WeakSet();
+function enableProtectedContent(browserSession) {
+  if (!browserSession || configuredSessions.has(browserSession)) return;
+  configuredSessions.add(browserSession);
+
+  browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission !== 'mediaKeySystem') {
+      callback(true);
+      return;
+    }
+    const requestUrl = details?.requestingUrl || details?.requestingOrigin || webContents?.getURL?.() || '';
+    callback(secureRequestOrigin(requestUrl));
+  });
+
+  browserSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (permission !== 'mediaKeySystem') return true;
+    const requestUrl = requestingOrigin || details?.requestingUrl || webContents?.getURL?.() || '';
+    return secureRequestOrigin(requestUrl);
+  });
+}
+
+// Apply the protected-content policy to every isolated profile partition as it
+// is created. This keeps capture and client behavior aligned for Netflix and
+// other Widevine sites.
+app.on('session-created', (browserSession) => {
+  enableProtectedContent(browserSession);
+});
 
 function genericNavigationFailure(error) {
   if (!error || typeof error !== 'object') return false;
@@ -80,4 +116,24 @@ BrowserWindow.prototype.loadURL = async function guardedLoadURL(url, options = {
   }
 };
 
-void import('./main.js');
+// CastLabs ECS installs/updates Widevine through its component service. Wait
+// for that component once at startup before the capture runtime creates its
+// first BrowserWindow. If the service is temporarily unavailable, login/capture
+// can still continue; the status is logged and a later launch will retry.
+const widevineReady = app.whenReady().then(async () => {
+  enableProtectedContent(session.defaultSession);
+  if (!components || typeof components.whenReady !== 'function') {
+    console.warn('Session Manager: CastLabs component API is unavailable.');
+    return false;
+  }
+  try {
+    await components.whenReady();
+    console.log('Session Manager: Widevine components ready.', components.status?.() || 'ready');
+    return true;
+  } catch (error) {
+    console.warn('Session Manager: Widevine component setup failed:', error?.message || String(error));
+    return false;
+  }
+});
+
+void widevineReady.finally(() => import('./main.js'));
