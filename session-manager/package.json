@@ -1,7 +1,7 @@
 {
   "name": "userflex-session-manager",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "userFLEX managed Chromium session capture helper",
   "type": "module",
   "main": "entry.js",
@@ -13,7 +13,7 @@
     "socks": "^2.8.10"
   },
   "devDependencies": {
-    "electron": "^38.1.2",
+    "electron": "https://github.com/castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.0.12"
   },
   "build": {
@@ -21,6 +21,10 @@
     "productName": "userFLEX Session Manager",
     "artifactName": "userFLEX-Session-Manager-${version}-Setup.${ext}",
     "asar": true,
+    "electronVersion": "44.1.0+wvcus",
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
+    },
     "files": [
       "entry.js",
       "main.js",
