@@ -80,17 +80,48 @@ function assertCaptureUrl(rawUrl) {
   return { endpoint: endpointUrl.origin, token };
 }
 
+async function sessionFetchWithTimeout(browserSession, url, timeoutMs = 8_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await browserSession.fetch(url, { cache: 'no-store', signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function discoverPublicIp(browserSession) {
   const endpoints = [
-    'https://api.ipify.org?format=json',
-    'https://api64.ipify.org?format=json',
+    {
+      url: 'https://api.ipify.org?format=json',
+      read: async (response) => {
+        const payload = await response.json();
+        return typeof payload?.ip === 'string' ? payload.ip.trim() : '';
+      },
+    },
+    {
+      url: 'https://api64.ipify.org?format=json',
+      read: async (response) => {
+        const payload = await response.json();
+        return typeof payload?.ip === 'string' ? payload.ip.trim() : '';
+      },
+    },
+    {
+      url: 'https://www.cloudflare.com/cdn-cgi/trace',
+      read: async (response) => {
+        const trace = await response.text();
+        const match = trace.match(/^ip=(.+)$/m);
+        return match?.[1]?.trim() || '';
+      },
+    },
   ];
+
   for (const endpoint of endpoints) {
     try {
-      const response = await browserSession.fetch(endpoint, { cache: 'no-store' });
+      const response = await sessionFetchWithTimeout(browserSession, endpoint.url);
       if (!response.ok) continue;
-      const payload = await response.json();
-      if (typeof payload?.ip === 'string' && payload.ip.trim()) return payload.ip.trim();
+      const ip = await endpoint.read(response);
+      if (ip) return ip;
     } catch {
       // Try the next independent IP endpoint.
     }
@@ -108,18 +139,87 @@ async function resetNavigationNetwork(browserSession) {
   }
 }
 
-function isGenericNavigationFailure(error) {
-  if (!error || typeof error !== 'object') return false;
-  return error.code === 'ERR_FAILED' || Number(error.errno) === -2;
+function navigationErrorCode(error) {
+  if (error && typeof error === 'object') {
+    if (typeof error.code === 'string' && error.code) return error.code;
+    if (Number(error.errno) === -2) return 'ERR_FAILED';
+  }
+  const message = error instanceof Error ? error.message : String(error || '');
+  return message.match(/\b(ERR_[A-Z0-9_]+)\b/)?.[1] || 'ERR_FAILED';
 }
 
-async function loadProfileUrl(browserWindow, browserSession, profileUrl) {
+function isGenericNavigationFailure(error) {
+  return navigationErrorCode(error) === 'ERR_FAILED';
+}
+
+function proxyDisplayName(proxy) {
+  if (!proxy) return '';
+  const name = typeof proxy.name === 'string' ? proxy.name.trim() : '';
+  if (name) return name;
+  return `${proxy.host}:${proxy.port}`;
+}
+
+function navigationFailureMessage(error, target, proxy) {
+  const code = navigationErrorCode(error);
+  const host = target.hostname;
+  const throughProxy = proxy ? ` mediante el proxy "${proxyDisplayName(proxy)}"` : '';
+
+  if (code === 'ERR_PROXY_CONNECTION_FAILED' || code === 'ERR_TUNNEL_CONNECTION_FAILED') {
+    return `No se pudo conectar al proxy asignado al perfil (${code}). Revisa host, puerto y que el proxy esté activo.`;
+  }
+  if (code === 'ERR_PROXY_AUTH_UNSUPPORTED' || code === 'ERR_INVALID_AUTH_CREDENTIALS') {
+    return `El proxy rechazó la autenticación (${code}). Revisa el usuario y la contraseña del proxy.`;
+  }
+  if (code === 'ERR_NAME_NOT_RESOLVED') {
+    return `No se pudo resolver el dominio ${host}${throughProxy} (${code}). Revisa DNS y la configuración del proxy.`;
+  }
+  if (code === 'ERR_TIMED_OUT') {
+    return `La conexión con ${host}${throughProxy} agotó el tiempo de espera (${code}).`;
+  }
+  if (code === 'ERR_CONNECTION_REFUSED' || code === 'ERR_CONNECTION_RESET' || code === 'ERR_CONNECTION_CLOSED') {
+    return `La conexión con ${host}${throughProxy} fue rechazada o interrumpida (${code}).`;
+  }
+  if (code === 'ERR_INTERNET_DISCONNECTED') {
+    return 'El equipo no tiene conexión a Internet. Comprueba la red y vuelve a intentar.';
+  }
+
+  return `No se pudo abrir ${host}${throughProxy} (${code}). La conexión del perfil no se cambió a Internet directo. Revisa la red o el proxy y vuelve a intentar.`;
+}
+
+async function validateProxyConnection(browserSession, proxy) {
+  if (!proxy) return null;
+  const publicIp = await discoverPublicIp(browserSession);
+  if (!publicIp) {
+    throw new Error(
+      `No se pudo conectar a Internet mediante el proxy "${proxyDisplayName(proxy)}". `
+      + 'Revisa host, puerto, usuario y contraseña. userFLEX no abrirá este perfil con la conexión directa.',
+    );
+  }
+  console.log(`Session Manager proxy preflight OK (${proxyDisplayName(proxy)} -> ${publicIp}).`);
+  return publicIp;
+}
+
+async function loadProfileUrl(browserWindow, browserSession, profileUrl, proxy) {
   const target = new URL(profileUrl);
+  if (target.protocol !== 'https:') {
+    throw new Error('La URL del perfil debe usar HTTPS.');
+  }
+
   try {
     await browserWindow.loadURL(target.toString());
     return;
   } catch (error) {
-    if (!isGenericNavigationFailure(error)) throw error;
+    if (!isGenericNavigationFailure(error)) {
+      throw new Error(navigationFailureMessage(error, target, proxy));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const currentUrl = browserWindow.webContents.getURL();
+    if (currentUrl.startsWith('https://') && currentUrl !== target.toString()) {
+      console.warn(`Session Manager ignored transient ERR_FAILED after navigation continued to ${new URL(currentUrl).origin}.`);
+      return;
+    }
+
     console.warn(`Session Manager navigation to ${target.origin} returned ERR_FAILED; retrying once.`);
   }
 
@@ -129,10 +229,7 @@ async function loadProfileUrl(browserWindow, browserSession, profileUrl) {
   try {
     await browserWindow.loadURL(target.toString());
   } catch (error) {
-    const code = error && typeof error === 'object' && typeof error.code === 'string'
-      ? error.code
-      : 'ERR_FAILED';
-    throw new Error(`No se pudo abrir ${target.hostname} después de reintentar (${code}). Revisa la conexión a Internet y vuelve a intentar la captura.`);
+    throw new Error(navigationFailureMessage(error, target, proxy));
   }
 }
 
@@ -177,91 +274,106 @@ async function startCapture(rawUrl) {
   const browserSession = browserWindow.webContents.session;
   let loginHandler = null;
   let proxyBridge = null;
-  if (proxy?.host && proxy?.port) {
-    const proxyType = String(proxy.type || 'http').toLowerCase();
-    if (proxyType === 'ssh') throw new Error('El proxy SSH necesita un túnel local y todavía no está soportado por Session Manager.');
+  let cleanedUp = false;
 
-    let proxyRules = `${proxyType === 'https' ? 'https' : 'http'}://${proxy.host}:${proxy.port}`;
-    if (proxyType === 'socks4' || proxyType === 'socks5') {
-      proxyBridge = await startSocksHttpBridge(proxy);
-      proxyRules = proxyBridge.proxyRules;
-    }
-
-    await browserSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules,
-      proxyBypassRules: '<-loopback>',
-    });
-
-    if (proxyType !== 'socks4' && proxyType !== 'socks5') {
-      loginHandler = (event, webContents, request, authInfo, callback) => {
-        if (webContents.id !== browserWindow.webContents.id || !authInfo.isProxy) return;
-        event.preventDefault();
-        callback(proxy.username || '', proxy.password || '');
-      };
-      app.on('login', loginHandler);
-    }
-  } else {
-    await browserSession.setProxy({ mode: 'direct' });
-  }
-
-  if (typeof browserSession.closeAllConnections === 'function') {
-    await browserSession.closeAllConnections().catch(() => null);
-  }
-
-  const allowedOrigin = new URL(profile.url).origin;
-  const sendCredentials = () => {
-    if (browserWindow.isDestroyed()) return;
-    let currentOrigin = '';
-    try {
-      currentOrigin = new URL(browserWindow.webContents.getURL()).origin;
-    } catch {
-      return;
-    }
-    browserWindow.webContents.send('userflex:credentials', {
-      allowedOrigin,
-      currentOrigin,
-      username: credentials.username,
-      password: credentials.password,
-    });
-  };
-
-  browserWindow.webContents.on('dom-ready', sendCredentials);
-  browserWindow.webContents.on('did-navigate', sendCredentials);
-  browserWindow.webContents.on('did-navigate-in-page', sendCredentials);
-
-  browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const target = new URL(url);
-      if (target.protocol === 'https:') {
-        void browserWindow.loadURL(target.toString());
-      }
-    } catch {
-      // Ignore invalid popups.
-    }
-    return { action: 'deny' };
-  });
-
-  browserWindow.on('closed', () => {
+  const cleanupCapture = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     if (loginHandler) app.removeListener('login', loginHandler);
     if (proxyBridge) void proxyBridge.close().catch(() => null);
     if (active?.window === browserWindow) active = null;
-  });
-
-  active = {
-    endpoint,
-    token,
-    profile,
-    proxy,
-    proxyBridge,
-    networkMode: proxy ? 'proxy' : 'direct',
-    browserWindow,
-    window: browserWindow,
-    browserSession,
-    allowedOrigin,
   };
 
-  await loadProfileUrl(browserWindow, browserSession, profile.url);
+  browserWindow.on('closed', cleanupCapture);
+
+  try {
+    if (proxy?.host && proxy?.port) {
+      const proxyType = String(proxy.type || 'http').toLowerCase();
+      if (proxyType === 'ssh') throw new Error('El proxy SSH necesita un túnel local y todavía no está soportado por Session Manager.');
+
+      let proxyRules = `${proxyType === 'https' ? 'https' : 'http'}://${proxy.host}:${proxy.port}`;
+      if (proxyType === 'socks4' || proxyType === 'socks5') {
+        proxyBridge = await startSocksHttpBridge(proxy);
+        proxyRules = proxyBridge.proxyRules;
+      }
+
+      await browserSession.setProxy({
+        mode: 'fixed_servers',
+        proxyRules,
+        proxyBypassRules: '<-loopback>',
+      });
+
+      if (proxyType !== 'socks4' && proxyType !== 'socks5') {
+        loginHandler = (event, webContents, _request, authInfo, callback) => {
+          if (!authInfo?.isProxy) return;
+          if (webContents && webContents.id !== browserWindow.webContents.id) return;
+          event.preventDefault();
+          callback(proxy.username || '', proxy.password || '');
+        };
+        app.on('login', loginHandler);
+      }
+    } else {
+      await browserSession.setProxy({ mode: 'direct' });
+    }
+
+    if (typeof browserSession.closeAllConnections === 'function') {
+      await browserSession.closeAllConnections().catch(() => null);
+    }
+
+    const proxyPublicIp = await validateProxyConnection(browserSession, proxy);
+    const allowedOrigin = new URL(profile.url).origin;
+    const sendCredentials = () => {
+      if (browserWindow.isDestroyed()) return;
+      let currentOrigin = '';
+      try {
+        currentOrigin = new URL(browserWindow.webContents.getURL()).origin;
+      } catch {
+        return;
+      }
+      browserWindow.webContents.send('userflex:credentials', {
+        allowedOrigin,
+        currentOrigin,
+        username: credentials.username,
+        password: credentials.password,
+      });
+    };
+
+    browserWindow.webContents.on('dom-ready', sendCredentials);
+    browserWindow.webContents.on('did-navigate', sendCredentials);
+    browserWindow.webContents.on('did-navigate-in-page', sendCredentials);
+
+    browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+      try {
+        const target = new URL(url);
+        if (target.protocol === 'https:') {
+          void browserWindow.loadURL(target.toString());
+        }
+      } catch {
+        // Ignore invalid popups.
+      }
+      return { action: 'deny' };
+    });
+
+    active = {
+      endpoint,
+      token,
+      profile,
+      proxy,
+      proxyBridge,
+      proxyPublicIp,
+      networkMode: proxy ? 'proxy' : 'direct',
+      browserWindow,
+      window: browserWindow,
+      browserSession,
+      allowedOrigin,
+    };
+
+    await loadProfileUrl(browserWindow, browserSession, profile.url, proxy);
+  } catch (error) {
+    cleanupCapture();
+    if (!browserWindow.isDestroyed()) browserWindow.destroy();
+    throw error;
+  }
 }
 
 ipcMain.handle('userflex:save-session', async (event) => {
@@ -355,7 +467,7 @@ if (!gotLock) {
 
 function showFatalError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  const win = new BrowserWindow({ width: 620, height: 300, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el problema se repite, revisa primero tu conexión o el proxy del perfil. Reinstala Session Manager solo si el enlace userflex-session:// deja de abrir el programa.</p></body>`;
+  const win = new BrowserWindow({ width: 700, height: 340, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el mensaje indica un problema de proxy, corrige primero ese proxy. Reinstala Session Manager solo si el enlace userflex-session:// deja de abrir el programa.</p></body>`;
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
