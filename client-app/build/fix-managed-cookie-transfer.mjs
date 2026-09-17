@@ -6,26 +6,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainPath = path.join(__dirname, '..', 'main.js');
 let source = fs.readFileSync(mainPath, 'utf8').replace(/\r\n/g, '\n');
 
-const originalCookieHelper = `function cookieSetPayload(cookie, fallbackUrl) {
-  const fallback = new URL(fallbackUrl);
-  const domain = typeof cookie.domain === 'string' && cookie.domain.trim() ? cookie.domain.trim() : fallback.hostname;
-  const host = domain.replace(/^\\./, '');
-  const secure = cookie.secure !== false;
-  const cookiePath = typeof cookie.path === 'string' && cookie.path.startsWith('/') ? cookie.path : '/';
-  const value = {
-    url: \`${secure ? 'https:' : 'http:'}//${host}${cookiePath}\`,
-    name: String(cookie.name || ''),
-    value: String(cookie.value || ''),
-    path: cookiePath,
-    secure,
-    httpOnly: cookie.httpOnly === true,
-  };
-  if (domain) value.domain = domain;
-  if (typeof cookie.expirationDate === 'number' && Number.isFinite(cookie.expirationDate)) value.expirationDate = cookie.expirationDate;
-  if (['unspecified', 'no_restriction', 'lax', 'strict'].includes(cookie.sameSite)) value.sameSite = cookie.sameSite;
-  return value;
-}`;
-
 const hardenedCookieHelper = `function cookieSetPayload(cookie, fallbackUrl, relaxed = false) {
   const fallback = new URL(fallbackUrl);
   const domain = typeof cookie.domain === 'string' && cookie.domain.trim() ? cookie.domain.trim() : fallback.hostname;
@@ -58,8 +38,9 @@ function isNetflixHost(hostname) {
 }`;
 
 if (!source.includes('function cookieDomainMatchesHost(')) {
-  if (!source.includes(originalCookieHelper)) throw new Error('Could not locate cookieSetPayload in main.js');
-  source = source.replace(originalCookieHelper, hardenedCookieHelper);
+  const helperPattern = /function cookieSetPayload\(cookie, fallbackUrl\) \{[\s\S]*?\n\}/;
+  if (!helperPattern.test(source)) throw new Error('Could not locate cookieSetPayload in main.js');
+  source = source.replace(helperPattern, hardenedCookieHelper);
 }
 
 const originalRestore = `  await browserSession.clearStorageData({ storages: ['cookies'] });
