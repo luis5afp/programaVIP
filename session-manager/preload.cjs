@@ -29,17 +29,54 @@ function tryAutofill() {
   if (password && !password.value) setNativeValue(password, credentials.password);
 }
 
+function netflixCaptureProblem() {
+  const host = String(location.hostname || '').toLowerCase();
+  const isNetflix = host === 'netflix.com' || host.endsWith('.netflix.com');
+  if (!isNetflix) return null;
+
+  const pathname = String(location.pathname || '').toLowerCase();
+  if (pathname.startsWith('/login') || pathname.startsWith('/signup')) {
+    return 'Netflix todavía no tiene la cuenta abierta. Completa el inicio de sesión antes de guardar.';
+  }
+
+  const text = String(document.body?.innerText || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('es');
+  const errorSignals = [
+    'sentimos la interrupción',
+    'tenemos problemas con tu solicitud',
+    'código de error',
+    'pardon the interruption',
+    "we're having trouble",
+    'error code',
+  ];
+  if (errorSignals.some((signal) => text.includes(signal))) {
+    return 'Netflix está mostrando una página de error. Pulsa Inicio de Netflix, confirma que la cuenta esté abierta y guarda la sesión desde la pantalla normal de Netflix.';
+  }
+
+  return null;
+}
+
 function installOverlay() {
   if (document.getElementById('userflex-session-overlay')) return;
   const wrapper = document.createElement('div');
   wrapper.id = 'userflex-session-overlay';
   wrapper.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;background:#0f172a;color:white;border:1px solid #334155;border-radius:14px;padding:12px 14px;box-shadow:0 12px 35px rgba(0,0,0,.35);font:13px system-ui;max-width:320px';
-  wrapper.innerHTML = '<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura de sesión</div><div id="userflex-session-message" style="opacity:.8;margin-bottom:10px">Completa el acceso, 2FA o CAPTCHA si aparece. Cuando la cuenta esté abierta, guarda la sesión.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar sesión</button>';
+  wrapper.innerHTML = '<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura de sesión</div><div id="userflex-session-message" style="opacity:.8;margin-bottom:10px">Completa el acceso, 2FA o CAPTCHA si aparece. Cuando la cuenta esté abierta y la web esté funcionando normalmente, guarda la sesión.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar sesión</button>';
   document.documentElement.appendChild(wrapper);
   const button = wrapper.querySelector('#userflex-session-save');
   const message = wrapper.querySelector('#userflex-session-message');
   button?.addEventListener('click', async () => {
     if (saved) return;
+    const problem = netflixCaptureProblem();
+    if (problem) {
+      message.textContent = problem;
+      button.disabled = false;
+      button.textContent = 'Guardar sesión';
+      return;
+    }
+
     button.disabled = true;
     button.textContent = 'Guardando...';
     try {
