@@ -450,35 +450,46 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     const invalidated = [];
     for (const profile of catalogProfiles) {
-      if (profile.sessionMode !== 'managed-first-party') continue;
-      const desiredVersion = Number(profile.sessionVersion || 0);
-      if (desiredVersion <= 0) continue;
-
       const key = profileKey(clientId, profile.id);
       const runningEntry = processes.get(key);
-      if (runningEntry && Number(runningEntry.sessionVersion || 0) !== desiredVersion) {
-        await close(clientId, profile.id, 'session_version_changed').catch(() => null);
-        await killStrayProfileProcesses(runningEntry.userDataDir);
-        await fsp.rm(runningEntry.userDataDir, { recursive: true, force: true });
-        invalidated.push({ profileId: profile.id, from: Number(runningEntry.sessionVersion || 0), to: desiredVersion, running: true });
+      const dir = profileDir(clientId, profile.id);
+      const marker = runningEntry?.sessionMarker || await readSessionMarker(dir);
+      const managed = profile.sessionMode === 'managed-first-party';
+      const desiredVersion = Number(profile.sessionVersion || 0);
+      const ready = profile.sessionReady === true && desiredVersion > 0;
+
+      // The server is authoritative. Clearing a managed session, changing a
+      // profile out of managed mode, or publishing a new generation must not
+      // leave the previous authenticated Chromium profile usable locally.
+      const shouldInvalidate = marker && (
+        !managed
+        || !ready
+        || Number(marker.version || 0) !== desiredVersion
+      );
+      const runningVersionMismatch = runningEntry && managed && (
+        !ready || Number(runningEntry.sessionVersion || 0) !== desiredVersion
+      );
+
+      if (runningVersionMismatch) {
+        const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
+        await close(clientId, profile.id, ready ? 'session_version_changed' : 'session_revoked').catch(() => null);
+        await killStrayProfileProcesses(dir);
+        await fsp.rm(dir, { recursive: true, force: true });
+        invalidated.push({ profileId: profile.id, from: previousVersion, to: ready ? desiredVersion : 0, running: true });
         continue;
       }
 
-      if (runningEntry) continue;
-      const dir = profileDir(clientId, profile.id);
-      const marker = await readSessionMarker(dir);
-      if (!marker) continue;
-      const markerVersion = Number(marker.version || 0);
-      if (markerVersion === desiredVersion) continue;
-      await killStrayProfileProcesses(dir);
-      await fsp.rm(dir, { recursive: true, force: true });
-      invalidated.push({ profileId: profile.id, from: markerVersion, to: desiredVersion, running: false });
+      if (!runningEntry && shouldInvalidate) {
+        const previousVersion = Number(marker?.version || 0);
+        await killStrayProfileProcesses(dir);
+        await fsp.rm(dir, { recursive: true, force: true });
+        invalidated.push({ profileId: profile.id, from: previousVersion, to: ready ? desiredVersion : 0, running: false });
+      }
     }
 
     // A profile can disappear from the catalog while a browser process is still
-    // alive. The directory reconciliation above normally catches UUID-backed
-    // profiles, but close any remaining live entry explicitly as a fail-closed
-    // defense.
+    // alive. Directory reconciliation normally removes it first, but explicitly
+    // close any remaining process as a fail-closed defense.
     for (const entry of Array.from(processes.values())) {
       if (safeSegment(entry.clientId, 'client') !== safeSegment(clientId, 'client')) continue;
       if (catalogById.has(String(entry.profile.id))) continue;
