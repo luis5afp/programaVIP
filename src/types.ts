@@ -110,6 +110,62 @@ export interface ProfileSessionState {
   updated_at: string | null;
 }
 
+export type ProfileValidationStatus = 'pass' | 'warn' | 'fail';
+
+export interface ProfileValidationCheck {
+  key: string;
+  label: string;
+  status: ProfileValidationStatus;
+  detail: string;
+}
+
+export interface ProfileValidation {
+  profileId: string;
+  runtime: {
+    browserEngine: BrowserEngine;
+    authStrategy: AuthStrategy;
+    storageStrategy: StorageStrategy;
+    networkStrategy: NetworkStrategy;
+    extensionStrategy: ExtensionStrategy;
+  };
+  clientId: string | null;
+  ready: boolean;
+  checks: ProfileValidationCheck[];
+  network: {
+    mode: string;
+    locked: boolean;
+    source: string;
+    publicIp: string | null;
+    proxyName: string | null;
+  };
+}
+
+export interface ProfileValidationJob {
+  id: string;
+  profile_id: string;
+  client_id: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'expired';
+  result: {
+    ok: boolean;
+    browser?: string | null;
+    profileState?: string | null;
+    outcome?: string | null;
+    network?: string | null;
+    publicIp?: string | null;
+    sessionVersion?: number;
+    runtime?: Record<string, unknown> | null;
+    restore?: Record<string, unknown> | null;
+    autofill?: Record<string, unknown> | null;
+    inspection?: Record<string, unknown> | null;
+    testedAt?: string;
+  } | null;
+  error: string | null;
+  expires_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
 export interface ProxyRecord {
   id: string;
   name: string;
