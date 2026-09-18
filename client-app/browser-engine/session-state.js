@@ -281,12 +281,19 @@ export async function connectKaizenBrowser(debugPort) {
   });
 }
 
-export async function restorePortableSession({ debugPort, profileUrl, material }) {
+export async function restorePortableSession({ debugPort, profileUrl, profileId = null, material }) {
   if (!material || !['userflex-browser-session-v1', 'userflex-browser-session-v2'].includes(material.format)) {
     throw new Error('El material de sesión del perfil no es compatible con el motor KAIZEN.');
   }
 
   const target = new URL(profileUrl);
+  if (profileId && material.profileId && material.profileId !== profileId) {
+    throw new Error('La sesión entregada no pertenece a este perfil.');
+  }
+  if (material.allowedOrigin && material.allowedOrigin !== target.origin) {
+    throw new Error('El origen de la sesión no coincide con la web del perfil.');
+  }
+
   const browser = await connectKaizenBrowser(debugPort);
   try {
     const cookies = flattenCookies(material);
