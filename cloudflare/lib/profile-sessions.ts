@@ -62,6 +62,16 @@ async function defaultProxy(env: Env, profileId: string) {
   return proxies?.[0] || null;
 }
 
+async function captureProxyForProfile(env: Env, profile: any) {
+  const strategy = profile?.network_strategy || 'auto';
+  if (strategy === 'client-direct' || strategy === 'assigned-proxy') return null;
+  const proxy = await defaultProxy(env, profile.id);
+  if (strategy === 'profile-proxy' && !proxy) {
+    throw new HttpError(409, 'PROFILE_PROXY_REQUIRED', 'Este perfil exige un proxy fijo antes de capturar la sesión.');
+  }
+  return proxy;
+}
+
 async function credentialRow(env: Env, profileId: string) {
   const rows = await sb(
     env,
@@ -156,7 +166,7 @@ export async function adminProfileSessionRoutes(
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'El modo híbrido necesita credenciales además de la sesión capturada.');
     }
-    const proxy = await defaultProxy(env, profileId);
+    const proxy = await captureProxyForProfile(env, profile);
     if (proxy && proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
     if (proxy?.proxy_type === 'ssh') {
       throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
@@ -238,7 +248,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const job = await captureJob(env, rawToken);
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
-    const proxy = await defaultProxy(env, job.profile_id);
+    const proxy = await captureProxyForProfile(env, profile);
     const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil híbrido ya no tiene credenciales guardadas.');
