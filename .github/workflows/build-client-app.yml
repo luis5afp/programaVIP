@@ -104,6 +104,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-preload.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/kaizen-engine.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/session-state.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/proxy-relay.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/extension/background.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/extension/content.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check build/vmp-sign.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
