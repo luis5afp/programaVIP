@@ -490,6 +490,23 @@ export async function adminProfileSessionRoutes(
     return json({ ok: true, profile_id: profileId, login_username: loginUsername, has_credentials: true });
   }
 
+  if (credentialsMatch && method === 'DELETE') {
+    const profileId = uuid(credentialsMatch[1], 'profileId');
+    await profileRow(env, profileId);
+    await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    });
+    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ updated_at: new Date().toISOString() }),
+    });
+    await touchProfileClients(env, profileId);
+    await audit(env, request, 'admin', admin.userId, 'profile.credentials.clear', 'profile', profileId);
+    return json({ ok: true, profile_id: profileId, has_credentials: false });
+  }
+
   const validationMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/validation$/i);
   if (validationMatch && method === 'POST') {
     const profileId = uuid(validationMatch[1], 'profileId');
