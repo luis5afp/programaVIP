@@ -215,7 +215,8 @@ export async function clientLaunch(
     throw new HttpError(409, 'PROFILE_PROXY_REQUIRED', 'La estrategia de red del perfil exige un proxy que no está configurado.');
   }
 
-  let connection: any = { mode: 'direct', locked: proxyRequired };
+  const autoManagedProxyLocked = runtime.networkStrategy === 'auto' && runtime.authStrategy !== 'manual' && Boolean(defaultProxyId);
+  let connection: any = { mode: 'direct', locked: proxyRequired || autoManagedProxyLocked };
   let effectiveProxy: any = null;
 
   if (effectiveProxyId) {
@@ -234,7 +235,7 @@ export async function clientLaunch(
       }
       connection = {
         mode: 'proxy',
-        locked: proxyRequired || runtime.networkStrategy === 'profile-proxy' || runtime.networkStrategy === 'assigned-proxy',
+        locked: proxyRequired || autoManagedProxyLocked,
         proxy: {
           host: proxy.host,
           port: proxy.port,
