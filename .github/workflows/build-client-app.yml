@@ -34,6 +34,16 @@ jobs:
         with:
           node-version: 22
 
+      - name: Validate userFLOW version parity
+        shell: pwsh
+        run: |
+          $clientVersion = node -p "require('./package.json').version"
+          $sessionVersion = node -p "require('../session-manager/package.json').version"
+          Write-Host "userFLOW: $clientVersion · Session Manager: $sessionVersion"
+          if ($clientVersion -ne $sessionVersion) {
+            throw "userFLOW and Session Manager must use the same version."
+          }
+
       - name: Detect optional production VMP credentials
         id: vmp
         shell: pwsh
