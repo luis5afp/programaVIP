@@ -385,6 +385,26 @@ async function validationJob(env: Env, rawToken: string, allowRunning = true) {
   return job;
 }
 
+function safeDiagnosticUrl(value: unknown) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function safeRuntimeDiagnostic(value: any) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowed = ['browserEngine', 'authStrategy', 'storageStrategy', 'networkStrategy', 'extensionStrategy'];
+  const out: Record<string, string> = {};
+  for (const key of allowed) {
+    if (typeof value[key] === 'string') out[key] = value[key].slice(0, 64);
+  }
+  return out;
+}
+
 function safeValidationResult(value: any) {
   const restore = value?.restore && typeof value.restore === 'object' ? {
     cookiesInstalled: Number(value.restore.cookiesInstalled || 0),
@@ -392,7 +412,7 @@ function safeValidationResult(value: any) {
     indexedDbRestored: Number(value.restore.indexedDbRestored || 0),
     indexedDbTotal: Number(value.restore.indexedDbTotal || 0),
     storagePolicy: value.restore.storagePolicy || null,
-    pageUrl: value.restore.pageUrl || null,
+    pageUrl: safeDiagnosticUrl(value.restore.pageUrl),
   } : null;
   const autofill = value?.autofill && typeof value.autofill === 'object' ? {
     installed: value.autofill.installed === true,
@@ -400,7 +420,7 @@ function safeValidationResult(value: any) {
     origin: value.autofill.origin || null,
   } : null;
   const inspection = value?.inspection && typeof value.inspection === 'object' ? {
-    currentUrl: value.inspection.currentUrl || null,
+    currentUrl: safeDiagnosticUrl(value.inspection.currentUrl),
     loginLikeUrl: value.inspection.loginLikeUrl === true,
     usernameFieldVisible: value.inspection.usernameFieldVisible === true,
     passwordFieldVisible: value.inspection.passwordFieldVisible === true,
@@ -411,12 +431,12 @@ function safeValidationResult(value: any) {
   return {
     ok: value?.ok === true,
     outcome: typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null,
-    browser: value?.browser || null,
-    profileState: value?.profileState || null,
-    network: value?.network || null,
-    publicIp: value?.publicIp || null,
+    browser: typeof value?.browser === 'string' ? value.browser.slice(0, 160) : null,
+    profileState: typeof value?.profileState === 'string' ? value.profileState.slice(0, 80) : null,
+    network: typeof value?.network === 'string' ? value.network.slice(0, 80) : null,
+    publicIp: typeof value?.publicIp === 'string' ? value.publicIp.slice(0, 64) : null,
     sessionVersion: Number(value?.sessionVersion || 0),
-    runtime: value?.runtime || null,
+    runtime: safeRuntimeDiagnostic(value?.runtime),
     restore,
     autofill,
     inspection,
