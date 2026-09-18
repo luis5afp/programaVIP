@@ -6,6 +6,7 @@ let readyWindow = null;
 let pendingProtocolUrl = null;
 let protocolRegistered = false;
 let captureEngine = null;
+let quitAfterCleanup = false;
 
 function engine() {
   if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
@@ -202,7 +203,12 @@ if (!gotLock) {
     if (!engine().active) showReadyWindow();
   });
 
-  app.on('before-quit', () => {
-    void engine().close('app_exit').catch(() => null);
+  app.on('before-quit', (event) => {
+    if (quitAfterCleanup) return;
+    event.preventDefault();
+    quitAfterCleanup = true;
+    void engine().close('app_exit')
+      .catch(() => null)
+      .finally(() => app.quit());
   });
 }
