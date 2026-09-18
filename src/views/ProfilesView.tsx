@@ -125,6 +125,16 @@ export function ProfilesView() {
       .map((item) => item.plan_id);
   }
 
+  function validationClientsFor(profileId: string) {
+    const ids = new Set(
+      assignments
+        .filter((item) => item.profile_id === profileId && item.enabled && Boolean(item.proxy_id))
+        .map((item) => item.client_id),
+    );
+    return clients.filter((client) => ids.has(client.id) && client.status === 'active');
+  }
+
+
   function openEditor(value: Exclude<Editor, null>) {
     const current = value === 'new' ? null : value;
     replaceObjectUrl(null);
@@ -304,6 +314,84 @@ export function ProfilesView() {
       setSessionAction(null);
     }
   }
+
+  async function openValidation(profile: Profile) {
+    const eligible = validationClientsFor(profile.id);
+    const defaultClientId = profile.network_strategy === 'assigned-proxy' ? (eligible[0]?.id || '') : '';
+    setValidationProfile(profile);
+    setValidationClientId(defaultClientId);
+    setValidationResult(null);
+    setValidationJob(null);
+    setValidationBusy(true);
+    try {
+      const response = await api.profileSessions.validate(profile.id, defaultClientId || null);
+      setValidationResult(response.validation);
+    } catch (validationError: any) {
+      setError(validationError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
+  async function refreshValidation(clientId = validationClientId) {
+    if (!validationProfile) return;
+    try {
+      setValidationBusy(true);
+      setError(null);
+      const response = await api.profileSessions.validate(validationProfile.id, clientId || null);
+      setValidationResult(response.validation);
+    } catch (validationError: any) {
+      setError(validationError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
+  async function pollValidationJob(jobId: string) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try {
+        const response = await api.profileSessions.testStatus(jobId);
+        setValidationJob(response.job);
+        if (['completed', 'failed', 'expired'].includes(response.job.status)) return;
+      } catch {
+        return;
+      }
+    }
+  }
+
+  async function startClientTest() {
+    if (!validationProfile) return;
+    if (validationProfile.network_strategy === 'assigned-proxy' && !validationClientId) {
+      setError('Selecciona un cliente para simular su proxy asignado.');
+      return;
+    }
+    try {
+      setValidationBusy(true);
+      setError(null);
+      const response = await api.profileSessions.clientTest(validationProfile.id, validationClientId || null);
+      setValidationResult(response.validation);
+      setValidationJob({
+        id: response.job_id,
+        profile_id: validationProfile.id,
+        client_id: validationClientId || null,
+        status: 'pending',
+        result: null,
+        error: null,
+        expires_at: response.expires_at,
+        started_at: null,
+        completed_at: null,
+        created_at: new Date().toISOString(),
+      });
+      launchCustomProtocol(response.launch_url);
+      void pollValidationJob(response.job_id);
+    } catch (testError: any) {
+      setError(testError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
 
   async function remove(profile: Profile) {
     if (!confirm(`¿Eliminar el perfil ${profileLabel(profile)}?`)) return;
