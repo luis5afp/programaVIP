@@ -35,6 +35,7 @@ function normalizeCookie(cookie) {
     name: String(cookie?.name || ''),
     value: String(cookie?.value ?? ''),
     domain: String(cookie?.domain || ''),
+    hostOnly: !String(cookie?.domain || '').startsWith('.'),
     path: String(cookie?.path || '/'),
     secure: cookie?.secure === true,
     httpOnly: cookie?.httpOnly === true,
