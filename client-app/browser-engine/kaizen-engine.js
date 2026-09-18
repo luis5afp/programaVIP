@@ -428,6 +428,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         if (expectedIp && detectedIp !== expectedIp) {
           throw new Error(`La IP del navegador no coincide con la configuración. Esperada: ${expectedIp}. Detectada: ${detectedIp}.`);
         }
+      } else if (ephemeral === true) {
+        // Client-test runs also record the real direct egress IP so Admin can
+        // confirm what a client-direct profile would use on this Windows PC.
+        entry.publicIp = await browserPublicIp(debugPort);
       }
 
       let autofill = null;
