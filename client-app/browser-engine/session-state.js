@@ -21,41 +21,59 @@ function flattenCookies(material) {
   return cookies.filter((cookie) => cookie && cookie.name && cookie.value !== undefined);
 }
 
+function cookiePayload(cookie, relaxed = false) {
+  const sameSite = normalizeSameSite(cookie.sameSite);
+  const secure = sameSite === 'None' ? true : cookie.secure !== false;
+  const cookiePath = cookie.path || '/';
+  const domain = String(cookie.domain || '').trim();
+  const host = domain.replace(/^\./, '');
+  const payload = {
+    name: String(cookie.name),
+    value: String(cookie.value ?? ''),
+    path: cookiePath,
+    secure,
+    httpOnly: cookie.httpOnly === true,
+  };
+  if (cookie.hostOnly === true && host) {
+    payload.url = `${secure ? 'https:' : 'http:'}//${host}${cookiePath}`;
+  } else if (domain) {
+    payload.domain = domain;
+  }
+  if (!relaxed && sameSite) payload.sameSite = sameSite;
+  const expires = Number(cookie.expires ?? cookie.expirationDate);
+  if (Number.isFinite(expires) && expires > 0) payload.expires = expires;
+  return payload;
+}
+
 async function applyCookies(browser, cookies) {
   let installed = 0;
   const rejected = [];
+  const relaxed = [];
   for (const cookie of cookies) {
     try {
-      const sameSite = normalizeSameSite(cookie.sameSite);
-      const secure = sameSite === 'None' ? true : cookie.secure !== false;
-      const cookiePath = cookie.path || '/';
-      const domain = String(cookie.domain || '').trim();
-      const host = domain.replace(/^\./, '');
-      const payload = {
-        name: String(cookie.name),
-        value: String(cookie.value ?? ''),
-        path: cookiePath,
-        secure,
-        httpOnly: cookie.httpOnly === true,
-      };
-      if (cookie.hostOnly === true && host) {
-        payload.url = `${secure ? 'https:' : 'http:'}//${host}${cookiePath}`;
-      } else if (domain) {
-        payload.domain = domain;
-      }
-      if (sameSite) payload.sameSite = sameSite;
-      const expires = Number(cookie.expires ?? cookie.expirationDate);
-      if (Number.isFinite(expires) && expires > 0) payload.expires = expires;
-      await browser.setCookie(payload);
+      await browser.setCookie(cookiePayload(cookie, false));
       installed += 1;
-    } catch (error) {
-      rejected.push({
-        name: String(cookie?.name || ''),
-        reason: error instanceof Error ? error.message : String(error || ''),
-      });
+      continue;
+    } catch (firstError) {
+      try {
+        // Chrome revisions occasionally reject a captured SameSite spelling.
+        // Retry the same domain/path/value without SameSite before declaring
+        // the cookie unusable. We never relax domain or security boundaries.
+        await browser.setCookie(cookiePayload(cookie, true));
+        installed += 1;
+        relaxed.push(String(cookie?.name || ''));
+        continue;
+      } catch (secondError) {
+        rejected.push({
+          name: String(cookie?.name || ''),
+          reason: secondError instanceof Error
+            ? secondError.message
+            : firstError instanceof Error ? firstError.message : String(secondError || firstError || ''),
+        });
+      }
     }
   }
-  return { installed, rejected };
+  return { installed, rejected, relaxed };
 }
 
 function cookieDomainMatchesHost(cookie, hostname) {
@@ -88,12 +106,13 @@ async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
         .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
         .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
     );
-    const missing = [];
-    for (const [name] of expected) {
-      if (!installed.has(name) || !installed.get(name)) missing.push(name);
+    const invalid = [];
+    for (const [name, expectedValue] of expected) {
+      const installedValue = installed.get(name);
+      if (!installedValue || installedValue !== expectedValue) invalid.push(name);
     }
-    if (missing.length) {
-      throw new Error(`Chrome no pudo conservar las cookies de autenticación de Netflix: ${missing.join(', ')}.`);
+    if (invalid.length) {
+      throw new Error(`Chrome no pudo conservar exactamente las cookies de autenticación de Netflix: ${invalid.join(', ')}.`);
     }
   } finally {
     await client.detach().catch(() => null);
