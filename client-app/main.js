@@ -182,7 +182,11 @@ async function clearAuth() {
 }
 
 async function apiRequest(pathName, options = {}) {
-  const headers = { Accept: 'application/json', ...(options.headers || {}) };
+  const headers = {
+    Accept: 'application/json',
+    'X-Userflow-Client-Version': app.getVersion(),
+    ...(options.headers || {}),
+  };
   if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   let response;
