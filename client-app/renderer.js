@@ -144,15 +144,21 @@ function renderAccount() {
 }
 
 function networkLabel(profile) {
+  if (profile?.networkReady === false || profile?.networkIdentity?.ready === false) {
+    return 'Red no disponible';
+  }
   if (profile?.networkIdentity?.locked) {
     return profile.networkIdentity.publicIp ? `IP fija ${profile.networkIdentity.publicIp}` : 'Proxy protegido';
   }
-  if (profile?.managedConnection) return 'Proxy asignado';
+  if (profile?.managedConnection) return 'Proxy configurado';
   return 'Conexión directa';
 }
 
 function descriptionFor(profile) {
   const host = domain(profile.url);
+  if (profile?.launchReady === false) {
+    return profile.unavailableReason || 'Configuración no disponible';
+  }
   if (profile.sessionMode === 'managed-first-party') {
     return profile.sessionReady
       ? `${host} · sesión v${profile.sessionVersion || 1}`
@@ -163,7 +169,8 @@ function descriptionFor(profile) {
 
 async function launchProfile(profile, card) {
   if (launchingProfiles.has(profile.id)) return;
-  const unavailable = profile.sessionMode === 'managed-first-party' && !profile.sessionReady;
+  const unavailable = profile.launchReady === false
+    || (profile.launchReady === undefined && profile.sessionMode === 'managed-first-party' && !profile.sessionReady);
   if (unavailable) return;
 
   launchingProfiles.add(profile.id);
@@ -183,14 +190,17 @@ async function launchProfile(profile, card) {
 }
 
 function makeProfileCard(profile) {
-  const unavailable = profile.sessionMode === 'managed-first-party' && !profile.sessionReady;
+  const unavailable = profile.launchReady === false
+    || (profile.launchReady === undefined && profile.sessionMode === 'managed-first-party' && !profile.sessionReady);
   const card = document.createElement('article');
   card.className = `profile-card${unavailable ? ' unavailable' : ''}`;
   card.dataset.profileId = profile.id;
   card.setAttribute('role', 'button');
   card.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
   card.tabIndex = unavailable ? -1 : 0;
-  card.title = unavailable ? 'Este perfil todavía no está disponible.' : `Abrir ${profileLabel(profile)}`;
+  card.title = unavailable
+    ? (profile.unavailableReason || 'Este perfil todavía no está disponible.')
+    : `Abrir ${profileLabel(profile)}`;
 
   const image = document.createElement('div');
   image.className = 'profile-image';
