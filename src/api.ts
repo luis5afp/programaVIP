@@ -3,6 +3,7 @@ import type {
   Assignment,
   AuditLog,
   Client,
+  ClientReleaseStatus,
   DashboardStats,
   Device,
   HealthInfo,
@@ -68,6 +69,14 @@ export const api = {
   session: () => request<{ ok: true; user: AdminSession }>('/api/auth/session'),
   logout: () => request<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
   health: () => request<HealthInfo>('/api/health'),
+  clientRelease: {
+    get: () => request<{ ok: true } & ClientReleaseStatus>('/api/system/client-release'),
+    activate: (version: string) =>
+      request<{ ok: true } & ClientReleaseStatus>('/api/system/client-release/activate', {
+        method: 'POST',
+        body: JSON.stringify({ version }),
+      }),
+  },
   dashboard: () => request<DashboardStats>('/api/dashboard'),
 
   clients: {

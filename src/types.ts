@@ -266,6 +266,23 @@ export interface HealthInfo {
   timestamp: string;
 }
 
+export interface ClientReleaseManifest {
+  version: string;
+  size: number;
+  sha256: string;
+  chunks: Array<{ name: string; size: number }>;
+  publishedAt: string | null;
+  downloadUrl?: string;
+  active?: boolean;
+}
+
+export interface ClientReleaseStatus {
+  active: ClientReleaseManifest;
+  available: ClientReleaseManifest[];
+  downloadUrl: string;
+}
+
+
 export type ViewKey =
   | 'dashboard'
   | 'clients'
