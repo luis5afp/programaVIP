@@ -286,7 +286,70 @@ export async function connectKaizenBrowser(debugPort) {
   });
 }
 
-export async function restorePortableSession({ debugPort, profileUrl, profileId = null, material }) {
+export async function installCredentialAutofill({ debugPort, profileUrl, credentials }) {
+  if (!credentials?.username || !credentials?.password) return { installed: false };
+  const target = new URL(profileUrl);
+  const browser = await connectKaizenBrowser(debugPort);
+  try {
+    const pages = await browser.pages();
+    const page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
+    await page.evaluateOnNewDocument(({ allowedOrigin, username, password }) => {
+      if (location.origin !== allowedOrigin) return;
+
+      const visible = (element) => {
+        try {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const setNativeValue = (element, value) => {
+        try {
+          const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+          descriptor?.set?.call(element, value);
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch {}
+      };
+      const fill = () => {
+        const inputs = Array.from(document.querySelectorAll('input'))
+          .filter((element) => visible(element) && !element.disabled && !element.readOnly);
+        const passwordInput = inputs.find((element) => element.type === 'password');
+        const usernameInput = inputs.find((element) => {
+          const hint = [element.type, element.name, element.id, element.autocomplete, element.placeholder]
+            .join(' ')
+            .toLowerCase();
+          return element.type === 'email' || /email|e-mail|user|usuario|login|account/.test(hint);
+        });
+        if (usernameInput && !usernameInput.value) setNativeValue(usernameInput, username);
+        if (passwordInput && !passwordInput.value) setNativeValue(passwordInput, password);
+      };
+      const start = () => {
+        fill();
+        const observer = new MutationObserver(fill);
+        observer.observe(document.documentElement || document, { childList: true, subtree: true });
+        setTimeout(() => observer.disconnect(), 30_000);
+        setTimeout(fill, 400);
+        setTimeout(fill, 1200);
+        setTimeout(fill, 3000);
+      };
+      if (document.documentElement) start();
+      else addEventListener('DOMContentLoaded', start, { once: true });
+    }, {
+      allowedOrigin: target.origin,
+      username: String(credentials.username),
+      password: String(credentials.password),
+    });
+    return { installed: true, origin: target.origin };
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
+export async function restorePortableSession({ debugPort, profileUrl, profileId = null, material, storageStrategy = 'portable-first-party' }) {
   if (!material || !['userflex-browser-session-v1', 'userflex-browser-session-v2'].includes(material.format)) {
     throw new Error('El material de sesión del perfil no es compatible con el motor KAIZEN.');
   }
@@ -311,13 +374,14 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
     let page = pages.find((item) => item.url() === 'about:blank') || pages[0];
     if (!page) page = await browser.newPage();
 
-    // Netflix authentication is portable through its auth cookies, but copying
-    // browser storage from the Session Manager device can also copy stale
-    // device/session state. That was the production cause of Netflix treating a
-    // freshly restored session as expired. For Netflix, let this local Chrome
-    // profile establish its own storage/IDB after the cookies are installed.
-    // Other managed sites keep the full portable v1/v2 storage restore.
-    const restoreCapturedStorage = !isNetflixTarget(target);
+    // Storage restoration is a profile strategy, not a global behavior. Netflix
+    // remains fail-safe: even if an administrator selects portable-first-party,
+    // device-bound Netflix storage is never transplanted between machines.
+    const requestedStorageStrategy = String(storageStrategy || 'portable-first-party');
+    const effectiveStorageStrategy = isNetflixTarget(target) && requestedStorageStrategy !== 'cookies-only'
+      ? 'netflix-local-device'
+      : requestedStorageStrategy;
+    const restoreCapturedStorage = effectiveStorageStrategy === 'portable-first-party';
     const state = restoreCapturedStorage
       ? storagePayload(material)
       : { origin: target.origin, localStorage: {}, sessionStorage: {}, indexedDB: [] };
@@ -388,7 +452,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
       cookiesRejected: cookieResult.rejected.length,
       indexedDbRestored: Number(indexedDb?.restored || 0),
       indexedDbTotal: Number(indexedDb?.total || 0),
-      storagePolicy: restoreCapturedStorage ? 'portable-full' : 'netflix-local-device',
+      storagePolicy: effectiveStorageStrategy,
       pageUrl: page.url(),
     };
   } finally {
