@@ -26,13 +26,15 @@ function existingFile(candidates) {
   return null;
 }
 
-export function resolveCaptureBrowserExecutable(resourcesPath = process.resourcesPath) {
+export function resolveCaptureBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
   const localApp = process.env.LOCALAPPDATA || '';
   const programFiles = process.env.PROGRAMFILES || '';
   const programFilesX86 = process.env['PROGRAMFILES(X86)'] || '';
+  if (browserEngine === 'nstchrome') {
+    return existingFile([path.join(resourcesPath, 'nstchrome', 'chrome.exe')]);
+  }
   return existingFile([
     path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
-    path.join(resourcesPath, 'nstchrome', 'chrome.exe'),
     programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -303,13 +305,17 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
   async function launch({ profile, credentials, proxy = null, onComplete }) {
     if (!profile?.id || !profile?.url) throw new Error('Configuración de perfil incompleta.');
-    if (!credentials?.username || !credentials?.password) throw new Error('El perfil no tiene credenciales administradas.');
+    if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
+      throw new Error('El perfil híbrido no tiene credenciales administradas.');
+    }
     await close('replace_capture');
 
-    const executable = resolveCaptureBrowserExecutable();
+    const executable = resolveCaptureBrowserExecutable(process.resourcesPath, profile.browserEngine || 'chrome-native');
     if (!executable) {
       throw Object.assign(
-        new Error('No se encontró Google Chrome/Edge. Instala Chrome o incluye chrome_native con userFLOW.'),
+        new Error(profile.browserEngine === 'nstchrome'
+          ? 'Este perfil exige nstchrome, pero el runtime no está instalado en Session Manager.'
+          : 'No se encontró Google Chrome/Edge. Instala Chrome o incluye chrome_native con userFLOW.'),
         { code: 'KAIZEN_BROWSER_RUNTIME_MISSING' },
       );
     }
