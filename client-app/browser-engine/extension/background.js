@@ -1,8 +1,17 @@
 const BLOCKED_INTERNAL = [
   'chrome://extensions',
   'chrome://settings',
+  'chrome://flags',
+  'chrome://inspect',
+  'chrome://policy',
+  'chrome://password-manager',
   'edge://extensions',
   'edge://settings',
+  'edge://flags',
+  'edge://inspect',
+  'edge://policy',
+  'edge://wallet',
+  'https://chromewebstore.google.com/',
 ];
 
 function isBlocked(url) {
@@ -10,14 +19,25 @@ function isBlocked(url) {
   return BLOCKED_INTERNAL.some((prefix) => value.startsWith(prefix));
 }
 
+async function moveAway(tabId) {
+  try {
+    await chrome.tabs.update(tabId, { url: 'about:blank' });
+  } catch {}
+}
+
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0 || !isBlocked(details.url)) return;
-  chrome.tabs.update(details.tabId, { url: 'about:blank' }).catch(() => {});
+  void moveAway(details.tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, _change, tab) => {
   if (!isBlocked(tab?.url)) return;
-  chrome.tabs.update(tabId, { url: 'about:blank' }).catch(() => {});
+  void moveAway(tabId);
+});
+
+chrome.tabs.onCreated.addListener((tab) => {
+  if (!isBlocked(tab?.url)) return;
+  void moveAway(tab.id);
 });
 
 chrome.runtime.onInstalled.addListener(() => {
