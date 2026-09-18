@@ -34,6 +34,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
+      offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
       minimumClientVersion: MIN_USERFLOW_VERSION,
     });
   }
@@ -151,6 +152,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
+    offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
@@ -311,6 +313,7 @@ export async function clientLaunch(
     configRevision: id.client.updated_at,
     lease: {
       expiresAt: id.subscription.expires_at,
+      offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
       serverTime: new Date().toISOString(),
     },
     profile: {
