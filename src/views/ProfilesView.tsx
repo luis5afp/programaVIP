@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { AuthStrategy, BrowserEngine, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, StorageStrategy } from '../types';
+import type { AuthStrategy, BrowserEngine, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -231,7 +231,7 @@ export function ProfilesView() {
         image_url: finalImageUrl,
         tags: [label],
         enabled: String(form.get('enabled')) === 'true',
-        session_mode: authStrategy === 'manual' ? 'manual-login' : 'managed-first-party',
+        session_mode: (authStrategy === 'manual' ? 'manual-login' : 'managed-first-party') as SessionMode,
         browser_engine: browserEngine,
         auth_strategy: authStrategy,
         storage_strategy: storageStrategy,
