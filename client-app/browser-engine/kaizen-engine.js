@@ -290,8 +290,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const runtime = runtimeFor(profile);
     const snapshotManaged = snapshotAuthentication(runtime);
     const credentialManaged = credentialAuthentication(runtime);
+    const credentialHelperEnabled = Boolean(credentials?.username && credentials?.password);
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
-    const desiredCredentialRevision = credentialManaged ? String(credentials?.updatedAt || '') : '';
+    const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
     const desiredRuntimeKey = runtimeKey(runtime);
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
@@ -423,10 +424,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
 
       let autofill = null;
-      if (credentialManaged) {
-        if (!credentials?.username || !credentials?.password) {
-          throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
-        }
+      if (credentialManaged && !credentialHelperEnabled) {
+        throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
+      }
+      if (credentialHelperEnabled) {
         autofill = await installCredentialAutofill({
           debugPort,
           profileUrl: profile.url,
@@ -549,16 +550,18 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const runtime = runtimeFor(profile);
       const wantsSnapshot = snapshotAuthentication(runtime);
       const wantsCredentials = credentialAuthentication(runtime);
+      const optionalCredentialHelper = runtime.authStrategy === 'cookie-snapshot' && Boolean(profile.credentialVersion);
+      const tracksCredentialRevision = wantsCredentials || optionalCredentialHelper;
       const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
       const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
-      const desiredCredentialRevision = wantsCredentials ? String(profile.credentialVersion || '') : '';
+      const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
       const desiredRuntimeKey = runtimeKey(runtime);
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
       const snapshotChanged = runningEntry && wantsSnapshot && (
         !snapshotReady || Number(runningEntry.sessionVersion || 0) !== desiredVersion
       );
-      const credentialsChanged = runningEntry && wantsCredentials
+      const credentialsChanged = runningEntry
         && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
 
       if (runningEntry && (runtimeChanged || snapshotChanged || credentialsChanged)) {
