@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { AuthStrategy, BrowserEngine, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode, StorageStrategy } from '../types';
+import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -33,7 +33,7 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
-function launchSessionManager(launchUrl: string) {
+function launchCustomProtocol(launchUrl: string) {
   const anchor = document.createElement('a');
   anchor.href = launchUrl;
   anchor.style.display = 'none';
@@ -50,6 +50,13 @@ export function ProfilesView() {
   const [proxies, setProxies] = useState<ProxyRecord[]>([]);
   const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [validationProfile, setValidationProfile] = useState<Profile | null>(null);
+  const [validationClientId, setValidationClientId] = useState('');
+  const [validationResult, setValidationResult] = useState<ProfileValidation | null>(null);
+  const [validationJob, setValidationJob] = useState<ProfileValidationJob | null>(null);
+  const [validationBusy, setValidationBusy] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
@@ -67,13 +74,15 @@ export function ProfilesView() {
 
   async function load() {
     try {
-      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows] = await Promise.all([
+      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows] = await Promise.all([
         api.profiles.list(),
         api.proxies.list(),
         api.profileProxyDefaults.list(),
         api.profileSessions.list(),
         api.plans.list(),
         api.profilePlans.list(),
+        api.clients.list(),
+        api.assignments.list(),
       ]);
       setProfiles(profileRows);
       setProxies(proxyRows);
@@ -81,6 +90,8 @@ export function ProfilesView() {
       setSessionStates(stateRows);
       setPlans(planRows);
       setProfilePlanMemberships(membershipRows);
+      setClients(clientRows);
+      setAssignments(assignmentRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -272,7 +283,7 @@ export function ProfilesView() {
         launchUrl: result.launch_url,
         expiresAt: result.expires_at || null,
       });
-      launchSessionManager(result.launch_url);
+      launchCustomProtocol(result.launch_url);
       window.setTimeout(() => void load(), 2500);
     } catch (captureError: any) {
       setError(captureError.message);
@@ -687,7 +698,7 @@ export function ProfilesView() {
               <strong>userFLEX intentó abrir el Chromium automáticamente.</strong>
               <div className="help" style={{ marginTop: 6 }}>Si Windows o el navegador no mostró nada, usa el botón siguiente. Este segundo clic conserva el permiso del navegador para abrir la aplicación local.</div>
             </div>
-            <button className="button primary" onClick={() => launchSessionManager(captureLaunch.launchUrl)}>
+            <button className="button primary" onClick={() => launchCustomProtocol(captureLaunch.launchUrl)}>
               <Globe2 size={14} />
               Abrir Chromium ahora
             </button>
