@@ -4,6 +4,7 @@ import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
+import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION } from './lib/release-compat';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
@@ -20,7 +21,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -38,6 +39,8 @@ async function api(request: Request, env: Env): Promise<Response> {
       version: APP_VERSION,
       supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
       proxyEncryptionConfigured: Boolean(env.USERFLEX_PROXY_MASTER_KEY),
+      minimumClientVersion: MIN_USERFLOW_VERSION,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
       timestamp: new Date().toISOString(),
     });
   }
