@@ -352,6 +352,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           restore = await restorePortableSession({
             debugPort,
             profileUrl: profile.url,
+            profileId: profile.id,
             material: delivery.material,
           });
           sessionMarker = await writeSessionMarker(userDataDir, profile, delivery, restore);
