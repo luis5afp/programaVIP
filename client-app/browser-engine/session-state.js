@@ -291,9 +291,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   const target = new URL(profileUrl);
   const browser = await connectKaizenBrowser(debugPort);
   try {
-    const pages = await browser.pages();
-    const page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
-    await page.evaluateOnNewDocument(({ allowedProtocol, allowedRootHost, username, password }) => {
+    const bootstrap = ({ allowedProtocol, allowedRootHost, username, password }) => {
       const currentRootHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
       if (location.protocol !== allowedProtocol || currentRootHost !== allowedRootHost) return;
 
@@ -514,13 +512,36 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
       if (document.documentElement) start();
       else addEventListener('DOMContentLoaded', start, { once: true });
-    }, {
+    };
+    const payload = {
       allowedProtocol: target.protocol,
       allowedRootHost: target.hostname.toLowerCase().replace(/^www\./, ''),
       username: String(credentials.username),
       password: String(credentials.password),
-    });
-    return { installed: true, origin: target.origin, visibleHelper: true };
+    };
+    const existingPages = await browser.pages();
+    const pages = existingPages.length ? existingPages : [await browser.newPage()];
+    let immediatePages = 0;
+
+    for (const page of pages) {
+      await page.evaluateOnNewDocument(bootstrap, payload);
+      try {
+        const current = new URL(page.url());
+        const currentRootHost = current.hostname.toLowerCase().replace(/^www\./, '');
+        if (current.protocol === payload.allowedProtocol && currentRootHost === payload.allowedRootHost) {
+          await page.evaluate(bootstrap, payload);
+          immediatePages += 1;
+        }
+      } catch {}
+    }
+
+    return {
+      installed: true,
+      origin: target.origin,
+      visibleHelper: true,
+      pagesPrepared: pages.length,
+      immediatePages,
+    };
   } finally {
     await browser.disconnect().catch(() => null);
   }
