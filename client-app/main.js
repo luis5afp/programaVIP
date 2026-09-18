@@ -1170,6 +1170,7 @@ async function openProfile(profileId) {
   const profile = launch?.profile;
   const connection = launch?.connection || { mode: 'direct', locked: false };
   const delivery = launch?.sessionDelivery || null;
+  const credentials = launch?.credentialDelivery || null;
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
 
   const usage = {
@@ -1184,6 +1185,7 @@ async function openProfile(profileId) {
       profile,
       connection,
       delivery,
+      credentials,
       usageId: usage.usageId,
     });
     return {
