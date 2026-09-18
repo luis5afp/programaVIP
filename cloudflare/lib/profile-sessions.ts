@@ -8,6 +8,13 @@ import {
   snapshotAuthentication,
 } from './profile-runtime';
 import {
+  MIN_SESSION_MANAGER_VERSION,
+  MIN_USERFLOW_VERSION,
+  clientVersionFrom,
+  sessionManagerVersionFrom,
+  versionAtLeast,
+} from './release-compat';
+import {
   Env,
   HttpError,
   audit,
@@ -95,6 +102,98 @@ async function sessionRow(env: Env, profileId: string) {
     `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
   return rows?.[0] || null;
+}
+
+function assertUserflowVersion(request: Request) {
+  const version = clientVersionFrom(request);
+  if (!versionAtLeast(version, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(
+      426,
+      'CLIENT_UPDATE_REQUIRED',
+      `Esta prueba requiere userFLOW v${MIN_USERFLOW_VERSION} o superior.`,
+    );
+  }
+  return version;
+}
+
+function assertSessionManagerVersion(request: Request) {
+  const version = sessionManagerVersionFrom(request);
+  if (!versionAtLeast(version, MIN_SESSION_MANAGER_VERSION)) {
+    throw new HttpError(
+      426,
+      'SESSION_MANAGER_UPDATE_REQUIRED',
+      `Actualiza Session Manager a v${MIN_SESSION_MANAGER_VERSION} o superior.`,
+    );
+  }
+  return version;
+}
+
+function cookieMatchesHost(cookie: any, hostname: string) {
+  const domain = String(cookie?.domain || '').replace(/^\./, '').toLowerCase();
+  const host = String(hostname || '').toLowerCase();
+  return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
+}
+
+function validateCapturedMaterial(profile: any, material: any) {
+  if (!material || typeof material !== 'object' || Array.isArray(material)) {
+    throw new HttpError(400, 'INVALID_SESSION_MATERIAL', 'El material de sesión no es válido.');
+  }
+  if (!['userflex-browser-session-v1', 'userflex-browser-session-v2'].includes(String(material.format || ''))) {
+    throw new HttpError(400, 'SESSION_MATERIAL_FORMAT_INVALID', 'El formato de la sesión capturada no es compatible.');
+  }
+
+  const target = new URL(profile.url);
+  if (String(material.profileId || '') !== String(profile.id)) {
+    throw new HttpError(409, 'SESSION_PROFILE_MISMATCH', 'La sesión capturada no pertenece a este perfil.');
+  }
+  if (String(material.allowedOrigin || '') !== target.origin) {
+    throw new HttpError(409, 'SESSION_ORIGIN_MISMATCH', 'El origen de la sesión capturada no coincide con la web del perfil.');
+  }
+  if (material.capturedUrl) {
+    try {
+      if (new URL(String(material.capturedUrl)).origin !== target.origin) {
+        throw new HttpError(409, 'SESSION_CAPTURE_URL_MISMATCH', 'La sesión fue capturada desde otra web.');
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, 'SESSION_CAPTURE_URL_INVALID', 'La URL capturada no es válida.');
+    }
+  }
+  if (material?.storage?.origin && String(material.storage.origin) !== target.origin) {
+    throw new HttpError(409, 'SESSION_STORAGE_ORIGIN_MISMATCH', 'El storage capturado pertenece a otro origen.');
+  }
+
+  const cookies = Array.isArray(material.cookies) ? material.cookies : [];
+  if (cookies.length > 5000) {
+    throw new HttpError(413, 'SESSION_COOKIE_COUNT_TOO_LARGE', 'La captura contiene demasiadas cookies.');
+  }
+
+  const hostname = target.hostname.toLowerCase();
+  if (hostname === 'netflix.com' || hostname.endsWith('.netflix.com')) {
+    const nowSeconds = Date.now() / 1000;
+    const authCookies = new Map<string, any>();
+    for (const cookie of cookies) {
+      const name = String(cookie?.name || '').toLowerCase();
+      if (!['netflixid', 'securenetflixid'].includes(name)) continue;
+      if (!cookieMatchesHost(cookie, hostname)) continue;
+      authCookies.set(name, cookie);
+    }
+    const missing = ['netflixid', 'securenetflixid'].filter((name) => {
+      const cookie = authCookies.get(name);
+      if (!cookie || !String(cookie.value ?? '')) return true;
+      const expiry = Number(cookie.expirationDate ?? cookie.expires ?? 0);
+      return Number.isFinite(expiry) && expiry > 0 && expiry <= nowSeconds;
+    });
+    if (missing.length) {
+      throw new HttpError(
+        409,
+        'NETFLIX_AUTH_COOKIES_INVALID',
+        `La captura de Netflix no contiene cookies de autenticación activas: ${missing.join(', ')}.`,
+      );
+    }
+  }
+
+  return { target, cookies };
 }
 
 async function proxyRecord(env: Env, proxyId: string | null) {
@@ -542,7 +641,7 @@ export async function adminProfileSessionRoutes(
   return null;
 }
 
-async function captureJob(env: Env, rawToken: string) {
+async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'complete') {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_CAPTURE_TOKEN');
   const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
   const rows = await sb(
@@ -550,7 +649,7 @@ async function captureJob(env: Env, rawToken: string) {
     `userflex_profile_session_jobs?select=id,profile_id,status,expires_at,used_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const job = rows?.[0];
-  if (!job || job.status !== 'pending' || job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_INVALID');
+  if (!job || job.status !== 'pending') throw new HttpError(401, 'CAPTURE_TOKEN_INVALID');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
@@ -559,6 +658,20 @@ async function captureJob(env: Env, rawToken: string) {
     });
     throw new HttpError(401, 'CAPTURE_TOKEN_EXPIRED');
   }
+
+  if (phase === 'bootstrap') {
+    if (job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    const claimedAt = new Date().toISOString();
+    const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ used_at: claimedAt }),
+    });
+    if (!claimed?.[0]) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    return { ...job, used_at: claimedAt };
+  }
+
+  if (!job.used_at) throw new HttpError(409, 'CAPTURE_NOT_STARTED', 'Abre primero el enlace de captura en Session Manager.');
   return job;
 }
 
@@ -567,6 +680,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   const method = request.method.toUpperCase();
 
   if (path === '/api/client-test/bootstrap' && method === 'POST') {
+    assertUserflowVersion(request);
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const job = await validationJob(env, rawToken, false);
@@ -686,9 +800,10 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
 
 
   if (path === '/api/session-manager/bootstrap' && method === 'POST') {
+    const sessionManagerVersion = assertSessionManagerVersion(request);
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
-    const job = await captureJob(env, rawToken);
+    const job = await captureJob(env, rawToken, 'bootstrap');
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await captureProxyForProfile(env, profile);
@@ -696,14 +811,17 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil híbrido ya no tiene credenciales guardadas.');
     }
-    if (proxy && proxy.enabled !== true) {
-      throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
-    }
-    if (proxy?.proxy_type === 'ssh') {
-      throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
+    if (proxy && !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'PROFILE_PROXY_UNAVAILABLE',
+        'El proxy del perfil está inactivo, usa un protocolo no compatible o falló validación.',
+      );
     }
     return json({
       ok: true,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
+      sessionManagerVersion,
       job: { id: job.id, expiresAt: job.expires_at },
       profile: {
         id: profile.id,
@@ -734,13 +852,13 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/session-manager/complete' && method === 'POST') {
+    assertSessionManagerVersion(request);
     const body = await bodyJson(request, 10_000_000);
     const rawToken = text(body.token, 'token', 128);
-    const job = await captureJob(env, rawToken);
+    const job = await captureJob(env, rawToken, 'complete');
+    const profile = await profileRow(env, job.profile_id);
     const material = body.material;
-    if (!material || typeof material !== 'object' || Array.isArray(material)) {
-      throw new HttpError(400, 'INVALID_SESSION_MATERIAL');
-    }
+    validateCapturedMaterial(profile, material);
     const serialized = JSON.stringify(material);
     if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
       throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE');
@@ -774,7 +892,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'completed', used_at: now }),
+      body: JSON.stringify({ status: 'completed' }),
     });
     await touchProfileClients(env, job.profile_id);
     return json({ ok: true, profile_id: job.profile_id, version, public_ip: publicIp });
