@@ -3,9 +3,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
@@ -50,16 +53,76 @@ function devicePath() {
   return path.join(app.getPath('userData'), 'device.json');
 }
 
-async function getDeviceKey() {
+function isLocalPermissionError(error) {
+  return ['EPERM', 'EACCES'].includes(String(error?.code || ''));
+}
+
+async function currentWindowsUserSid() {
+  if (process.platform !== 'win32') return null;
   try {
-    const raw = JSON.parse(await fs.readFile(devicePath(), 'utf8'));
-    if (typeof raw?.deviceKey === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(raw.deviceKey)) return raw.deviceKey;
+    const result = await execFileAsync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
+      windowsHide: true,
+      timeout: 4_000,
+    });
+    return String(result?.stdout || '').match(/"[^"]*","(S-[^"]+)"/i)?.[1] || null;
   } catch {
-    // First run.
+    return null;
   }
+}
+
+async function repairLocalPathAccess(targetPath) {
+  if (process.platform !== 'win32' || !targetPath) return false;
+  const sid = await currentWindowsUserSid();
+  if (!sid) return false;
+  try {
+    await execFileAsync('icacls.exe', [
+      targetPath,
+      '/inheritance:e',
+      '/grant:r',
+      `*${sid}:F`,
+      '/Q',
+    ], { windowsHide: true, timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readExistingDeviceKey() {
+  const raw = JSON.parse(await fs.readFile(devicePath(), 'utf8'));
+  return typeof raw?.deviceKey === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(raw.deviceKey)
+    ? raw.deviceKey
+    : null;
+}
+
+async function getDeviceKey() {
+  let readError = null;
+  try {
+    const existing = await readExistingDeviceKey();
+    if (existing) return existing;
+  } catch (error) {
+    readError = error;
+  }
+
+  if (isLocalPermissionError(readError)) {
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(devicePath());
+    try {
+      const existing = await readExistingDeviceKey();
+      if (existing) return existing;
+    } catch {}
+  }
+
   const deviceKey = crypto.randomBytes(32).toString('base64url');
   await fs.mkdir(path.dirname(devicePath()), { recursive: true });
-  await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  try {
+    await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    if (!isLocalPermissionError(error)) throw error;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(devicePath());
+    await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  }
   return deviceKey;
 }
 
@@ -68,13 +131,23 @@ async function saveAuth(token, meta) {
   authMeta = meta || null;
   if (!safeStorage.isEncryptionAvailable()) return;
   const encrypted = safeStorage.encryptString(token).toString('base64');
-  await fs.mkdir(path.dirname(authPath()), { recursive: true });
-  await fs.writeFile(authPath(), JSON.stringify({ token: encrypted, meta }), { encoding: 'utf8', mode: 0o600 });
+  const file = authPath();
+  const payload = JSON.stringify({ token: encrypted, meta });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  try {
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    if (!isLocalPermissionError(error)) throw error;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(file);
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  }
 }
 
 async function loadAuth() {
   if (!safeStorage.isEncryptionAvailable()) return null;
-  try {
+
+  const read = async () => {
     const raw = JSON.parse(await fs.readFile(authPath(), 'utf8'));
     if (typeof raw?.token !== 'string') return null;
     const token = safeStorage.decryptString(Buffer.from(raw.token, 'base64'));
@@ -82,8 +155,15 @@ async function loadAuth() {
     accessToken = token;
     authMeta = raw.meta || null;
     return { token, meta: authMeta };
-  } catch {
-    return null;
+  };
+
+  try {
+    return await read();
+  } catch (error) {
+    if (!isLocalPermissionError(error)) return null;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(authPath());
+    try { return await read(); } catch { return null; }
   }
 }
 
@@ -93,8 +173,11 @@ async function clearAuth() {
   stopHeartbeat();
   try {
     await fs.unlink(authPath());
-  } catch {
-    // Already removed.
+  } catch (error) {
+    if (!isLocalPermissionError(error)) return;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(authPath());
+    await fs.unlink(authPath()).catch(() => null);
   }
 }
 
