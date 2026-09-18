@@ -327,7 +327,6 @@ function safeValidationResult(value: any) {
     outcome: typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null,
     browser: value?.browser || null,
     profileState: value?.profileState || null,
-    outcome: value?.outcome || null,
     network: value?.network || null,
     publicIp: value?.publicIp || null,
     sessionVersion: Number(value?.sessionVersion || 0),
