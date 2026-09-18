@@ -5,8 +5,11 @@ on:
     paths:
       - 'client-app/proxy-bridge.js'
       - 'client-app/proxy-bridge.test.js'
+      - 'client-app/browser-engine/proxy-relay.js'
+      - 'client-app/browser-engine/proxy-relay.test.js'
       - 'client-app/package.json'
       - 'session-manager/proxy-bridge.js'
+      - 'session-manager/browser-engine/proxy-relay.js'
       - 'session-manager/package.json'
       - '.github/workflows/test-socks-relay.yml'
   push:
@@ -40,9 +43,14 @@ jobs:
           node --check proxy-bridge.js
           node --check proxy-bridge.test.js
           node --check ../session-manager/proxy-bridge.js
+          node --check browser-engine/proxy-relay.js
+          node --check browser-engine/proxy-relay.test.js
+          node --check ../session-manager/browser-engine/proxy-relay.js
 
-      - name: Verify shared relay implementation
-        run: cmp proxy-bridge.js ../session-manager/proxy-bridge.js
+      - name: Verify shared relay implementations
+        run: |
+          cmp proxy-bridge.js ../session-manager/proxy-bridge.js
+          cmp browser-engine/proxy-relay.js ../session-manager/browser-engine/proxy-relay.js
 
-      - name: Run relay regression test
-        run: node --test proxy-bridge.test.js
+      - name: Run relay regression tests
+        run: node --test proxy-bridge.test.js browser-engine/proxy-relay.test.js
