@@ -563,7 +563,7 @@ export function ProfilesView() {
             <Field label="Motor de navegador">
               <select className="select" value={browserEngine} onChange={(event) => setBrowserEngine(event.target.value as BrowserEngine)}>
                 <option value="chrome-native">Chrome nativo / Chrome instalado</option>
-                <option value="nstchrome">nstchrome empaquetado</option>
+                <option value="nstchrome">nstchrome · requiere runtime autorizado empaquetado</option>
               </select>
             </Field>
 
