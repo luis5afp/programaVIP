@@ -324,6 +324,7 @@ function safeValidationResult(value: any) {
   } : null;
   return {
     ok: value?.ok === true,
+    outcome: typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null,
     browser: value?.browser || null,
     profileState: value?.profileState || null,
     outcome: value?.outcome || null,
@@ -587,6 +588,14 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       throw new HttpError(409, 'PROFILE_VALIDATION_BLOCKED', 'La configuración cambió y ya no está lista para probar.');
     }
 
+    const now = new Date().toISOString();
+    const claimed = await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}&status=eq.pending`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ status: 'running', started_at: now }),
+    });
+    if (!claimed?.[0]) throw new HttpError(401, 'VALIDATION_TOKEN_ALREADY_USED');
+
     const network = await profileValidationNetwork(env, profile, job.client_id || null);
     let connection: any = { mode: 'direct', locked: network.locked === true };
     if (network.proxy) {
@@ -644,13 +653,6 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         updatedAt: credential.updated_at || null,
       };
     }
-
-    const now = new Date().toISOString();
-    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'running', started_at: job.started_at || now }),
-    });
 
     return json({
       ok: true,
