@@ -1,18 +1,17 @@
 {
   "name": "userflex-session-manager",
   "private": true,
-  "version": "0.1.11",
-  "description": "userFLEX managed Chromium session capture helper",
+  "version": "0.2.0",
+  "description": "userFLEX KAIZEN external browser session capture helper",
   "type": "module",
   "main": "entry.js",
   "scripts": {
-    "prestart": "node build/harden-cookie-capture.mjs",
     "start": "electron .",
-    "predist:win": "node build/harden-cookie-capture.mjs",
     "dist:win": "electron-builder --win nsis --x64"
   },
   "dependencies": {
-    "socks": "^2.8.10"
+    "socks": "^2.8.10",
+    "puppeteer-core": "^24.17.1"
   },
   "devDependencies": {
     "electron": "https://github.com/castlabs/electron-releases#v44.1.0+wvcus",
@@ -30,8 +29,7 @@
     "files": [
       "entry.js",
       "main.js",
-      "proxy-bridge.js",
-      "preload.cjs",
+      "browser-engine/**",
       "package.json"
     ],
     "protocols": [

@@ -1,13 +1,17 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { startSocksHttpBridge } from './proxy-bridge.js';
+import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let active = null;
 let readyWindow = null;
 let pendingProtocolUrl = null;
 let protocolRegistered = false;
+let captureEngine = null;
+let quitAfterCleanup = false;
+
+function engine() {
+  if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
+  return captureEngine;
+}
 
 function protocolUrlFromArgs(args) {
   return args.find((arg) => typeof arg === 'string' && arg.startsWith('userflex-session://')) || null;
@@ -24,39 +28,69 @@ function registerProtocol() {
   }
 }
 
-function showReadyWindow() {
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char]));
+}
+
+function showReadyWindow(message = null) {
   if (readyWindow && !readyWindow.isDestroyed()) {
     readyWindow.show();
     readyWindow.focus();
     return;
   }
 
-  const status = protocolRegistered
-    ? 'El protocolo userflex-session:// está registrado correctamente.'
-    : 'Windows no confirmó el registro del protocolo. Reinstala userFLEX Session Manager si Cargar sesión no abre Chromium.';
+  const status = message || (protocolRegistered
+    ? 'El protocolo userflex-session:// está registrado. El motor KAIZEN está listo.'
+    : 'Windows no confirmó el protocolo. Reinstala Session Manager si Cargar sesión no abre el navegador.');
   const tone = protocolRegistered ? '#166534' : '#9a3412';
   const background = protocolRegistered ? '#f0fdf4' : '#fff7ed';
-  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX Session Manager</title><body style="margin:0;background:#f8fafc;font-family:system-ui;color:#0f172a"><main style="max-width:620px;margin:56px auto;padding:0 24px"><div style="background:white;border:1px solid #e2e8f0;border-radius:18px;padding:28px;box-shadow:0 16px 45px rgba(15,23,42,.08)"><h2 style="margin:0 0 10px">userFLEX Session Manager</h2><p style="color:#475569;line-height:1.55">El componente local está instalado y listo para abrir el Chromium aislado de un perfil.</p><div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:${background};color:${tone};font-weight:700">${status}</div><ol style="color:#475569;line-height:1.7;padding-left:20px"><li>Vuelve al panel userFLEX.</li><li>En un perfil con sesión administrada pulsa <b>Cargar sesión</b>.</li><li>Si el navegador pregunta si deseas abrir userFLEX Session Manager, acepta.</li></ol><p style="margin-bottom:0;color:#64748b;font-size:13px">Después se abrirá Chromium con el perfil aislado para completar el primer inicio de sesión y guardarlo.</p></div></main></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX Session Manager</title>
+  <body style="margin:0;background:#f8fafc;font-family:system-ui;color:#0f172a">
+    <main style="max-width:680px;margin:52px auto;padding:0 24px">
+      <div style="background:white;border:1px solid #e2e8f0;border-radius:18px;padding:28px;box-shadow:0 16px 45px rgba(15,23,42,.08)">
+        <h2 style="margin:0 0 10px">userFLEX Session Manager · Motor KAIZEN</h2>
+        <p style="color:#475569;line-height:1.55">La captura ya no usa una ventana Electron para navegar. userFLEX abre un Chrome/Edge nativo con perfil persistente y aislado.</p>
+        <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:${background};color:${tone};font-weight:700">${escapeHtml(status)}</div>
+        <ol style="color:#475569;line-height:1.7;padding-left:20px">
+          <li>Vuelve al panel userFLEX.</li>
+          <li>Pulsa <b>Cargar sesión</b> en el perfil.</li>
+          <li>Se abrirá el navegador externo con el perfil aislado.</li>
+          <li>Completa el acceso y pulsa <b>Guardar sesión</b> en el recuadro userFLEX.</li>
+        </ol>
+        <p style="margin-bottom:0;color:#64748b;font-size:13px">La nueva captura incluye cookies, Local Storage, Session Storage e IndexedDB y se envía cifrada al servidor userFLEX.</p>
+      </div>
+    </main>
+  </body>`;
 
   readyWindow = new BrowserWindow({
-    width: 720,
-    height: 520,
-    minWidth: 620,
-    minHeight: 420,
+    width: 760,
+    height: 560,
+    minWidth: 640,
+    minHeight: 440,
     title: 'userFLEX Session Manager',
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      devTools: false,
+    },
   });
-  readyWindow.on('closed', () => {
-    readyWindow = null;
-  });
+  readyWindow.on('closed', () => { readyWindow = null; });
   void readyWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
-async function apiPost(endpoint, pathName, body) {
+async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
   const response = await fetch(`${endpoint}${pathName}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await response.text();
   let payload = null;
@@ -80,345 +114,63 @@ function assertCaptureUrl(rawUrl) {
   return { endpoint: endpointUrl.origin, token };
 }
 
-async function sessionFetchWithTimeout(browserSession, url, timeoutMs = 8_000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await browserSession.fetch(url, { cache: 'no-store', signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function discoverPublicIp(browserSession) {
-  const endpoints = [
-    {
-      url: 'https://api.ipify.org?format=json',
-      read: async (response) => {
-        const payload = await response.json();
-        return typeof payload?.ip === 'string' ? payload.ip.trim() : '';
-      },
-    },
-    {
-      url: 'https://api64.ipify.org?format=json',
-      read: async (response) => {
-        const payload = await response.json();
-        return typeof payload?.ip === 'string' ? payload.ip.trim() : '';
-      },
-    },
-    {
-      url: 'https://www.cloudflare.com/cdn-cgi/trace',
-      read: async (response) => {
-        const trace = await response.text();
-        const match = trace.match(/^ip=(.+)$/m);
-        return match?.[1]?.trim() || '';
-      },
-    },
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await sessionFetchWithTimeout(browserSession, endpoint.url);
-      if (!response.ok) continue;
-      const ip = await endpoint.read(response);
-      if (ip) return ip;
-    } catch {
-      // Try the next independent IP endpoint.
-    }
-  }
-  return null;
-}
-
-async function resetNavigationNetwork(browserSession) {
-  await browserSession.clearCache().catch(() => null);
-  if (typeof browserSession.clearHostResolverCache === 'function') {
-    await browserSession.clearHostResolverCache().catch(() => null);
-  }
-  if (typeof browserSession.closeAllConnections === 'function') {
-    await browserSession.closeAllConnections().catch(() => null);
-  }
-}
-
-function navigationErrorCode(error) {
-  if (error && typeof error === 'object') {
-    if (typeof error.code === 'string' && error.code) return error.code;
-    if (Number(error.errno) === -2) return 'ERR_FAILED';
-  }
-  const message = error instanceof Error ? error.message : String(error || '');
-  return message.match(/\b(ERR_[A-Z0-9_]+)\b/)?.[1] || 'ERR_FAILED';
-}
-
-function isGenericNavigationFailure(error) {
-  return navigationErrorCode(error) === 'ERR_FAILED';
-}
-
-function proxyDisplayName(proxy) {
-  if (!proxy) return '';
-  const name = typeof proxy.name === 'string' ? proxy.name.trim() : '';
-  if (name) return name;
-  return `${proxy.host}:${proxy.port}`;
-}
-
-function navigationFailureMessage(error, target, proxy) {
-  const code = navigationErrorCode(error);
-  const host = target.hostname;
-  const throughProxy = proxy ? ` mediante el proxy "${proxyDisplayName(proxy)}"` : '';
-
-  if (code === 'ERR_PROXY_CONNECTION_FAILED' || code === 'ERR_TUNNEL_CONNECTION_FAILED') {
-    return `No se pudo conectar al proxy asignado al perfil (${code}). Revisa host, puerto y que el proxy esté activo.`;
-  }
-  if (code === 'ERR_PROXY_AUTH_UNSUPPORTED' || code === 'ERR_INVALID_AUTH_CREDENTIALS') {
-    return `El proxy rechazó la autenticación (${code}). Revisa el usuario y la contraseña del proxy.`;
-  }
-  if (code === 'ERR_NAME_NOT_RESOLVED') {
-    return `No se pudo resolver el dominio ${host}${throughProxy} (${code}). Revisa DNS y la configuración del proxy.`;
-  }
-  if (code === 'ERR_TIMED_OUT') {
-    return `La conexión con ${host}${throughProxy} agotó el tiempo de espera (${code}).`;
-  }
-  if (code === 'ERR_CONNECTION_REFUSED' || code === 'ERR_CONNECTION_RESET' || code === 'ERR_CONNECTION_CLOSED') {
-    return `La conexión con ${host}${throughProxy} fue rechazada o interrumpida (${code}).`;
-  }
-  if (code === 'ERR_INTERNET_DISCONNECTED') {
-    return 'El equipo no tiene conexión a Internet. Comprueba la red y vuelve a intentar.';
-  }
-
-  return `No se pudo abrir ${host}${throughProxy} (${code}). La conexión del perfil no se cambió a Internet directo. Revisa la red o el proxy y vuelve a intentar.`;
-}
-
-async function validateProxyConnection(browserSession, proxy) {
-  if (!proxy) return null;
-  const publicIp = await discoverPublicIp(browserSession);
-  if (!publicIp) {
-    throw new Error(
-      `No se pudo conectar a Internet mediante el proxy "${proxyDisplayName(proxy)}". `
-      + 'Revisa host, puerto, usuario y contraseña. userFLEX no abrirá este perfil con la conexión directa.',
-    );
-  }
-  console.log(`Session Manager proxy preflight OK (${proxyDisplayName(proxy)} -> ${publicIp}).`);
-  return publicIp;
-}
-
-async function loadProfileUrl(browserWindow, browserSession, profileUrl, proxy) {
-  const target = new URL(profileUrl);
-  if (target.protocol !== 'https:') {
-    throw new Error('La URL del perfil debe usar HTTPS.');
-  }
-
-  try {
-    await browserWindow.loadURL(target.toString());
-    return;
-  } catch (error) {
-    if (!isGenericNavigationFailure(error)) {
-      throw new Error(navigationFailureMessage(error, target, proxy));
-    }
-
-    console.warn(`Session Manager navigation to ${target.origin} returned ERR_FAILED; retrying once.`);
-  }
-
-  await resetNavigationNetwork(browserSession);
-  await new Promise((resolve) => setTimeout(resolve, 350));
-
-  try {
-    await browserWindow.loadURL(target.toString());
-  } catch (error) {
-    throw new Error(navigationFailureMessage(error, target, proxy));
-  }
-}
-
 async function startCapture(rawUrl) {
   const { endpoint, token } = assertCaptureUrl(rawUrl);
   const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
   const profile = bootstrap.profile;
   const credentials = bootstrap.credentials;
   const proxy = bootstrap.proxy || null;
+
   if (!profile?.id || !profile?.url || !credentials?.username || !credentials?.password) {
-    throw new Error('Configuración incompleta.');
+    throw new Error('La configuración de captura está incompleta.');
   }
 
   if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
-  if (active?.window && !active.window.isDestroyed()) active.window.close();
 
-  const partition = `persist:userflex-profile-${profile.id}`;
-  const browserWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 650,
-    title: `userFLEX · ${profile.name}`,
-    show: false,
-    webPreferences: {
-      partition,
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      devTools: false,
+  const result = await engine().launch({
+    profile,
+    credentials,
+    proxy,
+    onComplete: async ({ material, publicIp, diagnostics }) => {
+      const completed = await apiPost(endpoint, '/api/session-manager/complete', {
+        token,
+        publicIp,
+        material,
+      }, 90_000);
+      console.log(
+        `Session Manager KAIZEN saved profile ${profile.id} v${completed.version}: `
+        + `${diagnostics.cookieCount} cookies, ${diagnostics.indexedDbCount} IndexedDB databases.`,
+      );
+      return {
+        version: completed.version,
+        publicIp: completed.public_ip || publicIp || null,
+      };
     },
   });
 
-  browserWindow.once('ready-to-show', () => {
-    if (!browserWindow.isDestroyed()) {
-      browserWindow.show();
-      browserWindow.focus();
-    }
-  });
-
-  const browserSession = browserWindow.webContents.session;
-  let loginHandler = null;
-  let proxyBridge = null;
-  let cleanedUp = false;
-
-  const cleanupCapture = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    if (loginHandler) app.removeListener('login', loginHandler);
-    if (proxyBridge) void proxyBridge.close().catch(() => null);
-    if (active?.window === browserWindow) active = null;
-  };
-
-  browserWindow.on('closed', cleanupCapture);
-
-  try {
-    if (proxy?.host && proxy?.port) {
-      const proxyType = String(proxy.type || 'http').toLowerCase();
-      if (proxyType === 'ssh') throw new Error('El proxy SSH necesita un túnel local y todavía no está soportado por Session Manager.');
-
-      let proxyRules = `${proxyType === 'https' ? 'https' : 'http'}://${proxy.host}:${proxy.port}`;
-      if (proxyType === 'socks4' || proxyType === 'socks5') {
-        proxyBridge = await startSocksHttpBridge(proxy);
-        proxyRules = proxyBridge.proxyRules;
-      }
-
-      await browserSession.setProxy({
-        mode: 'fixed_servers',
-        proxyRules,
-        proxyBypassRules: '<-loopback>',
-      });
-
-      if (proxyType !== 'socks4' && proxyType !== 'socks5') {
-        loginHandler = (event, webContents, _request, authInfo, callback) => {
-          if (!authInfo?.isProxy) return;
-          if (webContents && webContents.id !== browserWindow.webContents.id) return;
-          event.preventDefault();
-          callback(proxy.username || '', proxy.password || '');
-        };
-        app.on('login', loginHandler);
-      }
-    } else {
-      await browserSession.setProxy({ mode: 'direct' });
-    }
-
-    if (typeof browserSession.closeAllConnections === 'function') {
-      await browserSession.closeAllConnections().catch(() => null);
-    }
-
-    const proxyPublicIp = await validateProxyConnection(browserSession, proxy);
-    const allowedOrigin = new URL(profile.url).origin;
-    const sendCredentials = () => {
-      if (browserWindow.isDestroyed()) return;
-      let currentOrigin = '';
-      try {
-        currentOrigin = new URL(browserWindow.webContents.getURL()).origin;
-      } catch {
-        return;
-      }
-      browserWindow.webContents.send('userflex:credentials', {
-        allowedOrigin,
-        currentOrigin,
-        username: credentials.username,
-        password: credentials.password,
-      });
-    };
-
-    browserWindow.webContents.on('dom-ready', sendCredentials);
-    browserWindow.webContents.on('did-navigate', sendCredentials);
-    browserWindow.webContents.on('did-navigate-in-page', sendCredentials);
-
-    browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-      try {
-        const target = new URL(url);
-        if (target.protocol === 'https:') {
-          void browserWindow.loadURL(target.toString());
-        }
-      } catch {
-        // Ignore invalid popups.
-      }
-      return { action: 'deny' };
-    });
-
-    active = {
-      endpoint,
-      token,
-      profile,
-      proxy,
-      proxyBridge,
-      proxyPublicIp,
-      networkMode: proxy ? 'proxy' : 'direct',
-      browserWindow,
-      window: browserWindow,
-      browserSession,
-      allowedOrigin,
-    };
-
-    await loadProfileUrl(browserWindow, browserSession, profile.url, proxy);
-  } catch (error) {
-    cleanupCapture();
-    if (!browserWindow.isDestroyed()) browserWindow.destroy();
-    throw error;
-  }
+  console.log(
+    `Session Manager KAIZEN launched ${profile.name || profile.id} `
+    + `pid=${result.pid} debugPort=${result.debugPort} `
+    + `network=${proxy ? 'proxy' : 'direct'}.`,
+  );
+  return result;
 }
 
-ipcMain.handle('userflex:save-session', async (event) => {
-  if (!active || event.sender.id !== active.browserWindow.webContents.id) throw new Error('No hay captura activa.');
-  const { browserWindow, browserSession, endpoint, token, allowedOrigin, profile, networkMode } = active;
-  const currentUrl = browserWindow.webContents.getURL();
-  if (!currentUrl.startsWith('https://')) throw new Error('La página actual no es HTTPS.');
-
-  const cookies = await browserSession.cookies.get({});
-  const storage = await browserWindow.webContents.executeJavaScript(`(() => {
-    const read = (store) => {
-      const result = {};
-      for (let i = 0; i < store.length; i += 1) {
-        const key = store.key(i);
-        if (key) result[key] = store.getItem(key);
-      }
-      return result;
-    };
-    return {
-      origin: location.origin,
-      href: location.href,
-      localStorage: read(window.localStorage),
-      sessionStorage: read(window.sessionStorage),
-    };
-  })()`);
-
-  const publicIp = await discoverPublicIp(browserSession);
-  if (active.proxy && !publicIp) throw new Error('No se pudo validar la IP de salida mediante el proxy seleccionado.');
-  const material = {
-    format: 'userflex-browser-session-v1',
-    profileId: profile.id,
-    allowedOrigin,
-    capturedUrl: currentUrl,
-    capturedAt: new Date().toISOString(),
-    network: { mode: networkMode },
-    cookies: cookies.map((cookie) => ({
-      name: cookie.name,
-      value: cookie.value,
-      domain: cookie.domain,
-      path: cookie.path,
-      secure: cookie.secure,
-      httpOnly: cookie.httpOnly,
-      sameSite: cookie.sameSite,
-      expirationDate: cookie.expirationDate,
-    })),
-    storage,
-  };
-
-  const completed = await apiPost(endpoint, '/api/session-manager/complete', { token, publicIp, material });
-  browserWindow.webContents.send('userflex:saved', { version: completed.version, publicIp: completed.public_ip || publicIp });
-  return { ok: true, version: completed.version, publicIp: completed.public_ip || publicIp };
-});
+function showFatalError(error) {
+  const message = error instanceof Error ? error.message : String(error || 'Error inesperado.');
+  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title>
+    <body style="font-family:system-ui;padding:28px;color:#0f172a">
+      <h2>No se pudo abrir el perfil</h2>
+      <p>${escapeHtml(message)}</p>
+      <p style="color:#64748b">Cierra esta ventana, corrige el problema indicado y vuelve a pulsar Cargar sesión en el panel.</p>
+    </body>`;
+  const win = new BrowserWindow({
+    width: 720,
+    height: 360,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
+  });
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -430,12 +182,7 @@ if (!gotLock) {
       void startCapture(protocolUrl).catch(showFatalError);
       return;
     }
-    if (active?.window && !active.window.isDestroyed()) {
-      if (active.window.isMinimized()) active.window.restore();
-      active.window.focus();
-    } else {
-      showReadyWindow();
-    }
+    showReadyWindow();
   });
 
   app.on('open-url', (event, url) => {
@@ -453,14 +200,15 @@ if (!gotLock) {
   });
 
   app.on('activate', () => {
-    if (active?.window && !active.window.isDestroyed()) active.window.focus();
-    else showReadyWindow();
+    if (!engine().active) showReadyWindow();
   });
-}
 
-function showFatalError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  const win = new BrowserWindow({ width: 700, height: 340, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title><body style="font-family:system-ui;padding:28px"><h2>No se pudo cargar la sesión</h2><p>${message.replace(/[<>&]/g, '')}</p><p>Puedes cerrar esta ventana y volver a intentarlo desde el panel. Si el mensaje indica un problema de proxy, corrige primero ese proxy. Reinstala Session Manager solo si el enlace userflex-session:// deja de abrir el programa.</p></body>`;
-  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  app.on('before-quit', (event) => {
+    if (quitAfterCleanup) return;
+    event.preventDefault();
+    quitAfterCleanup = true;
+    void engine().close('app_exit')
+      .catch(() => null)
+      .finally(() => app.quit());
+  });
 }

@@ -3,8 +3,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
@@ -31,6 +35,7 @@ let profileOrder = [];
 let profileDragMonitor = null;
 const pendingUsageCloseRequests = new Set();
 let quitAfterUsageFlush = false;
+let kaizenBrowserEngine = null;
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -48,16 +53,76 @@ function devicePath() {
   return path.join(app.getPath('userData'), 'device.json');
 }
 
-async function getDeviceKey() {
+function isLocalPermissionError(error) {
+  return ['EPERM', 'EACCES'].includes(String(error?.code || ''));
+}
+
+async function currentWindowsUserSid() {
+  if (process.platform !== 'win32') return null;
   try {
-    const raw = JSON.parse(await fs.readFile(devicePath(), 'utf8'));
-    if (typeof raw?.deviceKey === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(raw.deviceKey)) return raw.deviceKey;
+    const result = await execFileAsync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
+      windowsHide: true,
+      timeout: 4_000,
+    });
+    return String(result?.stdout || '').match(/"[^"]*","(S-[^"]+)"/i)?.[1] || null;
   } catch {
-    // First run.
+    return null;
   }
+}
+
+async function repairLocalPathAccess(targetPath) {
+  if (process.platform !== 'win32' || !targetPath) return false;
+  const sid = await currentWindowsUserSid();
+  if (!sid) return false;
+  try {
+    await execFileAsync('icacls.exe', [
+      targetPath,
+      '/inheritance:e',
+      '/grant:r',
+      `*${sid}:F`,
+      '/Q',
+    ], { windowsHide: true, timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readExistingDeviceKey() {
+  const raw = JSON.parse(await fs.readFile(devicePath(), 'utf8'));
+  return typeof raw?.deviceKey === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(raw.deviceKey)
+    ? raw.deviceKey
+    : null;
+}
+
+async function getDeviceKey() {
+  let readError = null;
+  try {
+    const existing = await readExistingDeviceKey();
+    if (existing) return existing;
+  } catch (error) {
+    readError = error;
+  }
+
+  if (isLocalPermissionError(readError)) {
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(devicePath());
+    try {
+      const existing = await readExistingDeviceKey();
+      if (existing) return existing;
+    } catch {}
+  }
+
   const deviceKey = crypto.randomBytes(32).toString('base64url');
   await fs.mkdir(path.dirname(devicePath()), { recursive: true });
-  await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  try {
+    await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    if (!isLocalPermissionError(error)) throw error;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(devicePath());
+    await fs.writeFile(devicePath(), JSON.stringify({ deviceKey }), { encoding: 'utf8', mode: 0o600 });
+  }
   return deviceKey;
 }
 
@@ -66,13 +131,23 @@ async function saveAuth(token, meta) {
   authMeta = meta || null;
   if (!safeStorage.isEncryptionAvailable()) return;
   const encrypted = safeStorage.encryptString(token).toString('base64');
-  await fs.mkdir(path.dirname(authPath()), { recursive: true });
-  await fs.writeFile(authPath(), JSON.stringify({ token: encrypted, meta }), { encoding: 'utf8', mode: 0o600 });
+  const file = authPath();
+  const payload = JSON.stringify({ token: encrypted, meta });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  try {
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    if (!isLocalPermissionError(error)) throw error;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(file);
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  }
 }
 
 async function loadAuth() {
   if (!safeStorage.isEncryptionAvailable()) return null;
-  try {
+
+  const read = async () => {
     const raw = JSON.parse(await fs.readFile(authPath(), 'utf8'));
     if (typeof raw?.token !== 'string') return null;
     const token = safeStorage.decryptString(Buffer.from(raw.token, 'base64'));
@@ -80,8 +155,15 @@ async function loadAuth() {
     accessToken = token;
     authMeta = raw.meta || null;
     return { token, meta: authMeta };
-  } catch {
-    return null;
+  };
+
+  try {
+    return await read();
+  } catch (error) {
+    if (!isLocalPermissionError(error)) return null;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(authPath());
+    try { return await read(); } catch { return null; }
   }
 }
 
@@ -91,8 +173,11 @@ async function clearAuth() {
   stopHeartbeat();
   try {
     await fs.unlink(authPath());
-  } catch {
-    // Already removed.
+  } catch (error) {
+    if (!isLocalPermissionError(error)) return;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(authPath());
+    await fs.unlink(authPath()).catch(() => null);
   }
 }
 
@@ -142,6 +227,24 @@ function closeWorkspaceUsage(workspace, reason = 'profile_closed') {
   workspace.usageClosePromise = request;
   pendingUsageCloseRequests.add(request);
   return request;
+}
+
+function getKaizenBrowserEngine() {
+  if (kaizenBrowserEngine) return kaizenBrowserEngine;
+  kaizenBrowserEngine = createKaizenBrowserEngine({
+    app,
+    onClosed: async (entry, reason) => {
+      if (!entry?.usageId) return;
+      const usage = {
+        usageId: entry.usageId,
+        usageClosed: false,
+        usageClosePromise: null,
+      };
+      await closeWorkspaceUsage(usage, reason || 'browser_exit');
+    },
+    log: console,
+  });
+  return kaizenBrowserEngine;
 }
 
 async function flushUsageCloseRequests(timeoutMs = 1800) {
@@ -202,7 +305,18 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   mergeValidationMeta(payload);
   let freshCatalog = knownCatalog;
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
-  if (freshCatalog) mergeValidationMeta(freshCatalog);
+  if (freshCatalog) {
+    mergeValidationMeta(freshCatalog);
+    const clientId = authMeta?.client?.id || null;
+    const authorizedProfileIds = Array.isArray(freshCatalog.profiles)
+      ? freshCatalog.profiles.map((profile) => profile?.id).filter(Boolean)
+      : [];
+    if (clientId) {
+      await getKaizenBrowserEngine()
+        .reconcileAuthorizedProfiles(clientId, authorizedProfileIds)
+        .catch((error) => console.warn('KAIZEN profile reconciliation failed:', error?.message || error));
+    }
+  }
   if (accessToken && authMeta) await saveAuth(accessToken, authMeta).catch(() => null);
   return { configChanged, catalog: freshCatalog, auth: authMeta, validationReason: reason };
 }
@@ -278,11 +392,17 @@ function enterWorkspace(sender) {
 }
 
 async function returnToLogin() {
+  const clientId = authMeta?.client?.id || null;
+  await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
+  closePrivateBrowser();
+  await flushUsageCloseRequests();
+  if (clientId) {
+    await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
+  }
   await clearAuth();
   const loginWindow = createMainWindow();
   loginWindow.show();
   loginWindow.focus();
-  closePrivateBrowser();
 }
 
 function proxyRules(proxy) {
@@ -1032,18 +1152,6 @@ function detachIfOutside(profileId, point) {
 
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
-  if (profileTabs.has(profileId)) {
-    const workspace = profileTabs.get(profileId);
-    pendingCatalogTab = false;
-    if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
-      showCatalogTab('home');
-      workspace.detachedWindow.show();
-      workspace.detachedWindow.focus();
-    } else {
-      selectProfileTab(profileId);
-    }
-    return { ok: true, reused: true };
-  }
 
   const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, {
     method: 'POST',
@@ -1056,86 +1164,38 @@ async function openProfile(profileId) {
   if (sync.configChanged && sync.catalog) {
     sendClient('userflex:heartbeat', { active: true, revoke: false, ...sync });
   }
+
   const profile = launch?.profile;
   const connection = launch?.connection || { mode: 'direct', locked: false };
   const delivery = launch?.sessionDelivery || null;
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
 
-  const partitionClientId = authMeta?.client?.id || 'client';
-  const workspace = {
-    profile,
-    connection,
-    delivery,
-    partition: `persist:userflex-client-${partitionClientId}-${profile.id}`,
-    pages: new Map(),
-    pageOrder: [],
-    activePageId: null,
-    loginHandler: null,
-    detachedWindow: null,
-    detachedShellReady: false,
-    closing: false,
-    cleaned: false,
+  const usage = {
     usageId: launch?.usage?.id || null,
     usageClosed: false,
     usageClosePromise: null,
   };
-  const firstPage = createProfilePageView(workspace);
-  workspace.activePageId = firstPage.id;
-  const browserSession = firstPage.view.webContents.session;
-
-  if (connection.mode === 'proxy' && connection.proxy) {
-    await browserSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: proxyRules(connection.proxy),
-      proxyBypassRules: '<-loopback>',
-    });
-    const proxyHost = String(connection.proxy.host || '').toLowerCase();
-    workspace.loginHandler = (event, targetWebContents, _details, authInfo, callback) => {
-      const belongsToWorkspace = Array.from(workspace.pages.values()).some((page) => page.view.webContents === targetWebContents);
-      if (!belongsToWorkspace) return;
-      if (!authInfo?.isProxy || String(authInfo.host || '').toLowerCase() !== proxyHost) return;
-      event.preventDefault();
-      callback(connection.proxy.username || '', connection.proxy.password || '');
-    };
-    app.on('login', workspace.loginHandler);
-  } else {
-    await browserSession.setProxy({ mode: 'direct' });
-  }
 
   try {
-    if (connection.locked === true && connection.mode !== 'proxy') {
-      throw new UserflexError('El perfil exige una salida protegida y el proxy no está disponible.', 'NETWORK_LOCK_REQUIRED');
-    }
-    if (connection.locked === true) {
-      const detectedIp = await publicIp(browserSession);
-      if (!detectedIp) throw new UserflexError('No se pudo validar la IP de salida del perfil.', 'EGRESS_IP_UNVERIFIED');
-      if (delivery?.expectedPublicIp && detectedIp !== delivery.expectedPublicIp) {
-        throw new UserflexError(`La IP de salida no coincide con el perfil. Esperada: ${delivery.expectedPublicIp}. Detectada: ${detectedIp}.`, 'EGRESS_IP_MISMATCH');
-      }
-    }
-
-    if (profile.sessionMode === 'managed-first-party') {
-      if (!delivery?.ready || !delivery?.materialIncluded) {
-        throw new UserflexError('La sesión administrada todavía no está lista.', 'MANAGED_SESSION_NOT_READY');
-      }
-      await restoreManagedSession(firstPage.view.webContents, browserSession, profile, delivery);
-    } else {
-      await firstPage.view.webContents.loadURL(profile.url);
-    }
-
-    profileTabs.set(profile.id, workspace);
-    profileOrder.push(profile.id);
-    selectProfileTab(profile.id);
+    const result = await getKaizenBrowserEngine().launch({
+      clientId: authMeta?.client?.id || 'client',
+      profile,
+      connection,
+      delivery,
+      usageId: usage.usageId,
+    });
     return {
+      ...result,
       ok: true,
-      reused: false,
-      tabbed: true,
-      network: connection.mode,
-      networkLocked: connection.locked === true,
-      sessionVersion: Number(delivery?.version || 0),
+      tabbed: false,
+      engine: 'kaizen-external',
+      sessionVersion: Number(delivery?.version || result?.sessionVersion || 0),
     };
   } catch (error) {
-    cleanupWorkspace(workspace, 'launch_failed');
+    await closeWorkspaceUsage(usage, 'launch_failed');
+    if (!error?.code && /Chrome\/Chromium/i.test(String(error?.message || ''))) {
+      error.code = 'KAIZEN_BROWSER_RUNTIME_MISSING';
+    }
     throw error;
   }
 }
@@ -1291,11 +1351,13 @@ ipcMain.handle('userflex:logout', async () => {
 
 app.on('before-quit', (event) => {
   if (quitAfterUsageFlush) return;
-  for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
-  if (pendingUsageCloseRequests.size === 0) return;
   event.preventDefault();
   quitAfterUsageFlush = true;
-  void flushUsageCloseRequests().finally(() => app.quit());
+  for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
+  void getKaizenBrowserEngine().closeAll('app_exit')
+    .catch(() => null)
+    .then(() => flushUsageCloseRequests())
+    .finally(() => app.quit());
 });
 
 app.whenReady().then(async () => {
