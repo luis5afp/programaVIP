@@ -466,13 +466,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         || !ready
         || Number(marker.version || 0) !== desiredVersion
       );
-      const runningVersionMismatch = runningEntry && managed && (
-        !ready || Number(runningEntry.sessionVersion || 0) !== desiredVersion
+      const runningNeedsInvalidation = runningEntry && marker && (
+        !managed
+        || !ready
+        || Number(runningEntry.sessionVersion || marker.version || 0) !== desiredVersion
       );
 
-      if (runningVersionMismatch) {
+      if (runningNeedsInvalidation) {
         const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
-        await close(clientId, profile.id, ready ? 'session_version_changed' : 'session_revoked').catch(() => null);
+        const reason = !managed ? 'session_mode_changed' : ready ? 'session_version_changed' : 'session_revoked';
+        await close(clientId, profile.id, reason).catch(() => null);
         await killStrayProfileProcesses(dir);
         await fsp.rm(dir, { recursive: true, force: true });
         invalidated.push({ profileId: profile.id, from: previousVersion, to: ready ? desiredVersion : 0, running: true });
