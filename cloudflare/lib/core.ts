@@ -241,7 +241,7 @@ export async function passwordHash(password: string) {
       256,
     ),
   );
-  return `pbkdf2-sha256${PBKDF2_ITERATIONS}${b64(salt)}${b64(derived)}`;
+  return 'pbkdf2-sha256$' + PBKDF2_ITERATIONS + '$' + b64(salt) + '$' + b64(derived);
 }
 
 export async function passwordVerify(password: string, encoded: string) {
