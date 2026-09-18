@@ -19,6 +19,8 @@ jobs:
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=high
+      - name: Test profile runtime matrix
+        run: node --experimental-strip-types scripts/profile-runtime-matrix.test.ts
       - run: npm run typecheck
       - run: npm run build
       - run: npx wrangler@4.130.0 deploy --dry-run
