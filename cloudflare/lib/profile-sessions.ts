@@ -17,7 +17,9 @@ import {
 } from './core';
 
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
+const VALIDATION_TTL_MS = 10 * 60 * 1000;
 const MAX_SESSION_MATERIAL_BYTES = 8_000_000;
+const MAX_VALIDATION_RESULT_BYTES = 100_000;
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -86,6 +88,252 @@ async function sessionRow(env: Env, profileId: string) {
     `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
   return rows?.[0] || null;
+}
+
+function runtimeForProfile(profile: any) {
+  const authStrategy = profile?.auth_strategy
+    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+  return {
+    browserEngine: profile?.browser_engine || 'chrome-native',
+    authStrategy,
+    storageStrategy: profile?.storage_strategy
+      || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
+    networkStrategy: profile?.network_strategy || 'auto',
+    extensionStrategy: profile?.extension_strategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
+  };
+}
+
+function snapshotAuthentication(runtime: any) {
+  return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
+}
+
+function credentialAuthentication(runtime: any) {
+  return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
+}
+
+async function proxyRecord(env: Env, proxyId: string | null) {
+  if (!proxyId) return null;
+  const rows = await sb(
+    env,
+    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip,browser_compatible&id=eq.${proxyId}&limit=1`,
+  );
+  return rows?.[0] || null;
+}
+
+async function profileValidationNetwork(env: Env, profile: any, clientId: string | null) {
+  const runtime = runtimeForProfile(profile);
+  if (runtime.networkStrategy === 'client-direct') {
+    return { mode: 'direct', locked: false, source: 'client-direct', proxy: null };
+  }
+
+  let proxy: any = null;
+  let source = 'direct';
+  let locked = false;
+
+  if (runtime.networkStrategy === 'profile-proxy') {
+    proxy = await defaultProxy(env, profile.id);
+    source = 'profile-proxy';
+    locked = true;
+  } else if (runtime.networkStrategy === 'assigned-proxy') {
+    if (!clientId) return { mode: 'missing-client', locked: true, source: 'assigned-proxy', proxy: null };
+    const rows = await sb(
+      env,
+      `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
+    );
+    proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null);
+    source = 'assigned-proxy';
+    locked = true;
+  } else {
+    const fixed = await defaultProxy(env, profile.id);
+    if (runtime.authStrategy === 'manual' && clientId) {
+      const rows = await sb(
+        env,
+        `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
+      );
+      proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null) || fixed;
+      source = rows?.[0]?.proxy_id ? 'assignment-auto' : fixed ? 'profile-auto' : 'direct';
+    } else {
+      proxy = fixed;
+      source = fixed ? 'profile-auto' : 'direct';
+    }
+    locked = runtime.authStrategy !== 'manual' && Boolean(fixed);
+  }
+
+  return { mode: proxy ? 'proxy' : 'direct', locked, source, proxy };
+}
+
+function materialCookies(material: any): any[] {
+  return Array.isArray(material?.cookies) ? material.cookies : [];
+}
+
+async function configurationValidation(env: Env, profile: any, clientId: string | null) {
+  const runtime = runtimeForProfile(profile);
+  const checks: any[] = [];
+  const add = (key: string, label: string, status: 'pass' | 'warn' | 'fail', detail: string) => {
+    checks.push({ key, label, status, detail });
+  };
+
+  try {
+    const target = new URL(profile.url);
+    add('url', 'URL del perfil', ['http:', 'https:'].includes(target.protocol) ? 'pass' : 'fail', target.origin);
+  } catch {
+    add('url', 'URL del perfil', 'fail', 'La URL no es válida.');
+  }
+
+  add(
+    'browser',
+    'Motor de navegador',
+    runtime.browserEngine === 'nstchrome' ? 'warn' : 'pass',
+    runtime.browserEngine === 'nstchrome'
+      ? 'nstchrome requiere que el runtime autorizado esté instalado en el equipo de prueba/cliente.'
+      : 'Chrome nativo se validará en el equipo que ejecute userFLOW.',
+  );
+
+  const credentials = await credentialRow(env, profile.id);
+  if (credentialAuthentication(runtime)) {
+    add('credentials', 'Credenciales', credentials ? 'pass' : 'fail', credentials ? 'Credenciales cifradas disponibles.' : 'Faltan credenciales administradas.');
+  } else if (runtime.authStrategy === 'cookie-snapshot') {
+    add('credentials', 'Autofill opcional', credentials ? 'pass' : 'warn', credentials ? 'Hay credenciales disponibles como respaldo.' : 'No hay credenciales de respaldo; el snapshot puede funcionar igualmente.');
+  } else {
+    add('credentials', 'Credenciales', 'pass', 'Este perfil no necesita credenciales administradas.');
+  }
+
+  let material: any = null;
+  const session = await sessionRow(env, profile.id);
+  if (snapshotAuthentication(runtime)) {
+    if (!session || session.status !== 'ready' || !session.material_ciphertext || !session.material_iv) {
+      add('snapshot', 'Snapshot de sesión', 'fail', 'No hay una sesión capturada lista.');
+    } else {
+      try {
+        const raw = await decryptProxy(env, session.material_ciphertext, session.material_iv);
+        material = JSON.parse(raw);
+        add('snapshot', 'Snapshot de sesión', 'pass', `Sesión v${Number(session.session_version || 0)} disponible.`);
+      } catch {
+        add('snapshot', 'Snapshot de sesión', 'fail', 'El material cifrado de sesión no se pudo leer.');
+      }
+    }
+  } else {
+    add('snapshot', 'Snapshot de sesión', 'pass', 'La estrategia seleccionada no necesita snapshot.');
+  }
+
+  try {
+    const target = new URL(profile.url);
+    const host = target.hostname.toLowerCase();
+    if (material && (host === 'netflix.com' || host.endsWith('.netflix.com'))) {
+      const cookies = materialCookies(material);
+      const names = new Set(cookies.map((cookie: any) => String(cookie?.name || '').toLowerCase()));
+      const missing = ['netflixid', 'securenetflixid'].filter((name) => !names.has(name));
+      const nowSeconds = Date.now() / 1000;
+      const expiredAuth = cookies.some((cookie: any) => {
+        const name = String(cookie?.name || '').toLowerCase();
+        const expiry = Number(cookie?.expirationDate || cookie?.expires || 0);
+        return ['netflixid', 'securenetflixid'].includes(name) && expiry > 0 && expiry <= nowSeconds;
+      });
+      add(
+        'netflix-auth',
+        'Cookies Netflix',
+        missing.length || expiredAuth ? 'fail' : 'pass',
+        missing.length
+          ? `Faltan: ${missing.join(', ')}.`
+          : expiredAuth ? 'Una cookie de autenticación de Netflix ya venció.' : 'NetflixId y SecureNetflixId están presentes.',
+      );
+    }
+  } catch {}
+
+  const network = await profileValidationNetwork(env, profile, clientId);
+  if (network.mode === 'missing-client') {
+    add('network', 'Red', 'fail', 'Selecciona un cliente para probar su proxy asignado.');
+  } else if (network.locked && !network.proxy) {
+    add('network', 'Red', 'fail', 'La estrategia exige un proxy pero no hay uno disponible.');
+  } else if (network.proxy) {
+    const usable = network.proxy.enabled === true
+      && network.proxy.proxy_type !== 'ssh'
+      && network.proxy.browser_compatible !== false
+      && !['invalid'].includes(String(network.proxy.validation_status || ''));
+    add(
+      'network',
+      'Red',
+      usable ? 'pass' : 'fail',
+      usable
+        ? `${network.source}: ${network.proxy.name || network.proxy.host} · ${network.proxy.validation_status || 'sin validar'}`
+        : 'El proxy seleccionado está deshabilitado, no es compatible o falló validación.',
+    );
+  } else {
+    add('network', 'Red', 'pass', 'Salida directa; la IP real se verificará desde el equipo que ejecute userFLOW.');
+  }
+
+  return {
+    profileId: profile.id,
+    runtime,
+    clientId,
+    ready: !checks.some((check) => check.status === 'fail'),
+    checks,
+    network: {
+      mode: network.mode,
+      locked: network.locked,
+      source: network.source,
+      publicIp: network.proxy ? inetHost(network.proxy.public_ip) : null,
+      proxyName: network.proxy?.name || null,
+    },
+  };
+}
+
+async function validationJob(env: Env, rawToken: string) {
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_VALIDATION_TOKEN');
+  const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
+  const rows = await sb(
+    env,
+    `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,expires_at,started_at,completed_at&token_hash=eq.${tokenHash}&limit=1`,
+  );
+  const job = rows?.[0];
+  if (!job || !['pending', 'running'].includes(job.status)) throw new HttpError(401, 'VALIDATION_TOKEN_INVALID');
+  if (new Date(job.expires_at).getTime() <= Date.now()) {
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
+    });
+    throw new HttpError(401, 'VALIDATION_TOKEN_EXPIRED');
+  }
+  return job;
+}
+
+function safeValidationResult(value: any) {
+  const restore = value?.restore && typeof value.restore === 'object' ? {
+    cookiesInstalled: Number(value.restore.cookiesInstalled || 0),
+    cookiesRejected: Number(value.restore.cookiesRejected || 0),
+    indexedDbRestored: Number(value.restore.indexedDbRestored || 0),
+    indexedDbTotal: Number(value.restore.indexedDbTotal || 0),
+    storagePolicy: value.restore.storagePolicy || null,
+    pageUrl: value.restore.pageUrl || null,
+  } : null;
+  const autofill = value?.autofill && typeof value.autofill === 'object' ? {
+    installed: value.autofill.installed === true,
+    visibleHelper: value.autofill.visibleHelper === true,
+    origin: value.autofill.origin || null,
+  } : null;
+  const inspection = value?.inspection && typeof value.inspection === 'object' ? {
+    currentUrl: value.inspection.currentUrl || null,
+    loginLikeUrl: value.inspection.loginLikeUrl === true,
+    usernameFieldVisible: value.inspection.usernameFieldVisible === true,
+    passwordFieldVisible: value.inspection.passwordFieldVisible === true,
+    usernameFilled: value.inspection.usernameFilled === true,
+    passwordFilled: value.inspection.passwordFilled === true,
+    helperVisible: value.inspection.helperVisible === true,
+  } : null;
+  return {
+    ok: value?.ok === true,
+    browser: value?.browser || null,
+    profileState: value?.profileState || null,
+    network: value?.network || null,
+    publicIp: value?.publicIp || null,
+    sessionVersion: Number(value?.sessionVersion || 0),
+    runtime: value?.runtime || null,
+    restore,
+    autofill,
+    inspection,
+    testedAt: new Date().toISOString(),
+  };
 }
 
 export async function adminProfileSessionRoutes(
