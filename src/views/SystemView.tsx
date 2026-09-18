@@ -91,7 +91,7 @@ export function SystemView({ session }: { session: AdminSession }) {
         </Card>
       </div>
 
-      <Card className="card-pad" style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 16 }}><Card className="card-pad">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div>
             <PackageCheck size={22} />
@@ -167,7 +167,7 @@ export function SystemView({ session }: { session: AdminSession }) {
         ) : (
           <p className="muted" style={{ marginTop: 12 }}>{loadingRelease ? 'Consultando versión activa…' : 'No se pudo leer el manifiesto de actualización.'}</p>
         )}
-      </Card>
+      </Card></div>
     </>
   );
 }
