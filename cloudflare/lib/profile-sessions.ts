@@ -402,6 +402,76 @@ export async function adminProfileSessionRoutes(
     return json({ ok: true, profile_id: profileId, login_username: loginUsername, has_credentials: true });
   }
 
+  const validationMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/validation$/i);
+  if (validationMatch && method === 'POST') {
+    const profileId = uuid(validationMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const body = await bodyJson(request);
+    const clientId = body.clientId ? uuid(body.clientId, 'clientId') : null;
+    const result = await configurationValidation(env, profile, clientId);
+    await audit(env, request, 'admin', admin.userId, 'profile.validation.check', 'profile', profileId, {
+      clientId,
+      ready: result.ready,
+      failedChecks: result.checks.filter((check: any) => check.status === 'fail').map((check: any) => check.key),
+    });
+    return json({ ok: true, validation: result });
+  }
+
+  const clientTestMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/client-test$/i);
+  if (clientTestMatch && method === 'POST') {
+    const profileId = uuid(clientTestMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const body = await bodyJson(request);
+    const clientId = body.clientId ? uuid(body.clientId, 'clientId') : null;
+    const validation = await configurationValidation(env, profile, clientId);
+    if (!validation.ready) {
+      throw new HttpError(409, 'PROFILE_VALIDATION_BLOCKED', 'Corrige los errores de configuración antes de probar como cliente.');
+    }
+
+    const rawToken = token(32);
+    const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
+    const expiresAt = new Date(Date.now() + VALIDATION_TTL_MS).toISOString();
+    const jobs = await sb(env, 'userflex_profile_validation_jobs', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        profile_id: profileId,
+        client_id: clientId,
+        token_hash: tokenHash,
+        status: 'pending',
+        expires_at: expiresAt,
+      }),
+    });
+    const jobId = jobs?.[0]?.id;
+    if (!jobId) throw new HttpError(500, 'VALIDATION_JOB_CREATE_FAILED');
+    const launchUrl = `userflow-client://profile-test?endpoint=${encodeURIComponent(url.origin)}&token=${encodeURIComponent(rawToken)}`;
+    await audit(env, request, 'admin', admin.userId, 'profile.validation.client_test.request', 'profile', profileId, {
+      jobId,
+      clientId,
+      expiresAt,
+      network: validation.network,
+    });
+    return json({
+      ok: true,
+      job_id: jobId,
+      launch_url: launchUrl,
+      expires_at: expiresAt,
+      validation,
+    });
+  }
+
+  const validationJobMatch = path.match(/^\/api\/profile-tests\/([0-9a-f-]{36})$/i);
+  if (validationJobMatch && method === 'GET') {
+    const jobId = uuid(validationJobMatch[1], 'jobId');
+    const rows = await sb(
+      env,
+      `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,result,error,expires_at,started_at,completed_at,created_at&id=eq.${jobId}&limit=1`,
+    );
+    const job = rows?.[0];
+    if (!job) throw new HttpError(404, 'VALIDATION_JOB_NOT_FOUND');
+    return json({ ok: true, job });
+  }
+
   const captureMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session-capture$/i);
   if (captureMatch && method === 'POST') {
     const profileId = uuid(captureMatch[1], 'profileId');
