@@ -30,6 +30,8 @@ let pendingCatalogTab = false;
 let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
+let heartbeatFailureSince = 0;
+let heartbeatFailClosed = false;
 const profileTabs = new Map();
 let profileOrder = [];
 let profileDragMonitor = null;
@@ -299,6 +301,12 @@ function mergeValidationMeta(payload) {
   if (revision) authMeta.client = { ...(authMeta.client || {}), configRevision: revision };
   if (payload.plan) authMeta.plan = { ...(authMeta.plan || {}), ...payload.plan };
   if (payload.expiresAt) authMeta.subscription = { ...(authMeta.subscription || {}), expiresAt: payload.expiresAt };
+  if (payload.offlineGraceMinutes !== undefined) {
+    authMeta.subscription = {
+      ...(authMeta.subscription || {}),
+      offlineGraceMinutes: Math.max(0, Number(payload.offlineGraceMinutes || 0)),
+    };
+  }
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
 }
 
@@ -325,21 +333,61 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
 
 async function runHeartbeat(reason = 'scheduled') {
   if (!accessToken) return;
+
+  const subscriptionExpiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
+  if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= Date.now()) {
+    await returnToLogin();
+    return;
+  }
+
   try {
     const result = await apiRequest('/api/client/heartbeat', { method: 'POST' });
+    heartbeatFailureSince = 0;
+    heartbeatFailClosed = false;
     if (result?.revoke === true || result?.active === false) {
       await returnToLogin();
       return;
     }
     const sync = await syncClientConfiguration(result, reason);
-    sendClient('userflex:heartbeat', { ...result, ...sync });
+    sendClient('userflex:heartbeat', { ...result, ...sync, connectionLost: false });
   } catch (error) {
-    if (authError(error)) await returnToLogin();
+    if (authError(error)) {
+      await returnToLogin();
+      return;
+    }
+
+    const now = Date.now();
+    if (!heartbeatFailureSince) heartbeatFailureSince = now;
+    const configuredGraceMinutes = Math.max(0, Number(authMeta?.subscription?.offlineGraceMinutes || 0));
+    const technicalGraceMs = HEARTBEAT_MS * 2;
+    const allowedOfflineMs = Math.max(technicalGraceMs, configuredGraceMinutes * 60 * 1000);
+    const elapsed = now - heartbeatFailureSince;
+    const remainingMs = Math.max(0, allowedOfflineMs - elapsed);
+
+    if (elapsed >= allowedOfflineMs && !heartbeatFailClosed) {
+      heartbeatFailClosed = true;
+      await getKaizenBrowserEngine().closeAll('server_unreachable').catch(() => null);
+      closePrivateBrowser();
+      await flushUsageCloseRequests();
+    }
+
+    sendClient('userflex:heartbeat', {
+      active: !heartbeatFailClosed,
+      revoke: false,
+      connectionLost: true,
+      failClosed: heartbeatFailClosed,
+      retryInMs: HEARTBEAT_MS,
+      offlineGraceRemainingMs: remainingMs,
+      validationReason: reason,
+      error: serializeError(error),
+    });
   }
 }
 
 function startHeartbeat() {
   stopHeartbeat();
+  heartbeatFailureSince = 0;
+  heartbeatFailClosed = false;
   // KAIZEN keeps browser sessions under frequent server revalidation. A short
   // heartbeat lets userFLOW react to revocation, plan/profile changes and new
   // managed-session generations without leaving a stale browser alive for hours.
@@ -350,6 +398,8 @@ function startHeartbeat() {
 function stopHeartbeat() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  heartbeatFailureSince = 0;
+  heartbeatFailClosed = false;
 }
 
 function createMainWindow() {
