@@ -50,6 +50,31 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+      - name: Wait for paired desktop release
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="$(node -p "require('./client-app/package.json').version")"
+          BASE="https://userflex-admin.luis5afp.workers.dev"
+          echo "Waiting for userFLOW/Session Manager v$EXPECTED before server activation..."
+
+          for attempt in $(seq 1 90); do
+            current="$(curl --silent --show-error "$BASE/api/client-update/latest" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version||'')}catch{console.log('')}})")"
+            sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${{ github.token }}" \
+              --header 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$EXPECTED")"
+            if [ "$current" = "$EXPECTED" ] && [ "$sm_code" = "200" ]; then
+              echo "Paired desktop release v$EXPECTED is ready."
+              break
+            fi
+            if [ "$attempt" = "90" ]; then
+              echo "Timed out waiting for paired desktop release. updater=$current session-manager-http=$sm_code" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
       - name: Configure Supabase service secret
         shell: bash
         run: printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.130.0 secret put SUPABASE_SERVICE_ROLE_KEY
@@ -67,13 +92,15 @@ jobs:
           set -euo pipefail
           BASE="https://userflex-admin.luis5afp.workers.dev"
           TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          EXPECTED="$(node -p "require('./client-app/package.json').version")"
 
           health="$(curl --fail --silent --show-error "$BASE/api/health")"
-          HEALTH="$health" node - <<'NODE'
+          HEALTH="$health" EXPECTED="$EXPECTED" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
+          const expected = process.env.EXPECTED;
           if (value.ok !== true) throw new Error('health endpoint is not OK');
-          if (value.minimumClientVersion !== '0.3.6') throw new Error('unexpected minimum client version');
-          if (value.minimumSessionManagerVersion !== '0.3.6') throw new Error('unexpected minimum Session Manager version');
+          if (value.minimumClientVersion !== expected) throw new Error('unexpected minimum client version');
+          if (value.minimumSessionManagerVersion !== expected) throw new Error('unexpected minimum Session Manager version');
           NODE
 
           latest="$(curl --fail --silent --show-error "$BASE/api/client-update/latest")"
@@ -90,13 +117,13 @@ jobs:
           code="$(curl --silent --output /tmp/sm.json --write-out '%{http_code}' \
             --request POST "$BASE/api/session-manager/bootstrap" \
             --header 'content-type: application/json' \
-            --header 'X-Userflex-Session-Manager-Version: 0.3.6' \
+            --header "X-Userflex-Session-Manager-Version: $EXPECTED" \
             --data "{\"token\":\"$TOKEN\"}")"
           test "$code" = "401"
 
           code="$(curl --silent --output /tmp/test.json --write-out '%{http_code}' \
             --request POST "$BASE/api/client-test/bootstrap" \
             --header 'content-type: application/json' \
-            --header 'X-Userflow-Client-Version: 0.3.6' \
+            --header "X-Userflow-Client-Version: $EXPECTED" \
             --data "{\"token\":\"$TOKEN\"}")"
           test "$code" = "401"
