@@ -469,6 +469,8 @@ export function ProfilesView() {
               || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
             const snapshotManaged = profileAuth === 'cookie-snapshot' || profileAuth === 'hybrid';
             const credentialManaged = profileAuth === 'credential-autofill' || profileAuth === 'hybrid';
+            const credentialHelperConfigured = session?.has_credentials === true;
+            const credentialHelperSupported = credentialManaged || profileAuth === 'cookie-snapshot';
             const managed = profileAuth !== 'manual';
             const profilePlanIds = planIdsFor(profile.id);
             return (
@@ -505,9 +507,11 @@ export function ProfilesView() {
                         Snapshot: {session?.status === 'active' ? `activo · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
                       </Badge>
                     )}
-                    {credentialManaged && (
-                      <Badge tone={session?.has_credentials ? 'ok' : 'bad'}>
-                        Credenciales: {session?.has_credentials ? 'listas' : 'faltan'}
+                    {credentialHelperSupported && (
+                      <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
+                        {profileAuth === 'cookie-snapshot'
+                          ? `Autofill respaldo: ${credentialHelperConfigured ? 'listo' : 'no configurado'}`
+                          : `Credenciales: ${credentialHelperConfigured ? 'listas' : 'faltan'}`}
                       </Badge>
                     )}
                     {managed && selectedProxy && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
@@ -532,6 +536,16 @@ export function ProfilesView() {
                         <ShieldCheck size={12} />
                         Validar
                       </button>
+                      {credentialHelperSupported && (
+                        <button
+                          className="button secondary small"
+                          onClick={() => void openValidation(profile)}
+                          title={credentialHelperConfigured ? 'Comprueba el helper Email/Password con userFLOW' : 'Guarda credenciales primero para probar autofill'}
+                        >
+                          <KeyRound size={12} />
+                          Probar autofill
+                        </button>
+                      )}
                       <button className="button secondary small" onClick={() => openEditor(profile)}>
                         <Pencil size={12} />
                         Editar
@@ -578,6 +592,31 @@ export function ProfilesView() {
               </div>
             </div>
 
+            {(validationProfile.auth_strategy === 'cookie-snapshot'
+              || validationProfile.auth_strategy === 'credential-autofill'
+              || validationProfile.auth_strategy === 'hybrid'
+              || validationProfile.session_mode === 'managed-first-party') && (
+              <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 12, display: 'grid', gap: 8 }}>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <strong>Autofill de credenciales</strong>
+                  <Badge tone={stateFor(validationProfile.id)?.has_credentials ? 'ok' : 'warn'}>
+                    {stateFor(validationProfile.id)?.has_credentials ? 'Configurado' : 'Sin credenciales'}
+                  </Badge>
+                </div>
+                <div className="help">
+                  {stateFor(validationProfile.id)?.has_credentials
+                    ? 'userFLOW recibirá estas credenciales temporalmente y probará el helper visible Email / Password en el dominio del perfil. La contraseña permanece cifrada en el backend y no se guarda en el resultado.'
+                    : 'Este perfil no tiene credenciales de autofill guardadas. Puedes seguir usando el snapshot, pero no habrá respaldo automático si la web vuelve a pedir login.'}
+                </div>
+                {!stateFor(validationProfile.id)?.has_credentials && (
+                  <button className="button secondary small" onClick={() => openEditor(validationProfile)}>
+                    <KeyRound size={12} />
+                    Configurar autofill
+                  </button>
+                )}
+              </div>
+            )}
+
             {validationProfile.network_strategy === 'assigned-proxy' && (
               <Field label="Cliente a simular" help="Se usará exactamente el proxy asignado a este cliente para este perfil.">
                 <select
@@ -613,7 +652,7 @@ export function ProfilesView() {
                 onClick={() => void startClientTest()}
               >
                 <Globe2 size={14} />
-                Probar como cliente
+                Probar en userFLOW
               </button>
             </div>
 
@@ -664,10 +703,10 @@ export function ProfilesView() {
                       <>
                         <div><b>URL final:</b> {String(validationJob.result.inspection.currentUrl || '')}</div>
                         <div>
-                          <b>Autofill:</b>{' '}
-                          {validationJob.result.inspection.helperVisible ? 'helper visible' : 'helper no visible'}
+                          <b>Autofill 0.3.4:</b>{' '}
+                          {validationJob.result.inspection.helperVisible ? 'helper visible' : 'helper NO visible'}
                           {' · '}
-                          {validationJob.result.inspection.usernameFilled ? 'email completado' : 'email no completado'}
+                          {validationJob.result.inspection.usernameFilled ? 'email completado' : 'email NO completado'}
                           {' · '}
                           {validationJob.result.inspection.passwordFilled ? 'password completado' : 'password pendiente/no visible'}
                         </div>
@@ -873,13 +912,13 @@ export function ProfilesView() {
                   <ShieldCheck size={18} />
                   <div className="help">
                     {authStrategy === 'cookie-snapshot'
-                      ? 'La captura de cookies puede hacerse con login manual. Las credenciales son opcionales y solo ayudan al Session Manager.'
+                      ? 'El snapshot sigue siendo el método principal. Si guardas credenciales, userFLOW las usa como respaldo de autofill cuando la web vuelve a pedir login; también pueden ayudar durante la captura. La contraseña permanece cifrada en el backend.'
                       : authStrategy === 'credential-autofill'
-                        ? 'Las credenciales se entregan temporalmente al motor autorizado para completar el formulario del origen del perfil. No se autoclickea Enviar.'
-                        : 'El modo híbrido exige snapshot y credenciales: el snapshot restaura estado y el autofill puede recuperar el login si la web vuelve a pedirlo.'}
+                        ? 'Las credenciales se entregan temporalmente al motor autorizado para completar Email/Password solo en el dominio del perfil. No se pulsa automáticamente Enviar/Iniciar sesión.'
+                        : 'El modo híbrido exige snapshot y credenciales: restaura la sesión y mantiene autofill de respaldo si la web vuelve a pedir autenticación.'}
                   </div>
                 </div>
-                <Field label={authStrategy === 'cookie-snapshot' ? 'Correo / usuario (opcional)' : 'Correo / usuario'} className="span-2">
+                <Field label={authStrategy === 'cookie-snapshot' ? 'Correo / usuario para autofill (opcional)' : 'Correo / usuario'} className="span-2">
                   <input
                     className="input"
                     name="loginUsername"
@@ -890,9 +929,11 @@ export function ProfilesView() {
                   />
                 </Field>
                 <Field
-                  label={authStrategy === 'cookie-snapshot' ? 'Contraseña (opcional)' : 'Contraseña'}
+                  label={authStrategy === 'cookie-snapshot' ? 'Contraseña para autofill (opcional)' : 'Contraseña'}
                   className="span-2"
-                  help={currentState?.has_credentials ? 'Déjala vacía para conservar la contraseña actual.' : 'Se guarda cifrada en el backend.'}
+                  help={currentState?.has_credentials
+                    ? 'Autofill ya está configurado. Déjala vacía para conservar la contraseña cifrada actual.'
+                    : 'Se guarda cifrada en el backend y solo se entrega temporalmente al motor autorizado.'}
                 >
                   <input
                     className="input"
