@@ -9,6 +9,7 @@ import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
   installCredentialAutofill,
+  inspectRuntimeProfile,
   navigateBrowserHome,
   restorePortableSession,
 } from './session-state.js';
@@ -263,6 +264,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     try { await onClosed?.(entry, reason); } catch (error) {
       log.warn?.('userFLOW KAIZEN onClosed failed:', error?.message || error);
     }
+    if (entry.ephemeral === true) {
+      await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
+      await fsp.rm(profileExtensionDir(entry.clientId, entry.profile.id), { recursive: true, force: true }).catch(() => null);
+    }
   }
 
   async function close(clientId, profileId, reason = 'profile_closed') {
@@ -282,6 +287,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     delivery = null,
     credentials = null,
     usageId = null,
+    ephemeral = false,
   }) {
     if (!profile?.id || !profile?.url) throw new Error('El perfil no tiene ID o URL.');
     const target = new URL(profile.url);
@@ -378,6 +384,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       connection,
       delivery,
       usageId,
+      ephemeral: ephemeral === true,
       relay,
       debugPort,
       userDataDir,
@@ -421,6 +428,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         if (expectedIp && detectedIp !== expectedIp) {
           throw new Error(`La IP del navegador no coincide con la configuración. Esperada: ${expectedIp}. Detectada: ${detectedIp}.`);
         }
+      } else if (ephemeral === true) {
+        // Client-test runs also record the real direct egress IP so Admin can
+        // confirm what a client-direct profile would use on this Windows PC.
+        entry.publicIp = await browserPublicIp(debugPort);
       }
 
       let autofill = null;
@@ -481,7 +492,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         sessionVersion: desiredSessionVersion,
         profileState: snapshotManaged
           ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored')
-          : credentialManaged ? 'credential-autofill' : 'persistent-local',
+          : credentialHelperEnabled ? 'credential-autofill' : 'persistent-local',
         runtime,
         autofill,
         restore,
@@ -492,6 +503,17 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await cleanup(entry, 'launch_failed');
       throw error;
     }
+  }
+
+  async function inspect(clientId, profileId) {
+    const entry = processes.get(profileKey(clientId, profileId));
+    if (!entry || entry.process?.exitCode !== null) {
+      throw new Error('El navegador de prueba ya no está activo.');
+    }
+    return inspectRuntimeProfile({
+      debugPort: entry.debugPort,
+      profileUrl: entry.profile.url,
+    });
   }
 
   async function closeAll(reason = 'app_closed') {
@@ -658,6 +680,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
   return {
     launch,
+    inspect,
     close,
     closeAll,
     running,

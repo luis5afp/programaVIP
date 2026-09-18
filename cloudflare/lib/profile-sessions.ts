@@ -17,7 +17,9 @@ import {
 } from './core';
 
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
+const VALIDATION_TTL_MS = 10 * 60 * 1000;
 const MAX_SESSION_MATERIAL_BYTES = 8_000_000;
+const MAX_VALIDATION_RESULT_BYTES = 100_000;
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -88,6 +90,254 @@ async function sessionRow(env: Env, profileId: string) {
   return rows?.[0] || null;
 }
 
+function runtimeForProfile(profile: any) {
+  const authStrategy = profile?.auth_strategy
+    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+  return {
+    browserEngine: profile?.browser_engine || 'chrome-native',
+    authStrategy,
+    storageStrategy: profile?.storage_strategy
+      || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
+    networkStrategy: profile?.network_strategy || 'auto',
+    extensionStrategy: profile?.extension_strategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
+  };
+}
+
+function snapshotAuthentication(runtime: any) {
+  return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
+}
+
+function credentialAuthentication(runtime: any) {
+  return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
+}
+
+async function proxyRecord(env: Env, proxyId: string | null) {
+  if (!proxyId) return null;
+  const rows = await sb(
+    env,
+    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip,browser_compatible&id=eq.${proxyId}&limit=1`,
+  );
+  return rows?.[0] || null;
+}
+
+async function profileValidationNetwork(env: Env, profile: any, clientId: string | null) {
+  const runtime = runtimeForProfile(profile);
+  if (runtime.networkStrategy === 'client-direct') {
+    return { mode: 'direct', locked: false, source: 'client-direct', proxy: null };
+  }
+
+  let proxy: any = null;
+  let source = 'direct';
+  let locked = false;
+
+  if (runtime.networkStrategy === 'profile-proxy') {
+    proxy = await defaultProxy(env, profile.id);
+    source = 'profile-proxy';
+    locked = true;
+  } else if (runtime.networkStrategy === 'assigned-proxy') {
+    if (!clientId) return { mode: 'missing-client', locked: true, source: 'assigned-proxy', proxy: null };
+    const rows = await sb(
+      env,
+      `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
+    );
+    proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null);
+    source = 'assigned-proxy';
+    locked = true;
+  } else {
+    const fixed = await defaultProxy(env, profile.id);
+    if (runtime.authStrategy === 'manual' && clientId) {
+      const rows = await sb(
+        env,
+        `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
+      );
+      proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null) || fixed;
+      source = rows?.[0]?.proxy_id ? 'assignment-auto' : fixed ? 'profile-auto' : 'direct';
+    } else {
+      proxy = fixed;
+      source = fixed ? 'profile-auto' : 'direct';
+    }
+    locked = runtime.authStrategy !== 'manual' && Boolean(fixed);
+  }
+
+  return { mode: proxy ? 'proxy' : 'direct', locked, source, proxy };
+}
+
+function materialCookies(material: any): any[] {
+  return Array.isArray(material?.cookies) ? material.cookies : [];
+}
+
+async function configurationValidation(env: Env, profile: any, clientId: string | null) {
+  const runtime = runtimeForProfile(profile);
+  const checks: any[] = [];
+  const add = (key: string, label: string, status: 'pass' | 'warn' | 'fail', detail: string) => {
+    checks.push({ key, label, status, detail });
+  };
+
+  try {
+    const target = new URL(profile.url);
+    add('url', 'URL del perfil', ['http:', 'https:'].includes(target.protocol) ? 'pass' : 'fail', target.origin);
+  } catch {
+    add('url', 'URL del perfil', 'fail', 'La URL no es válida.');
+  }
+
+  add(
+    'browser',
+    'Motor de navegador',
+    runtime.browserEngine === 'nstchrome' ? 'warn' : 'pass',
+    runtime.browserEngine === 'nstchrome'
+      ? 'nstchrome requiere que el runtime autorizado esté instalado en el equipo de prueba/cliente.'
+      : 'Chrome nativo se validará en el equipo que ejecute userFLOW.',
+  );
+
+  const credentials = await credentialRow(env, profile.id);
+  if (credentialAuthentication(runtime)) {
+    add('credentials', 'Credenciales', credentials ? 'pass' : 'fail', credentials ? 'Credenciales cifradas disponibles.' : 'Faltan credenciales administradas.');
+  } else if (runtime.authStrategy === 'cookie-snapshot') {
+    add('credentials', 'Autofill opcional', credentials ? 'pass' : 'warn', credentials ? 'Hay credenciales disponibles como respaldo.' : 'No hay credenciales de respaldo; el snapshot puede funcionar igualmente.');
+  } else {
+    add('credentials', 'Credenciales', 'pass', 'Este perfil no necesita credenciales administradas.');
+  }
+
+  let material: any = null;
+  const session = await sessionRow(env, profile.id);
+  if (snapshotAuthentication(runtime)) {
+    if (!session || session.status !== 'ready' || !session.material_ciphertext || !session.material_iv) {
+      add('snapshot', 'Snapshot de sesión', 'fail', 'No hay una sesión capturada lista.');
+    } else {
+      try {
+        const raw = await decryptProxy(env, session.material_ciphertext, session.material_iv);
+        material = JSON.parse(raw);
+        add('snapshot', 'Snapshot de sesión', 'pass', `Sesión v${Number(session.session_version || 0)} disponible.`);
+      } catch {
+        add('snapshot', 'Snapshot de sesión', 'fail', 'El material cifrado de sesión no se pudo leer.');
+      }
+    }
+  } else {
+    add('snapshot', 'Snapshot de sesión', 'pass', 'La estrategia seleccionada no necesita snapshot.');
+  }
+
+  try {
+    const target = new URL(profile.url);
+    const host = target.hostname.toLowerCase();
+    if (material && (host === 'netflix.com' || host.endsWith('.netflix.com'))) {
+      const cookies = materialCookies(material);
+      const names = new Set(cookies.map((cookie: any) => String(cookie?.name || '').toLowerCase()));
+      const missing = ['netflixid', 'securenetflixid'].filter((name) => !names.has(name));
+      const nowSeconds = Date.now() / 1000;
+      const expiredAuth = cookies.some((cookie: any) => {
+        const name = String(cookie?.name || '').toLowerCase();
+        const expiry = Number(cookie?.expirationDate || cookie?.expires || 0);
+        return ['netflixid', 'securenetflixid'].includes(name) && expiry > 0 && expiry <= nowSeconds;
+      });
+      add(
+        'netflix-auth',
+        'Cookies Netflix',
+        missing.length || expiredAuth ? 'fail' : 'pass',
+        missing.length
+          ? `Faltan: ${missing.join(', ')}.`
+          : expiredAuth ? 'Una cookie de autenticación de Netflix ya venció.' : 'NetflixId y SecureNetflixId están presentes.',
+      );
+    }
+  } catch {}
+
+  const network = await profileValidationNetwork(env, profile, clientId);
+  if (network.mode === 'missing-client') {
+    add('network', 'Red', 'fail', 'Selecciona un cliente para probar su proxy asignado.');
+  } else if (network.locked && !network.proxy) {
+    add('network', 'Red', 'fail', 'La estrategia exige un proxy pero no hay uno disponible.');
+  } else if (network.proxy) {
+    const usable = network.proxy.enabled === true
+      && network.proxy.proxy_type !== 'ssh'
+      && network.proxy.browser_compatible !== false
+      && !['invalid'].includes(String(network.proxy.validation_status || ''));
+    add(
+      'network',
+      'Red',
+      usable ? 'pass' : 'fail',
+      usable
+        ? `${network.source}: ${network.proxy.name || network.proxy.host} · ${network.proxy.validation_status || 'sin validar'}`
+        : 'El proxy seleccionado está deshabilitado, no es compatible o falló validación.',
+    );
+  } else {
+    add('network', 'Red', 'pass', 'Salida directa; la IP real se verificará desde el equipo que ejecute userFLOW.');
+  }
+
+  return {
+    profileId: profile.id,
+    runtime,
+    clientId,
+    ready: !checks.some((check) => check.status === 'fail'),
+    checks,
+    network: {
+      mode: network.mode,
+      locked: network.locked,
+      source: network.source,
+      publicIp: network.proxy ? inetHost(network.proxy.public_ip) : null,
+      proxyName: network.proxy?.name || null,
+    },
+  };
+}
+
+async function validationJob(env: Env, rawToken: string, allowRunning = true) {
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_VALIDATION_TOKEN');
+  const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
+  const rows = await sb(
+    env,
+    `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,expires_at,started_at,completed_at&token_hash=eq.${tokenHash}&limit=1`,
+  );
+  const job = rows?.[0];
+  if (!job || !['pending', 'running'].includes(job.status)) throw new HttpError(401, 'VALIDATION_TOKEN_INVALID');
+  if (!allowRunning && job.status !== 'pending') throw new HttpError(401, 'VALIDATION_TOKEN_ALREADY_USED');
+  if (new Date(job.expires_at).getTime() <= Date.now()) {
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
+    });
+    throw new HttpError(401, 'VALIDATION_TOKEN_EXPIRED');
+  }
+  return job;
+}
+
+function safeValidationResult(value: any) {
+  const restore = value?.restore && typeof value.restore === 'object' ? {
+    cookiesInstalled: Number(value.restore.cookiesInstalled || 0),
+    cookiesRejected: Number(value.restore.cookiesRejected || 0),
+    indexedDbRestored: Number(value.restore.indexedDbRestored || 0),
+    indexedDbTotal: Number(value.restore.indexedDbTotal || 0),
+    storagePolicy: value.restore.storagePolicy || null,
+    pageUrl: value.restore.pageUrl || null,
+  } : null;
+  const autofill = value?.autofill && typeof value.autofill === 'object' ? {
+    installed: value.autofill.installed === true,
+    visibleHelper: value.autofill.visibleHelper === true,
+    origin: value.autofill.origin || null,
+  } : null;
+  const inspection = value?.inspection && typeof value.inspection === 'object' ? {
+    currentUrl: value.inspection.currentUrl || null,
+    loginLikeUrl: value.inspection.loginLikeUrl === true,
+    usernameFieldVisible: value.inspection.usernameFieldVisible === true,
+    passwordFieldVisible: value.inspection.passwordFieldVisible === true,
+    usernameFilled: value.inspection.usernameFilled === true,
+    passwordFilled: value.inspection.passwordFilled === true,
+    helperVisible: value.inspection.helperVisible === true,
+  } : null;
+  return {
+    ok: value?.ok === true,
+    browser: value?.browser || null,
+    profileState: value?.profileState || null,
+    outcome: value?.outcome || null,
+    network: value?.network || null,
+    publicIp: value?.publicIp || null,
+    sessionVersion: Number(value?.sessionVersion || 0),
+    runtime: value?.runtime || null,
+    restore,
+    autofill,
+    inspection,
+    testedAt: new Date().toISOString(),
+  };
+}
+
 export async function adminProfileSessionRoutes(
   request: Request,
   env: Env,
@@ -152,6 +402,90 @@ export async function adminProfileSessionRoutes(
       passwordChanged: Boolean(password),
     });
     return json({ ok: true, profile_id: profileId, login_username: loginUsername, has_credentials: true });
+  }
+
+  const validationMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/validation$/i);
+  if (validationMatch && method === 'POST') {
+    const profileId = uuid(validationMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const body = await bodyJson(request);
+    const clientId = body.clientId ? uuid(body.clientId, 'clientId') : null;
+    const result = await configurationValidation(env, profile, clientId);
+    await audit(env, request, 'admin', admin.userId, 'profile.validation.check', 'profile', profileId, {
+      clientId,
+      ready: result.ready,
+      failedChecks: result.checks.filter((check: any) => check.status === 'fail').map((check: any) => check.key),
+    });
+    return json({ ok: true, validation: result });
+  }
+
+  const clientTestMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/client-test$/i);
+  if (clientTestMatch && method === 'POST') {
+    const profileId = uuid(clientTestMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const body = await bodyJson(request);
+    const clientId = body.clientId ? uuid(body.clientId, 'clientId') : null;
+    const validation = await configurationValidation(env, profile, clientId);
+    if (!validation.ready) {
+      throw new HttpError(409, 'PROFILE_VALIDATION_BLOCKED', 'Corrige los errores de configuración antes de probar como cliente.');
+    }
+
+    const rawToken = token(32);
+    const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
+    const expiresAt = new Date(Date.now() + VALIDATION_TTL_MS).toISOString();
+    await sb(env, `userflex_profile_validation_jobs?profile_id=eq.${profileId}&status=in.(pending,running)`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
+    });
+    const jobs = await sb(env, 'userflex_profile_validation_jobs', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        profile_id: profileId,
+        client_id: clientId,
+        token_hash: tokenHash,
+        status: 'pending',
+        expires_at: expiresAt,
+      }),
+    });
+    const jobId = jobs?.[0]?.id;
+    if (!jobId) throw new HttpError(500, 'VALIDATION_JOB_CREATE_FAILED');
+    const launchUrl = `userflow-client://profile-test?endpoint=${encodeURIComponent(url.origin)}&token=${encodeURIComponent(rawToken)}`;
+    await audit(env, request, 'admin', admin.userId, 'profile.validation.client_test.request', 'profile', profileId, {
+      jobId,
+      clientId,
+      expiresAt,
+      network: validation.network,
+    });
+    return json({
+      ok: true,
+      job_id: jobId,
+      launch_url: launchUrl,
+      expires_at: expiresAt,
+      validation,
+    });
+  }
+
+  const validationJobMatch = path.match(/^\/api\/profile-tests\/([0-9a-f-]{36})$/i);
+  if (validationJobMatch && method === 'GET') {
+    const jobId = uuid(validationJobMatch[1], 'jobId');
+    const rows = await sb(
+      env,
+      `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,result,error,expires_at,started_at,completed_at,created_at&id=eq.${jobId}&limit=1`,
+    );
+    let job = rows?.[0];
+    if (!job) throw new HttpError(404, 'VALIDATION_JOB_NOT_FOUND');
+    if (['pending', 'running'].includes(job.status) && new Date(job.expires_at).getTime() <= Date.now()) {
+      const completedAt = new Date().toISOString();
+      await sb(env, `userflex_profile_validation_jobs?id=eq.${jobId}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'expired', completed_at: completedAt }),
+      });
+      job = { ...job, status: 'expired', completed_at: completedAt };
+    }
+    return json({ ok: true, job });
   }
 
   const captureMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session-capture$/i);
@@ -241,6 +575,124 @@ async function captureJob(env: Env, rawToken: string) {
 export async function publicSessionManagerRoutes(request: Request, env: Env): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const method = request.method.toUpperCase();
+
+  if (path === '/api/client-test/bootstrap' && method === 'POST') {
+    const body = await bodyJson(request);
+    const rawToken = text(body.token, 'token', 128);
+    const job = await validationJob(env, rawToken, false);
+    const profile = await profileRow(env, job.profile_id);
+    const runtime = runtimeForProfile(profile);
+    const validation = await configurationValidation(env, profile, job.client_id || null);
+    if (!validation.ready) {
+      throw new HttpError(409, 'PROFILE_VALIDATION_BLOCKED', 'La configuración cambió y ya no está lista para probar.');
+    }
+
+    const network = await profileValidationNetwork(env, profile, job.client_id || null);
+    let connection: any = { mode: 'direct', locked: network.locked === true };
+    if (network.proxy) {
+      connection = {
+        mode: 'proxy',
+        locked: network.locked === true,
+        proxy: {
+          host: network.proxy.host,
+          port: network.proxy.port,
+          type: network.proxy.proxy_type || 'http',
+          validationStatus: network.proxy.validation_status || null,
+          publicIp: inetHost(network.proxy.public_ip),
+          username: network.proxy.username || null,
+          password: network.proxy.password_ciphertext
+            ? await decryptProxy(env, network.proxy.password_ciphertext, network.proxy.password_iv)
+            : null,
+        },
+      };
+    }
+
+    let sessionDelivery: any = {
+      ready: !snapshotAuthentication(runtime),
+      mode: profile.session_mode,
+      materialIncluded: false,
+      version: 0,
+    };
+    if (snapshotAuthentication(runtime)) {
+      const session = await managedSessionMaterial(env, profile.id);
+      if (!session) throw new HttpError(409, 'MANAGED_SESSION_NOT_READY');
+      sessionDelivery = {
+        ready: true,
+        mode: profile.session_mode,
+        materialIncluded: true,
+        version: session.version,
+        expectedPublicIp: connection.mode === 'proxy' && connection.locked
+          ? (inetHost(network.proxy?.public_ip) || session.publicIp)
+          : null,
+        networkLocked: connection.mode === 'proxy' && connection.locked,
+        capturedAt: session.capturedAt,
+        validatedAt: session.validatedAt,
+        material: session.material,
+      };
+    }
+
+    const credential = await credentialRow(env, profile.id);
+    const credentialRequired = credentialAuthentication(runtime);
+    let credentialDelivery: any = null;
+    if (credentialRequired && !credential) throw new HttpError(409, 'MANAGED_CREDENTIALS_NOT_READY');
+    if (credential && (credentialRequired || runtime.authStrategy === 'cookie-snapshot')) {
+      credentialDelivery = {
+        included: true,
+        required: credentialRequired,
+        username: credential.login_username,
+        password: await decryptProxy(env, credential.password_ciphertext, credential.password_iv),
+        updatedAt: credential.updated_at || null,
+      };
+    }
+
+    const now = new Date().toISOString();
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'running', started_at: job.started_at || now }),
+    });
+
+    return json({
+      ok: true,
+      job: { id: job.id, expiresAt: job.expires_at },
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        url: profile.url,
+        sessionMode: profile.session_mode,
+        sessionReady: profile.session_ready === true,
+        runtime,
+      },
+      connection,
+      sessionDelivery,
+      credentialDelivery,
+      validation,
+    });
+  }
+
+  if (path === '/api/client-test/report' && method === 'POST') {
+    const body = await bodyJson(request, 150_000);
+    const rawToken = text(body.token, 'token', 128);
+    const job = await validationJob(env, rawToken);
+    const result = safeValidationResult(body.result);
+    const serialized = JSON.stringify(result);
+    if (new TextEncoder().encode(serialized).byteLength > MAX_VALIDATION_RESULT_BYTES) {
+      throw new HttpError(413, 'VALIDATION_RESULT_TOO_LARGE');
+    }
+    const now = new Date().toISOString();
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        status: result.ok ? 'completed' : 'failed',
+        result,
+        error: result.ok ? null : optional(body.error, 1000),
+        completed_at: now,
+      }),
+    });
+    return json({ ok: true, job_id: job.id, status: result.ok ? 'completed' : 'failed' });
+  }
+
 
   if (path === '/api/session-manager/bootstrap' && method === 'POST') {
     const body = await bodyJson(request);

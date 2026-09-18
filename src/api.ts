@@ -11,6 +11,8 @@ import type {
   ProfileUsage,
   ProfileProxyDefault,
   ProfileSessionState,
+  ProfileValidation,
+  ProfileValidationJob,
   ProxyRecord,
 } from './types';
 
@@ -151,6 +153,18 @@ export const api = {
       request<{ ok: true; launch_url: string; expires_at: string }>(`/api/profiles/${profileId}/session-capture`, {
         method: 'POST',
       }),
+    validate: (profileId: string, clientId?: string | null) =>
+      request<{ ok: true; validation: ProfileValidation }>(`/api/profiles/${profileId}/validation`, {
+        method: 'POST',
+        body: JSON.stringify({ clientId: clientId || null }),
+      }),
+    clientTest: (profileId: string, clientId?: string | null) =>
+      request<{ ok: true; job_id: string; launch_url: string; expires_at: string; validation: ProfileValidation }>(
+        `/api/profiles/${profileId}/client-test`,
+        { method: 'POST', body: JSON.stringify({ clientId: clientId || null }) },
+      ),
+    testStatus: (jobId: string) =>
+      request<{ ok: true; job: ProfileValidationJob }>(`/api/profile-tests/${jobId}`),
     clear: (profileId: string) => request<{ ok: true }>(`/api/profiles/${profileId}/session`, { method: 'DELETE' }),
   },
 

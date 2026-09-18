@@ -80,6 +80,14 @@
       "createStartMenuShortcut": true,
       "shortcutName": "userFLOW",
       "runAfterFinish": true
-    }
+    },
+    "protocols": [
+      {
+        "name": "userFLOW Client Test",
+        "schemes": [
+          "userflow-client"
+        ]
+      }
+    ]
   }
 }

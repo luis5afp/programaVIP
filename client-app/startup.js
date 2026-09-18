@@ -11,6 +11,25 @@ const runtimeProxyByEndpoint = new Map();
 const bridgesBySession = new WeakMap();
 const openBridges = new Set();
 
+const CLIENT_TEST_PROTOCOL = 'userflow-client://';
+if (!Array.isArray(globalThis.__userflowPendingProtocolUrls)) globalThis.__userflowPendingProtocolUrls = [];
+
+function clientProtocolUrlFromArgs(argv = []) {
+  return Array.from(argv || []).find((value) => String(value || '').toLowerCase().startsWith(CLIENT_TEST_PROTOCOL)) || null;
+}
+
+function dispatchClientProtocolUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value.toLowerCase().startsWith(CLIENT_TEST_PROTOCOL)) return false;
+  if (typeof globalThis.__userflowHandleProtocolUrl === 'function') {
+    void Promise.resolve(globalThis.__userflowHandleProtocolUrl(value)).catch(() => null);
+  } else {
+    globalThis.__userflowPendingProtocolUrls.push(value);
+  }
+  return true;
+}
+
+
 function proxyEndpointKey(host, port) {
   return `${String(host || '').trim().toLowerCase()}:${Number(port || 0)}`;
 }
@@ -300,10 +319,25 @@ if (!hasSingleInstanceLock) {
 } else {
   app.on('window-all-closed', bootstrapWindowHold);
 
+  const initialProtocolUrl = clientProtocolUrlFromArgs(process.argv);
+  if (initialProtocolUrl) dispatchClientProtocolUrl(initialProtocolUrl);
+
+  app.on('second-instance', (_event, argv) => {
+    const protocolUrl = clientProtocolUrlFromArgs(argv);
+    if (protocolUrl) dispatchClientProtocolUrl(protocolUrl);
+  });
+
+  app.on('open-url', (event, rawUrl) => {
+    if (!String(rawUrl || '').toLowerCase().startsWith(CLIENT_TEST_PROTOCOL)) return;
+    event.preventDefault();
+    dispatchClientProtocolUrl(rawUrl);
+  });
+
   // Do not top-level await app.whenReady(); let Electron complete its native
   // startup lifecycle while this entry module finishes evaluation normally.
   app.whenReady()
     .then(() => {
+      try { app.setAsDefaultProtocolClient('userflow-client'); } catch {}
       void startAfterReady();
     })
     .catch((error) => {

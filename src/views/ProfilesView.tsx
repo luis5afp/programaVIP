@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { AuthStrategy, BrowserEngine, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode, StorageStrategy } from '../types';
+import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -33,7 +33,7 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
-function launchSessionManager(launchUrl: string) {
+function launchCustomProtocol(launchUrl: string) {
   const anchor = document.createElement('a');
   anchor.href = launchUrl;
   anchor.style.display = 'none';
@@ -50,6 +50,13 @@ export function ProfilesView() {
   const [proxies, setProxies] = useState<ProxyRecord[]>([]);
   const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [validationProfile, setValidationProfile] = useState<Profile | null>(null);
+  const [validationClientId, setValidationClientId] = useState('');
+  const [validationResult, setValidationResult] = useState<ProfileValidation | null>(null);
+  const [validationJob, setValidationJob] = useState<ProfileValidationJob | null>(null);
+  const [validationBusy, setValidationBusy] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
@@ -67,13 +74,15 @@ export function ProfilesView() {
 
   async function load() {
     try {
-      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows] = await Promise.all([
+      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows] = await Promise.all([
         api.profiles.list(),
         api.proxies.list(),
         api.profileProxyDefaults.list(),
         api.profileSessions.list(),
         api.plans.list(),
         api.profilePlans.list(),
+        api.clients.list(),
+        api.assignments.list(),
       ]);
       setProfiles(profileRows);
       setProxies(proxyRows);
@@ -81,6 +90,8 @@ export function ProfilesView() {
       setSessionStates(stateRows);
       setPlans(planRows);
       setProfilePlanMemberships(membershipRows);
+      setClients(clientRows);
+      setAssignments(assignmentRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -113,6 +124,16 @@ export function ProfilesView() {
       .filter((item) => item.profile_id === profileId)
       .map((item) => item.plan_id);
   }
+
+  function validationClientsFor(profileId: string) {
+    const ids = new Set(
+      assignments
+        .filter((item) => item.profile_id === profileId && item.enabled && Boolean(item.proxy_id))
+        .map((item) => item.client_id),
+    );
+    return clients.filter((client) => ids.has(client.id) && client.status === 'active');
+  }
+
 
   function openEditor(value: Exclude<Editor, null>) {
     const current = value === 'new' ? null : value;
@@ -272,7 +293,7 @@ export function ProfilesView() {
         launchUrl: result.launch_url,
         expiresAt: result.expires_at || null,
       });
-      launchSessionManager(result.launch_url);
+      launchCustomProtocol(result.launch_url);
       window.setTimeout(() => void load(), 2500);
     } catch (captureError: any) {
       setError(captureError.message);
@@ -293,6 +314,84 @@ export function ProfilesView() {
       setSessionAction(null);
     }
   }
+
+  async function openValidation(profile: Profile) {
+    const eligible = validationClientsFor(profile.id);
+    const defaultClientId = profile.network_strategy === 'assigned-proxy' ? (eligible[0]?.id || '') : '';
+    setValidationProfile(profile);
+    setValidationClientId(defaultClientId);
+    setValidationResult(null);
+    setValidationJob(null);
+    setValidationBusy(true);
+    try {
+      const response = await api.profileSessions.validate(profile.id, defaultClientId || null);
+      setValidationResult(response.validation);
+    } catch (validationError: any) {
+      setError(validationError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
+  async function refreshValidation(clientId = validationClientId) {
+    if (!validationProfile) return;
+    try {
+      setValidationBusy(true);
+      setError(null);
+      const response = await api.profileSessions.validate(validationProfile.id, clientId || null);
+      setValidationResult(response.validation);
+    } catch (validationError: any) {
+      setError(validationError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
+  async function pollValidationJob(jobId: string) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try {
+        const response = await api.profileSessions.testStatus(jobId);
+        setValidationJob(response.job);
+        if (['completed', 'failed', 'expired'].includes(response.job.status)) return;
+      } catch {
+        return;
+      }
+    }
+  }
+
+  async function startClientTest() {
+    if (!validationProfile) return;
+    if (validationProfile.network_strategy === 'assigned-proxy' && !validationClientId) {
+      setError('Selecciona un cliente para simular su proxy asignado.');
+      return;
+    }
+    try {
+      setValidationBusy(true);
+      setError(null);
+      const response = await api.profileSessions.clientTest(validationProfile.id, validationClientId || null);
+      setValidationResult(response.validation);
+      setValidationJob({
+        id: response.job_id,
+        profile_id: validationProfile.id,
+        client_id: validationClientId || null,
+        status: 'pending',
+        result: null,
+        error: null,
+        expires_at: response.expires_at,
+        started_at: null,
+        completed_at: null,
+        created_at: new Date().toISOString(),
+      });
+      launchCustomProtocol(response.launch_url);
+      void pollValidationJob(response.job_id);
+    } catch (testError: any) {
+      setError(testError.message);
+    } finally {
+      setValidationBusy(false);
+    }
+  }
+
 
   async function remove(profile: Profile) {
     if (!confirm(`¿Eliminar el perfil ${profileLabel(profile)}?`)) return;
@@ -429,6 +528,10 @@ export function ProfilesView() {
                   <div className="profile-actions">
                     <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
                     <div className="toolbar" style={{ margin: 0 }}>
+                      <button className="button secondary small" onClick={() => void openValidation(profile)}>
+                        <ShieldCheck size={12} />
+                        Validar
+                      </button>
                       <button className="button secondary small" onClick={() => openEditor(profile)}>
                         <Pencil size={12} />
                         Editar
@@ -444,6 +547,143 @@ export function ProfilesView() {
             );
           })}
         </div>
+      )}
+
+      {validationProfile && (
+        <Modal
+          title={`Validación · ${profileLabel(validationProfile)}`}
+          onClose={() => {
+            setValidationProfile(null);
+            setValidationResult(null);
+            setValidationJob(null);
+          }}
+          actions={
+            <button
+              className="button secondary"
+              onClick={() => {
+                setValidationProfile(null);
+                setValidationResult(null);
+                setValidationJob(null);
+              }}
+            >
+              Cerrar
+            </button>
+          }
+        >
+          <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ padding: 14, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12 }}>
+              <strong>La prueba real se ejecuta con userFLOW.</strong>
+              <div className="help" style={{ marginTop: 6 }}>
+                El servidor primero valida configuración. Después “Probar como cliente” abre un perfil temporal en el userFLOW instalado y usa el mismo motor, cookies, autofill y red que recibirá un cliente real. El perfil temporal se elimina al cerrar ese navegador.
+              </div>
+            </div>
+
+            {validationProfile.network_strategy === 'assigned-proxy' && (
+              <Field label="Cliente a simular" help="Se usará exactamente el proxy asignado a este cliente para este perfil.">
+                <select
+                  className="select"
+                  value={validationClientId}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setValidationClientId(value);
+                    setValidationJob(null);
+                    void refreshValidation(value);
+                  }}
+                >
+                  <option value="">Selecciona un cliente</option>
+                  {validationClientsFor(validationProfile.id).map((client) => (
+                    <option value={client.id} key={client.id}>{client.name} · {client.email}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+
+            <div className="toolbar" style={{ margin: 0 }}>
+              <button
+                className="button secondary"
+                disabled={validationBusy}
+                onClick={() => void refreshValidation()}
+              >
+                <RefreshCw size={14} />
+                {validationBusy ? 'Validando...' : 'Validar configuración'}
+              </button>
+              <button
+                className="button primary"
+                disabled={validationBusy || !validationResult?.ready}
+                onClick={() => void startClientTest()}
+              >
+                <Globe2 size={14} />
+                Probar como cliente
+              </button>
+            </div>
+
+            {validationResult && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <Badge tone={validationResult.ready ? 'ok' : 'bad'}>
+                    {validationResult.ready ? 'Configuración lista' : 'Configuración bloqueada'}
+                  </Badge>
+                  <Badge tone="neutral">Red: {validationResult.network.source}</Badge>
+                  {validationResult.network.publicIp && <Badge>IP: {validationResult.network.publicIp}</Badge>}
+                </div>
+                {validationResult.checks.map((check) => (
+                  <div
+                    key={check.key}
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: 10 }}
+                  >
+                    <Badge tone={check.status === 'pass' ? 'ok' : check.status === 'warn' ? 'warn' : 'bad'}>
+                      {check.status === 'pass' ? 'OK' : check.status === 'warn' ? 'Aviso' : 'Error'}
+                    </Badge>
+                    <div>
+                      <div className="table-primary">{check.label}</div>
+                      <div className="help">{check.detail}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {validationJob && (
+              <div style={{ padding: 14, border: '1px solid #e2e8f0', borderRadius: 12, display: 'grid', gap: 8 }}>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <strong>Prueba userFLOW</strong>
+                  <Badge tone={validationJob.status === 'completed' ? 'ok' : validationJob.status === 'failed' || validationJob.status === 'expired' ? 'bad' : 'warn'}>
+                    {validationJob.status}
+                  </Badge>
+                </div>
+                {validationJob.status === 'pending' && <div className="help">Esperando que Windows abra userFLOW...</div>}
+                {validationJob.status === 'running' && <div className="help">userFLOW está ejecutando el perfil temporal con la configuración real.</div>}
+                {validationJob.error && <div style={{ color: '#b91c1c', fontSize: 12 }}>{validationJob.error}</div>}
+                {validationJob.result && (
+                  <div style={{ display: 'grid', gap: 5, fontSize: 12 }}>
+                    <div><b>Resultado:</b> {String(validationJob.result.outcome || 'sin detalle')}</div>
+                    <div><b>Navegador:</b> {String(validationJob.result.browser || 'desconocido')}</div>
+                    <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
+                    {validationJob.result.publicIp && <div><b>IP detectada:</b> {String(validationJob.result.publicIp)}</div>}
+                    {validationJob.result.inspection && (
+                      <>
+                        <div><b>URL final:</b> {String(validationJob.result.inspection.currentUrl || '')}</div>
+                        <div>
+                          <b>Autofill:</b>{' '}
+                          {validationJob.result.inspection.helperVisible ? 'helper visible' : 'helper no visible'}
+                          {' · '}
+                          {validationJob.result.inspection.usernameFilled ? 'email completado' : 'email no completado'}
+                          {' · '}
+                          {validationJob.result.inspection.passwordFilled ? 'password completado' : 'password pendiente/no visible'}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                {['pending', 'running'].includes(validationJob.status) && (
+                  <button className="button secondary small" onClick={() => void pollValidationJob(validationJob.id)}>
+                    Actualizar resultado
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
 
       {editor && (
@@ -687,7 +927,7 @@ export function ProfilesView() {
               <strong>userFLEX intentó abrir el Chromium automáticamente.</strong>
               <div className="help" style={{ marginTop: 6 }}>Si Windows o el navegador no mostró nada, usa el botón siguiente. Este segundo clic conserva el permiso del navegador para abrir la aplicación local.</div>
             </div>
-            <button className="button primary" onClick={() => launchSessionManager(captureLaunch.launchUrl)}>
+            <button className="button primary" onClick={() => launchCustomProtocol(captureLaunch.launchUrl)}>
               <Globe2 size={14} />
               Abrir Chromium ahora
             </button>
