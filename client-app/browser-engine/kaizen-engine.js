@@ -135,7 +135,7 @@ function runPowerShell(script, timeout = 8_000) {
 
 async function killStrayProfileProcesses(userDataDir) {
   if (process.platform !== 'win32') return;
-  const escaped = userDataDir.replace(/'/g, "''").replace(/\\/g, '\\\\');
+  const escaped = userDataDir.replace(/'/g, "''");
   const script = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
   await runPowerShell(script);
 }
