@@ -17,7 +17,7 @@ import {
 } from './core';
 
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
-const MAX_SESSION_MATERIAL_BYTES = 1_500_000;
+const MAX_SESSION_MATERIAL_BYTES = 8_000_000;
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -268,7 +268,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/session-manager/complete' && method === 'POST') {
-    const body = await bodyJson(request, 2_000_000);
+    const body = await bodyJson(request, 10_000_000);
     const rawToken = text(body.token, 'token', 128);
     const job = await captureJob(env, rawToken);
     const material = body.material;
