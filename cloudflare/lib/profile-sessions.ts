@@ -134,7 +134,7 @@ function cookieMatchesHost(cookie: any, hostname: string) {
   return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
 }
 
-function validateCapturedMaterial(profile: any, material: any) {
+export function validateCapturedMaterial(profile: any, material: any) {
   if (!material || typeof material !== 'object' || Array.isArray(material)) {
     throw new HttpError(400, 'INVALID_SESSION_MATERIAL', 'El material de sesión no es válido.');
   }
