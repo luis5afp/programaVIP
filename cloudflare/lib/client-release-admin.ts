@@ -39,7 +39,7 @@ function validateManifest(value: any, expectedVersion?: string): ReleaseManifest
     name: typeof chunk?.name === 'string' ? chunk.name : '',
     size: Number(chunk?.size || 0),
   }));
-  if (normalizedChunks.some((chunk) =>
+  if (normalizedChunks.some((chunk: { name: string; size: number }) =>
     !chunk.name.startsWith(`versions/${version}/part-`)
     || !Number.isSafeInteger(chunk.size)
     || chunk.size <= 0
