@@ -64,8 +64,13 @@ function cookieDomainMatchesHost(cookie, hostname) {
   return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
 }
 
+function isNetflixTarget(target) {
+  const hostname = String(target?.hostname || '').toLowerCase();
+  return hostname === 'netflix.com' || hostname.endsWith('.netflix.com');
+}
+
 async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
-  if (!(target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))) return;
+  if (!isNetflixTarget(target)) return;
 
   const expected = new Map(
     capturedCookies
@@ -306,11 +311,20 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
     let page = pages.find((item) => item.url() === 'about:blank') || pages[0];
     if (!page) page = await browser.newPage();
 
-    const state = storagePayload(material);
+    // Netflix authentication is portable through its auth cookies, but copying
+    // browser storage from the Session Manager device can also copy stale
+    // device/session state. That was the production cause of Netflix treating a
+    // freshly restored session as expired. For Netflix, let this local Chrome
+    // profile establish its own storage/IDB after the cookies are installed.
+    // Other managed sites keep the full portable v1/v2 storage restore.
+    const restoreCapturedStorage = !isNetflixTarget(target);
+    const state = restoreCapturedStorage
+      ? storagePayload(material)
+      : { origin: target.origin, localStorage: {}, sessionStorage: {}, indexedDB: [] };
     const stateOrigin = state.origin || target.origin;
     let indexedDb = { restored: 0, total: state.indexedDB.length };
 
-    if (stateOrigin === target.origin) {
+    if (restoreCapturedStorage && stateOrigin === target.origin) {
       // Seed a synthetic document at the target origin before the real site is
       // allowed to execute. This gives Local/Session Storage and IndexedDB a
       // deterministic head start instead of racing Netflix/app JavaScript.
@@ -374,6 +388,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
       cookiesRejected: cookieResult.rejected.length,
       indexedDbRestored: Number(indexedDb?.restored || 0),
       indexedDbTotal: Number(indexedDb?.total || 0),
+      storagePolicy: restoreCapturedStorage ? 'portable-full' : 'netflix-local-device',
       pageUrl: page.url(),
     };
   } finally {
