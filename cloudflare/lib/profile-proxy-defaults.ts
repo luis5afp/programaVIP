@@ -1,6 +1,7 @@
 import type { AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
 import { Env, HttpError, audit, bodyJson, json, sb, uuid } from './core';
+import { runtimeForProfile, snapshotAuthentication } from './profile-runtime';
 
 export async function profileProxyDefaultRoutes(
   request: Request,
@@ -27,17 +28,47 @@ export async function profileProxyDefaultRoutes(
   const body = await bodyJson(request);
   const proxyId = body.proxyId ? uuid(body.proxyId, 'proxyId') : null;
 
-  const profileRows = await sb(env, `userflex_profiles?select=id&id=eq.${profileId}&limit=1`);
-  if (!profileRows?.[0]) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+  const profileRows = await sb(
+    env,
+    `userflex_profiles?select=id,session_ready,session_mode,auth_strategy,network_strategy&id=eq.${profileId}&limit=1`,
+  );
+  const profile = profileRows?.[0];
+  if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+  const currentDefaults = await sb(
+    env,
+    `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
+  );
+  const previousProxyId = currentDefaults?.[0]?.proxy_id || null;
+  const runtime = runtimeForProfile(profile);
+  const invalidatesManagedSnapshot = previousProxyId !== proxyId
+    && snapshotAuthentication(runtime)
+    && ['auto', 'profile-proxy'].includes(runtime.networkStrategy);
+
+  const invalidateSnapshot = async () => {
+    if (!invalidatesManagedSnapshot) return;
+    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    });
+    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ session_ready: false, updated_at: new Date().toISOString() }),
+    });
+  };
 
   if (!proxyId) {
     await sb(env, `userflex_profile_proxy_defaults?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
+    await invalidateSnapshot();
     await touchProfileClients(env, profileId);
-    await audit(env, request, 'admin', admin.userId, 'profile.default_proxy.clear', 'profile', profileId);
-    return json({ ok: true, profile_id: profileId, proxy_id: null });
+    await audit(env, request, 'admin', admin.userId, 'profile.default_proxy.clear', 'profile', profileId, {
+      previousProxyId,
+      snapshotInvalidated: invalidatesManagedSnapshot,
+    });
+    return json({ ok: true, profile_id: profileId, proxy_id: null, snapshot_invalidated: invalidatesManagedSnapshot });
   }
 
   const proxyRows = await sb(env, `userflex_proxies?select=id&id=eq.${proxyId}&limit=1`);
@@ -53,9 +84,17 @@ export async function profileProxyDefaultRoutes(
     }),
   });
 
+  await invalidateSnapshot();
   await touchProfileClients(env, profileId);
   await audit(env, request, 'admin', admin.userId, 'profile.default_proxy.set', 'profile', profileId, {
     proxyId,
+    previousProxyId,
+    snapshotInvalidated: invalidatesManagedSnapshot,
   });
-  return json({ ok: true, profile_id: profileId, proxy_id: rows?.[0]?.proxy_id || proxyId });
+  return json({
+    ok: true,
+    profile_id: profileId,
+    proxy_id: rows?.[0]?.proxy_id || proxyId,
+    snapshot_invalidated: invalidatesManagedSnapshot,
+  });
 }

@@ -2,6 +2,16 @@ import { AdminIdentity } from './auth';
 import { touchClientConfig, touchProfileClients } from './client-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
+  AUTH_STRATEGIES,
+  BROWSER_ENGINES,
+  EXTENSION_STRATEGIES,
+  NETWORK_STRATEGIES,
+  STORAGE_STRATEGIES,
+  runtimeForProfile,
+  sameOrigin,
+  snapshotAuthentication,
+} from './profile-runtime';
+import {
   Env,
   HttpError,
   audit,
@@ -28,11 +38,6 @@ function cleanTags(value: unknown): string[] {
     .map((item) => item.slice(0, 40));
 }
 
-const BROWSER_ENGINES = ['chrome-native', 'nstchrome'] as const;
-const AUTH_STRATEGIES = ['manual', 'cookie-snapshot', 'credential-autofill', 'hybrid'] as const;
-const STORAGE_STRATEGIES = ['local-persistent', 'cookies-only', 'portable-first-party', 'netflix-local-device'] as const;
-const NETWORK_STRATEGIES = ['auto', 'client-direct', 'profile-proxy', 'assigned-proxy'] as const;
-const EXTENSION_STRATEGIES = ['guard-only', 'main', 'google', 'custom'] as const;
 
 function profileChoice(value: unknown, allowed: readonly string[], fallback: string, code: string): string {
   if (value === undefined || value === null || value === '') return fallback;
@@ -337,6 +342,13 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (profileMatch && method === 'PATCH') {
     const profileId = uuid(profileMatch[1], 'profileId');
     const body = await bodyJson(request);
+    const existingRows = await sb(
+      env,
+      `userflex_profiles?select=id,url,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
+    );
+    const existing = existingRows?.[0];
+    if (!existing) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+
     const patch: any = { updated_at: new Date().toISOString() };
     if (body.name !== undefined) patch.name = text(body.name, 'name', 100);
     if (body.url !== undefined) patch.url = httpsUrl(body.url, 'url');
@@ -358,10 +370,49 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       patch.auth_strategy = body.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual';
       if (body.session_mode === 'manual-login') patch.session_ready = false;
     }
-    const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
+
+    const next = { ...existing, ...patch };
+    const previousRuntime = runtimeForProfile(existing);
+    const nextRuntime = runtimeForProfile(next);
+    const originChanged = patch.url !== undefined && !sameOrigin(existing.url, patch.url);
+    const previousSnapshot = snapshotAuthentication(previousRuntime);
+    const nextSnapshot = snapshotAuthentication(nextRuntime);
+    const snapshotPolicyChanged = previousSnapshot !== nextSnapshot
+      || (previousSnapshot && nextSnapshot && (
+        previousRuntime.browserEngine !== nextRuntime.browserEngine
+        || previousRuntime.networkStrategy !== nextRuntime.networkStrategy
+      ));
+    const invalidateSnapshot = originChanged || snapshotPolicyChanged;
+    if (invalidateSnapshot) patch.session_ready = false;
+
+    const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(patch),
+    });
     if (!rows?.[0]) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+
+    if (invalidateSnapshot) {
+      await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+    }
+    if (originChanged) {
+      // Never carry credentials from one site into a different origin. Otherwise
+      // an old password could be injected into a newly configured domain.
+      await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+    }
+
     await touchProfileClients(env, profileId);
-    await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId);
+    await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId, {
+      originChanged,
+      snapshotInvalidated: invalidateSnapshot,
+      credentialsCleared: originChanged,
+    });
     return json(rows[0]);
   }
 
