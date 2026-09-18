@@ -293,57 +293,234 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   try {
     const pages = await browser.pages();
     const page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
-    await page.evaluateOnNewDocument(({ allowedOrigin, username, password }) => {
-      if (location.origin !== allowedOrigin) return;
+    await page.evaluateOnNewDocument(({ allowedProtocol, allowedRootHost, username, password }) => {
+      const currentRootHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+      if (location.protocol !== allowedProtocol || currentRootHost !== allowedRootHost) return;
+
+      const HELPER_ID = '__userflex-credential-helper';
+      let dismissed = false;
+      let helperHost = null;
+      let helperMessage = null;
 
       const visible = (element) => {
         try {
           const style = getComputedStyle(element);
           const rect = element.getBoundingClientRect();
-          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity || 1) !== 0
+            && rect.width > 0
+            && rect.height > 0;
         } catch {
           return false;
         }
       };
-      const setNativeValue = (element, value) => {
-        try {
-          const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-          descriptor?.set?.call(element, value);
-          element.dispatchEvent(new Event('input', { bubbles: true }));
-          element.dispatchEvent(new Event('change', { bubbles: true }));
-        } catch {}
+
+      const fieldKind = (element) => {
+        if (!(element instanceof HTMLInputElement)) return null;
+        const type = String(element.type || '').toLowerCase();
+        const hint = [
+          type,
+          element.name,
+          element.id,
+          element.autocomplete,
+          element.placeholder,
+          element.getAttribute('aria-label') || '',
+        ].join(' ').toLowerCase();
+        if (type === 'password' || /password|passcode|contrase/.test(hint)) return 'password';
+        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier/.test(hint)) return 'username';
+        return null;
       };
-      const fill = () => {
+
+      const candidates = () => {
         const inputs = Array.from(document.querySelectorAll('input'))
           .filter((element) => visible(element) && !element.disabled && !element.readOnly);
-        const passwordInput = inputs.find((element) => element.type === 'password');
-        const usernameInput = inputs.find((element) => {
-          const hint = [element.type, element.name, element.id, element.autocomplete, element.placeholder]
-            .join(' ')
-            .toLowerCase();
-          return element.type === 'email' || /email|e-mail|user|usuario|login|account/.test(hint);
+        return {
+          usernameInput: inputs.find((element) => fieldKind(element) === 'username') || null,
+          passwordInput: inputs.find((element) => fieldKind(element) === 'password') || null,
+        };
+      };
+
+      const setNativeValue = (element, value) => {
+        if (!element) return false;
+        try {
+          const proto = HTMLInputElement.prototype;
+          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (descriptor?.set) descriptor.set.call(element, value);
+          else element.value = value;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const focusWithoutJump = (element) => {
+        if (!element) return;
+        try { element.focus({ preventScroll: true }); } catch {
+          try { element.focus(); } catch {}
+        }
+      };
+
+      const setMessage = (text) => {
+        if (helperMessage) helperMessage.textContent = text;
+      };
+
+      const fillField = (kind, focus = false) => {
+        const { usernameInput, passwordInput } = candidates();
+        const element = kind === 'password' ? passwordInput : usernameInput;
+        const value = kind === 'password' ? password : username;
+        if (!element) {
+          setMessage(kind === 'password' ? 'Abre el paso de contraseña' : 'No se encontró el campo de email');
+          return false;
+        }
+        const changed = !element.value ? setNativeValue(element, value) : true;
+        if (focus) focusWithoutJump(element);
+        setMessage(changed ? 'Credencial aplicada' : 'No se pudo completar este campo');
+        return changed;
+      };
+
+      const ensureHelper = () => {
+        if (dismissed || !document.documentElement) return null;
+        if (helperHost?.isConnected) return helperHost;
+
+        helperHost = document.getElementById(HELPER_ID);
+        if (!helperHost) {
+          helperHost = document.createElement('div');
+          helperHost.id = HELPER_ID;
+          helperHost.style.cssText = [
+            'position:fixed',
+            'z-index:2147483647',
+            'display:none',
+            'pointer-events:auto',
+            'font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+          ].join(';');
+          document.documentElement.appendChild(helperHost);
+        }
+
+        const shadow = helperHost.shadowRoot || helperHost.attachShadow({ mode: 'open' });
+        shadow.innerHTML = `
+          <style>
+            :host { all: initial; }
+            .uf-wrap {
+              display:flex; align-items:center; gap:5px; padding:4px 6px;
+              border:1px solid rgba(99,102,241,.45); border-radius:9px;
+              background:rgba(20,18,38,.96); color:#fff;
+              box-shadow:0 8px 24px rgba(0,0,0,.28);
+              font:600 11px/1.15 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+              white-space:nowrap; user-select:none;
+            }
+            .uf-brand { color:#c4b5fd; font-size:10px; font-weight:800; letter-spacing:.04em; padding:0 2px; }
+            button {
+              all:unset; box-sizing:border-box; cursor:pointer; border-radius:6px;
+              padding:4px 8px; background:#312e52; color:#ede9fe;
+              font:700 10px/1 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            }
+            button:hover { background:#4338ca; color:white; }
+            button:focus-visible { outline:2px solid #a5b4fc; outline-offset:1px; }
+            .uf-close { padding:4px 6px; background:transparent; color:#cbd5e1; font-size:13px; }
+            .uf-msg { display:none; max-width:180px; overflow:hidden; text-overflow:ellipsis; color:#cbd5e1; font-weight:500; }
+          </style>
+          <div class="uf-wrap" role="group" aria-label="userFLOW autofill">
+            <span class="uf-brand">userFLOW</span>
+            <button type="button" data-kind="username">Email</button>
+            <button type="button" data-kind="password">Password</button>
+            <span class="uf-msg" aria-live="polite"></span>
+            <button type="button" class="uf-close" aria-label="Cerrar">×</button>
+          </div>
+        `;
+
+        helperMessage = shadow.querySelector('.uf-msg');
+        shadow.querySelector('[data-kind="username"]')?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          fillField('username', true);
         });
+        shadow.querySelector('[data-kind="password"]')?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          fillField('password', true);
+        });
+        shadow.querySelector('.uf-close')?.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dismissed = true;
+          try { helperHost.remove(); } catch {}
+          helperHost = null;
+          helperMessage = null;
+        });
+        return helperHost;
+      };
+
+      const positionHelper = () => {
+        if (dismissed) return;
+        const { usernameInput, passwordInput } = candidates();
+        const active = document.activeElement instanceof HTMLInputElement && fieldKind(document.activeElement)
+          ? document.activeElement
+          : null;
+        const anchor = active || usernameInput || passwordInput;
+        if (!anchor) {
+          if (helperHost) helperHost.style.display = 'none';
+          return;
+        }
+
+        const host = ensureHelper();
+        if (!host) return;
+        const rect = anchor.getBoundingClientRect();
+        const topAbove = rect.top - 36;
+        const top = topAbove >= 6 ? topAbove : Math.min(window.innerHeight - 34, rect.bottom + 6);
+        const left = Math.max(6, Math.min(rect.left, window.innerWidth - 260));
+        host.style.left = `${Math.round(left)}px`;
+        host.style.top = `${Math.round(top)}px`;
+        host.style.display = 'block';
+      };
+
+      const fillAvailable = () => {
+        const { usernameInput, passwordInput } = candidates();
         if (usernameInput && !usernameInput.value) setNativeValue(usernameInput, username);
         if (passwordInput && !passwordInput.value) setNativeValue(passwordInput, password);
+        positionHelper();
       };
+
       const start = () => {
-        fill();
-        const observer = new MutationObserver(fill);
-        observer.observe(document.documentElement || document, { childList: true, subtree: true });
-        setTimeout(() => observer.disconnect(), 30_000);
-        setTimeout(fill, 400);
-        setTimeout(fill, 1200);
-        setTimeout(fill, 3000);
+        fillAvailable();
+
+        const observer = new MutationObserver(() => {
+          fillAvailable();
+        });
+        observer.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'style', 'class'],
+        });
+
+        addEventListener('focusin', () => {
+          fillAvailable();
+          requestAnimationFrame(positionHelper);
+        }, true);
+        addEventListener('scroll', () => requestAnimationFrame(positionHelper), true);
+        addEventListener('resize', () => requestAnimationFrame(positionHelper), true);
+        addEventListener('pageshow', () => {
+          fillAvailable();
+          requestAnimationFrame(positionHelper);
+        });
+
+        for (const delayMs of [100, 350, 800, 1500, 3000, 7000]) {
+          setTimeout(fillAvailable, delayMs);
+        }
       };
+
       if (document.documentElement) start();
       else addEventListener('DOMContentLoaded', start, { once: true });
     }, {
-      allowedOrigin: target.origin,
+      allowedProtocol: target.protocol,
+      allowedRootHost: target.hostname.toLowerCase().replace(/^www\./, ''),
       username: String(credentials.username),
       password: String(credentials.password),
     });
-    return { installed: true, origin: target.origin };
+    return { installed: true, origin: target.origin, visibleHelper: true };
   } finally {
     await browser.disconnect().catch(() => null);
   }

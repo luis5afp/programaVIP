@@ -281,17 +281,21 @@ export async function clientLaunch(
   }
 
   let credentialDelivery: any = null;
-  if (credentialsRequired) {
+  const credentialHelperAllowed = credentialsRequired || runtime.authStrategy === 'cookie-snapshot';
+  if (credentialHelperAllowed) {
     const credentials = await managedProfileCredentials(env, profileId);
-    if (!credentials?.username || !credentials?.password) {
+    if (credentialsRequired && (!credentials?.username || !credentials?.password)) {
       throw new HttpError(409, 'MANAGED_CREDENTIALS_NOT_READY', 'Este perfil necesita credenciales administradas antes de abrirse.');
     }
-    credentialDelivery = {
-      included: true,
-      username: credentials.username,
-      password: credentials.password,
-      updatedAt: credentials.updatedAt,
-    };
+    if (credentials?.username && credentials?.password) {
+      credentialDelivery = {
+        included: true,
+        required: credentialsRequired,
+        username: credentials.username,
+        password: credentials.password,
+        updatedAt: credentials.updatedAt,
+      };
+    }
   }
 
   const usage = await openProfileUsage(request, env, id, { id: profile.id, name: profile.name, url: profile.url });
