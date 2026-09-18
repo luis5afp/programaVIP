@@ -9,6 +9,7 @@ import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
   installCredentialAutofill,
+  inspectRuntimeProfile,
   navigateBrowserHome,
   restorePortableSession,
 } from './session-state.js';
@@ -494,6 +495,17 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }
   }
 
+  async function inspect(clientId, profileId) {
+    const entry = processes.get(profileKey(clientId, profileId));
+    if (!entry || entry.process?.exitCode !== null) {
+      throw new Error('El navegador de prueba ya no está activo.');
+    }
+    return inspectRuntimeProfile({
+      debugPort: entry.debugPort,
+      profileUrl: entry.profile.url,
+    });
+  }
+
   async function closeAll(reason = 'app_closed') {
     const entries = Array.from(processes.values());
     await Promise.all(entries.map(async (entry) => {
@@ -658,6 +670,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
   return {
     launch,
+    inspect,
     close,
     closeAll,
     running,
