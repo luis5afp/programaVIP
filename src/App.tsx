@@ -48,7 +48,7 @@ export default function App() {
     case 'devices': content = <DevicesView />; break;
     case 'activity': content = <ActivityView initialTab={activityTab} initialHistorySearch={historySearch} />; break;
     case 'administrators': content = session.role === 'owner' ? <AdministratorsView session={session} /> : <DashboardView />; break;
-    case 'system': content = <SystemView />; break;
+    case 'system': content = <SystemView session={session} />; break;
     default: content = <DashboardView />;
   }
 
