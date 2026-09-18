@@ -29,8 +29,6 @@
     "files": [
       "entry.js",
       "main.js",
-      "proxy-bridge.js",
-      "preload.cjs",
       "browser-engine/**",
       "package.json"
     ],
