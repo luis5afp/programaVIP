@@ -158,6 +158,11 @@ export const api = {
         `/api/profiles/${profileId}/managed-credentials`,
         { method: 'POST', body: JSON.stringify({ loginUsername, password: password || '' }) },
       ),
+    clearCredentials: (profileId: string) =>
+      request<{ ok: true; profile_id: string; has_credentials: false }>(
+        `/api/profiles/${profileId}/managed-credentials`,
+        { method: 'DELETE' },
+      ),
     capture: (profileId: string) =>
       request<{ ok: true; launch_url: string; expires_at: string }>(`/api/profiles/${profileId}/session-capture`, {
         method: 'POST',
