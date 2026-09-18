@@ -27,14 +27,22 @@ async function applyCookies(browser, cookies) {
   for (const cookie of cookies) {
     try {
       const sameSite = normalizeSameSite(cookie.sameSite);
+      const secure = sameSite === 'None' ? true : cookie.secure !== false;
+      const cookiePath = cookie.path || '/';
+      const domain = String(cookie.domain || '').trim();
+      const host = domain.replace(/^\./, '');
       const payload = {
         name: String(cookie.name),
         value: String(cookie.value ?? ''),
-        domain: cookie.domain || undefined,
-        path: cookie.path || '/',
-        secure: sameSite === 'None' ? true : cookie.secure !== false,
+        path: cookiePath,
+        secure,
         httpOnly: cookie.httpOnly === true,
       };
+      if (cookie.hostOnly === true && host) {
+        payload.url = `${secure ? 'https:' : 'http:'}//${host}${cookiePath}`;
+      } else if (domain) {
+        payload.domain = domain;
+      }
       if (sameSite) payload.sameSite = sameSite;
       const expires = Number(cookie.expires ?? cookie.expirationDate);
       if (Number.isFinite(expires) && expires > 0) payload.expires = expires;
