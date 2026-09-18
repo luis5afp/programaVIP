@@ -315,6 +315,20 @@ export function ProfilesView() {
     }
   }
 
+  async function clearAutofillCredentials(profile: Profile) {
+    if (!confirm(`¿Eliminar las credenciales de autofill guardadas de ${profileLabel(profile)}?`)) return;
+    try {
+      setSessionAction(profile.id);
+      setError(null);
+      await api.profileSessions.clearCredentials(profile.id);
+      await load();
+    } catch (clearError: any) {
+      setError(clearError.message);
+    } finally {
+      setSessionAction(null);
+    }
+  }
+
   async function openValidation(profile: Profile) {
     const eligible = validationClientsFor(profile.id);
     const defaultClientId = profile.network_strategy === 'assigned-proxy' ? (eligible[0]?.id || '') : '';
@@ -944,6 +958,22 @@ export function ProfilesView() {
                     placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'}
                   />
                 </Field>
+                {current && currentState?.has_credentials && authStrategy !== 'manual' && (
+                  <div className="span-2">
+                    <button
+                      type="button"
+                      className="button secondary small"
+                      disabled={sessionAction === current.id}
+                      onClick={() => void clearAutofillCredentials(current)}
+                    >
+                      <KeyRound size={12} />
+                      Eliminar credenciales de autofill guardadas
+                    </button>
+                    <div className="help" style={{ marginTop: 6 }}>
+                      Elimina solo correo/contraseña administrados. No borra el snapshot de cookies ni el perfil local del cliente.
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
