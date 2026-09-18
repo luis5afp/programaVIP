@@ -87,6 +87,10 @@ export function SystemView({ session }: { session: AdminSession }) {
           <Database size={20} />
           <h3>Versión del servidor</h3>
           <p className="mono muted">{health?.version || '1.0.0'}</p>
+          <div className="toolbar" style={{ margin: '8px 0 0' }}>
+            <Badge tone="neutral">userFLOW ≥ {health?.minimumClientVersion || '—'}</Badge>
+            <Badge tone="neutral">Session Manager ≥ {health?.minimumSessionManagerVersion || '—'}</Badge>
+          </div>
           <p className="muted" style={{ fontSize: 11 }}>Cloudflare Worker + Supabase, sin servidor Express duplicado.</p>
         </Card>
       </div>
