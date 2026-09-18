@@ -325,6 +325,7 @@ function safeValidationResult(value: any) {
     ok: value?.ok === true,
     browser: value?.browser || null,
     profileState: value?.profileState || null,
+    outcome: value?.outcome || null,
     network: value?.network || null,
     publicIp: value?.publicIp || null,
     sessionVersion: Number(value?.sessionVersion || 0),
