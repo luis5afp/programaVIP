@@ -1,18 +1,26 @@
-const BLOCKED_INTERNAL = [
+try { importScripts('strategy.js'); } catch {}
+
+const STRATEGY = String(globalThis.USERFLEX_RUNTIME_STRATEGY || 'guard-only');
+const BASE_BLOCKED = [
   'chrome://extensions',
   'chrome://settings',
+  'edge://extensions',
+  'edge://settings',
+];
+const HARDENED_BLOCKED = [
   'chrome://flags',
   'chrome://inspect',
   'chrome://policy',
   'chrome://password-manager',
-  'edge://extensions',
-  'edge://settings',
   'edge://flags',
   'edge://inspect',
   'edge://policy',
   'edge://wallet',
   'https://chromewebstore.google.com/',
 ];
+const BLOCKED_INTERNAL = STRATEGY === 'guard-only'
+  ? BASE_BLOCKED
+  : [...BASE_BLOCKED, ...HARDENED_BLOCKED];
 
 function isBlocked(url) {
   const value = String(url || '').toLowerCase();
