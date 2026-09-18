@@ -60,3 +60,43 @@ jobs:
 
       - name: Deploy Worker and static assets
         run: npx wrangler@4.130.0 deploy
+
+      - name: Production smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://userflex-admin.luis5afp.workers.dev"
+          TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+          health="$(curl --fail --silent --show-error "$BASE/api/health")"
+          HEALTH="$health" node - <<'NODE'
+          const value = JSON.parse(process.env.HEALTH || '{}');
+          if (value.ok !== true) throw new Error('health endpoint is not OK');
+          if (value.minimumClientVersion !== '0.3.6') throw new Error('unexpected minimum client version');
+          if (value.minimumSessionManagerVersion !== '0.3.6') throw new Error('unexpected minimum Session Manager version');
+          NODE
+
+          latest="$(curl --fail --silent --show-error "$BASE/api/client-update/latest")"
+          LATEST="$latest" node - <<'NODE'
+          const value = JSON.parse(process.env.LATEST || '{}');
+          if (!/^\d+\.\d+\.\d+/.test(String(value.version || ''))) throw new Error('invalid updater version');
+          if (!/^[0-9a-f]{64}$/i.test(String(value.sha256 || ''))) throw new Error('invalid updater sha256');
+          if (!Array.isArray(value.chunks) || value.chunks.length < 1) throw new Error('updater has no chunks');
+          NODE
+
+          code="$(curl --silent --output /tmp/catalog.json --write-out '%{http_code}' "$BASE/api/client/catalog")"
+          test "$code" = "401"
+
+          code="$(curl --silent --output /tmp/sm.json --write-out '%{http_code}' \
+            --request POST "$BASE/api/session-manager/bootstrap" \
+            --header 'content-type: application/json' \
+            --header 'X-Userflex-Session-Manager-Version: 0.3.6' \
+            --data "{\"token\":\"$TOKEN\"}")"
+          test "$code" = "401"
+
+          code="$(curl --silent --output /tmp/test.json --write-out '%{http_code}' \
+            --request POST "$BASE/api/client-test/bootstrap" \
+            --header 'content-type: application/json' \
+            --header 'X-Userflow-Client-Version: 0.3.6' \
+            --data "{\"token\":\"$TOKEN\"}")"
+          test "$code" = "401"
