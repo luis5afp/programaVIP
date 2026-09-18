@@ -355,10 +355,21 @@ window.userflex.onHeartbeat((payload) => {
   } else {
     renderAccount();
   }
-  serverState.textContent = payload?.active === false ? 'Sin autorización' : 'Conectado';
-  serverState.classList.toggle('bad', payload?.active === false);
+  const connectionLost = payload?.connectionLost === true;
+  const failClosed = payload?.failClosed === true;
+  serverState.textContent = failClosed
+    ? 'Sin validación'
+    : connectionLost ? 'Reconectando' : payload?.active === false ? 'Sin autorización' : 'Conectado';
+  serverState.classList.toggle('bad', failClosed || payload?.active === false);
   const stamp = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-  heartbeatTime.textContent = payload?.configChanged ? `Configuración actualizada ${stamp}` : `Última conexión ${stamp}`;
+  if (connectionLost) {
+    const remainingMinutes = Math.ceil(Number(payload?.offlineGraceRemainingMs || 0) / 60000);
+    heartbeatTime.textContent = failClosed
+      ? `Servidor no disponible · perfiles cerrados ${stamp}`
+      : `Servidor no disponible · reintento/gracia ${Math.max(1, remainingMinutes)} min`;
+  } else {
+    heartbeatTime.textContent = payload?.configChanged ? `Configuración actualizada ${stamp}` : `Última conexión ${stamp}`;
+  }
 });
 
 window.userflex.onAuthInvalidated((payload) => {
