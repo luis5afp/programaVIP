@@ -174,10 +174,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
   const processes = new Map();
 
   const profileKey = (clientId, profileId) => `${safeSegment(clientId, 'client')}:${safeSegment(profileId)}`;
-  const profileDir = (clientId, profileId) => path.join(
+  const clientProfilesDir = (clientId) => path.join(
     app.getPath('userData'),
     'browserProfilesData',
     safeSegment(clientId, 'client'),
+  );
+  const profileDir = (clientId, profileId) => path.join(
+    clientProfilesDir(clientId),
     safeSegment(profileId),
   );
 
@@ -403,6 +406,59 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }));
   }
 
+  async function removeLocalProfile(clientId, profileId, reason = 'profile_revoked') {
+    await close(clientId, profileId, reason).catch(() => null);
+    const dir = profileDir(clientId, profileId);
+    await killStrayProfileProcesses(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+
+  async function reconcileAuthorizedProfiles(clientId, profileIds = []) {
+    const allowed = new Set(
+      profileIds
+        .map((value) => String(value || '').trim())
+        .filter((value) => /^[0-9a-f-]{36}$/i.test(value))
+        .map((value) => safeSegment(value)),
+    );
+    const root = clientProfilesDir(clientId);
+    let entries = [];
+    try {
+      entries = await fsp.readdir(root, { withFileTypes: true });
+    } catch {
+      return { removed: [] };
+    }
+
+    const removed = [];
+    for (const item of entries) {
+      if (!item.isDirectory() || allowed.has(item.name)) continue;
+      await removeLocalProfile(clientId, item.name, 'profile_revoked');
+      removed.push(item.name);
+    }
+    return { removed };
+  }
+
+  async function clearClientProfiles(clientId, reason = 'client_logout') {
+    const keyPrefix = `${safeSegment(clientId, 'client')}:`;
+    const live = Array.from(processes.entries())
+      .filter(([key]) => key.startsWith(keyPrefix))
+      .map(([, entry]) => entry);
+    await Promise.all(live.map(async (entry) => {
+      entry.closing = true;
+      await killProcessTree(entry.process);
+      await cleanup(entry, reason);
+    }));
+
+    const root = clientProfilesDir(clientId);
+    try {
+      const entries = await fsp.readdir(root, { withFileTypes: true });
+      for (const item of entries) {
+        if (!item.isDirectory()) continue;
+        await killStrayProfileProcesses(path.join(root, item.name));
+      }
+    } catch {}
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+
   function running() {
     return Array.from(processes.values()).map((entry) => ({
       clientId: entry.clientId,
@@ -414,5 +470,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }));
   }
 
-  return { launch, close, closeAll, running, profileDir };
+  return {
+    launch,
+    close,
+    closeAll,
+    running,
+    profileDir,
+    reconcileAuthorizedProfiles,
+    clearClientProfiles,
+  };
 }
