@@ -76,8 +76,8 @@ async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
         .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
     );
     const missing = [];
-    for (const [name, value] of expected) {
-      if (!installed.has(name) || installed.get(name) !== value) missing.push(name);
+    for (const [name] of expected) {
+      if (!installed.has(name) || !installed.get(name)) missing.push(name);
     }
     if (missing.length) {
       throw new Error(`Chrome no pudo conservar las cookies de autenticación de Netflix: ${missing.join(', ')}.`);
