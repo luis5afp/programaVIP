@@ -228,10 +228,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     safeSegment(profileId),
   );
 
-  const profileExtensionDir = (clientId, profileId) => path.join(
+  const clientExtensionsDir = (clientId) => path.join(
     app.getPath('userData'),
     'browserExtensionsData',
     safeSegment(clientId, 'client'),
+  );
+  const profileExtensionDir = (clientId, profileId) => path.join(
+    clientExtensionsDir(clientId),
     safeSegment(profileId),
   );
 
@@ -504,6 +507,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const dir = profileDir(clientId, profileId);
     await killStrayProfileProcesses(dir);
     await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(profileExtensionDir(clientId, profileId), { recursive: true, force: true });
   }
 
   async function reconcileAuthorizedProfiles(clientId, profileIds = []) {
@@ -634,6 +638,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
     } catch {}
     await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(clientExtensionsDir(clientId), { recursive: true, force: true });
   }
 
   function running() {
