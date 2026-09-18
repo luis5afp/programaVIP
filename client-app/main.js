@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
@@ -31,6 +32,7 @@ let profileOrder = [];
 let profileDragMonitor = null;
 const pendingUsageCloseRequests = new Set();
 let quitAfterUsageFlush = false;
+let kaizenBrowserEngine = null;
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -142,6 +144,24 @@ function closeWorkspaceUsage(workspace, reason = 'profile_closed') {
   workspace.usageClosePromise = request;
   pendingUsageCloseRequests.add(request);
   return request;
+}
+
+function getKaizenBrowserEngine() {
+  if (kaizenBrowserEngine) return kaizenBrowserEngine;
+  kaizenBrowserEngine = createKaizenBrowserEngine({
+    app,
+    onClosed: async (entry, reason) => {
+      if (!entry?.usageId) return;
+      const usage = {
+        usageId: entry.usageId,
+        usageClosed: false,
+        usageClosePromise: null,
+      };
+      await closeWorkspaceUsage(usage, reason || 'browser_exit');
+    },
+    log: console,
+  });
+  return kaizenBrowserEngine;
 }
 
 async function flushUsageCloseRequests(timeoutMs = 1800) {
@@ -278,11 +298,13 @@ function enterWorkspace(sender) {
 }
 
 async function returnToLogin() {
+  await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
+  closePrivateBrowser();
+  await flushUsageCloseRequests();
   await clearAuth();
   const loginWindow = createMainWindow();
   loginWindow.show();
   loginWindow.focus();
-  closePrivateBrowser();
 }
 
 function proxyRules(proxy) {
@@ -1032,18 +1054,6 @@ function detachIfOutside(profileId, point) {
 
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
-  if (profileTabs.has(profileId)) {
-    const workspace = profileTabs.get(profileId);
-    pendingCatalogTab = false;
-    if (workspace.detachedWindow && !workspace.detachedWindow.isDestroyed()) {
-      showCatalogTab('home');
-      workspace.detachedWindow.show();
-      workspace.detachedWindow.focus();
-    } else {
-      selectProfileTab(profileId);
-    }
-    return { ok: true, reused: true };
-  }
 
   const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, {
     method: 'POST',
@@ -1056,86 +1066,38 @@ async function openProfile(profileId) {
   if (sync.configChanged && sync.catalog) {
     sendClient('userflex:heartbeat', { active: true, revoke: false, ...sync });
   }
+
   const profile = launch?.profile;
   const connection = launch?.connection || { mode: 'direct', locked: false };
   const delivery = launch?.sessionDelivery || null;
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
 
-  const partitionClientId = authMeta?.client?.id || 'client';
-  const workspace = {
-    profile,
-    connection,
-    delivery,
-    partition: `persist:userflex-client-${partitionClientId}-${profile.id}`,
-    pages: new Map(),
-    pageOrder: [],
-    activePageId: null,
-    loginHandler: null,
-    detachedWindow: null,
-    detachedShellReady: false,
-    closing: false,
-    cleaned: false,
+  const usage = {
     usageId: launch?.usage?.id || null,
     usageClosed: false,
     usageClosePromise: null,
   };
-  const firstPage = createProfilePageView(workspace);
-  workspace.activePageId = firstPage.id;
-  const browserSession = firstPage.view.webContents.session;
-
-  if (connection.mode === 'proxy' && connection.proxy) {
-    await browserSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: proxyRules(connection.proxy),
-      proxyBypassRules: '<-loopback>',
-    });
-    const proxyHost = String(connection.proxy.host || '').toLowerCase();
-    workspace.loginHandler = (event, targetWebContents, _details, authInfo, callback) => {
-      const belongsToWorkspace = Array.from(workspace.pages.values()).some((page) => page.view.webContents === targetWebContents);
-      if (!belongsToWorkspace) return;
-      if (!authInfo?.isProxy || String(authInfo.host || '').toLowerCase() !== proxyHost) return;
-      event.preventDefault();
-      callback(connection.proxy.username || '', connection.proxy.password || '');
-    };
-    app.on('login', workspace.loginHandler);
-  } else {
-    await browserSession.setProxy({ mode: 'direct' });
-  }
 
   try {
-    if (connection.locked === true && connection.mode !== 'proxy') {
-      throw new UserflexError('El perfil exige una salida protegida y el proxy no está disponible.', 'NETWORK_LOCK_REQUIRED');
-    }
-    if (connection.locked === true) {
-      const detectedIp = await publicIp(browserSession);
-      if (!detectedIp) throw new UserflexError('No se pudo validar la IP de salida del perfil.', 'EGRESS_IP_UNVERIFIED');
-      if (delivery?.expectedPublicIp && detectedIp !== delivery.expectedPublicIp) {
-        throw new UserflexError(`La IP de salida no coincide con el perfil. Esperada: ${delivery.expectedPublicIp}. Detectada: ${detectedIp}.`, 'EGRESS_IP_MISMATCH');
-      }
-    }
-
-    if (profile.sessionMode === 'managed-first-party') {
-      if (!delivery?.ready || !delivery?.materialIncluded) {
-        throw new UserflexError('La sesión administrada todavía no está lista.', 'MANAGED_SESSION_NOT_READY');
-      }
-      await restoreManagedSession(firstPage.view.webContents, browserSession, profile, delivery);
-    } else {
-      await firstPage.view.webContents.loadURL(profile.url);
-    }
-
-    profileTabs.set(profile.id, workspace);
-    profileOrder.push(profile.id);
-    selectProfileTab(profile.id);
+    const result = await getKaizenBrowserEngine().launch({
+      clientId: authMeta?.client?.id || 'client',
+      profile,
+      connection,
+      delivery,
+      usageId: usage.usageId,
+    });
     return {
+      ...result,
       ok: true,
-      reused: false,
-      tabbed: true,
-      network: connection.mode,
-      networkLocked: connection.locked === true,
-      sessionVersion: Number(delivery?.version || 0),
+      tabbed: false,
+      engine: 'kaizen-external',
+      sessionVersion: Number(delivery?.version || result?.sessionVersion || 0),
     };
   } catch (error) {
-    cleanupWorkspace(workspace, 'launch_failed');
+    await closeWorkspaceUsage(usage, 'launch_failed');
+    if (!error?.code && /Chrome\/Chromium/i.test(String(error?.message || ''))) {
+      error.code = 'KAIZEN_BROWSER_RUNTIME_MISSING';
+    }
     throw error;
   }
 }
@@ -1291,11 +1253,13 @@ ipcMain.handle('userflex:logout', async () => {
 
 app.on('before-quit', (event) => {
   if (quitAfterUsageFlush) return;
-  for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
-  if (pendingUsageCloseRequests.size === 0) return;
   event.preventDefault();
   quitAfterUsageFlush = true;
-  void flushUsageCloseRequests().finally(() => app.quit());
+  for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
+  void getKaizenBrowserEngine().closeAll('app_exit')
+    .catch(() => null)
+    .then(() => flushUsageCloseRequests())
+    .finally(() => app.quit());
 });
 
 app.whenReady().then(async () => {
