@@ -84,8 +84,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       const credentialsRequired = credentialAuthentication(runtime);
       const session: any = sessionMap.get(profile.id);
       const assignment: any = assignmentMap.get(profile.id);
-      const assignmentProxyId = assignment?.proxy_id || null;
-      const profileProxyId = defaultProxyMap.get(profile.id) || null;
+      const assignmentProxyId = assignment?.proxy_id ? String(assignment.proxy_id) : null;
+      const profileProxyId = defaultProxyMap.get(profile.id) ? String(defaultProxyMap.get(profile.id)) : null;
       const profileProxy: any = profileProxyId ? proxyMap.get(profileProxyId) : null;
       const assignmentProxy: any = assignmentProxyId ? proxyMap.get(assignmentProxyId) : null;
       const hasCredentials = credentialProfileIds.has(String(profile.id));
