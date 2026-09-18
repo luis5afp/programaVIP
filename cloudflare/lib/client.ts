@@ -86,7 +86,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
   const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
-  const credentialMap = new Map((credentials || []).map((row: any) => [String(row.profile_id), row]));
+  const credentialMap = new Map<string, any>((credentials || []).map((row: any) => [String(row.profile_id), row]));
   const credentialProfileIds = new Set(credentialMap.keys());
   const proxyMap = new Map((proxyRows || []).map((row: any) => [row.id, row]));
   const result = profileIds
