@@ -193,7 +193,10 @@ jobs:
             publishedAt = [DateTimeOffset]::UtcNow.ToString('o')
           }
           $manifestPath = Join-Path $feedRoot 'latest.json'
-          $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding utf8NoBOM
+          $versionManifestPath = Join-Path $versionRoot 'manifest.json'
+          $manifestJson = $manifest | ConvertTo-Json -Depth 6
+          $manifestJson | Set-Content -Path $manifestPath -Encoding utf8NoBOM
+          $manifestJson | Set-Content -Path $versionManifestPath -Encoding utf8NoBOM
 
           $parsed = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
           if ($parsed.version -ne $version) { throw "Updater manifest version mismatch." }
@@ -242,6 +245,19 @@ jobs:
               --data-binary "@$($file.FullName)"
             if ($LASTEXITCODE -ne 0) { throw "Failed to publish $objectName." }
           }
+
+          $versionManifest = Get-Item -Path (Join-Path $versionRoot 'manifest.json')
+          $versionManifestUrl = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/versions/$version/manifest.json"
+          Write-Host "Publishing versions/$version/manifest.json..."
+          & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 60 `
+            --request POST $versionManifestUrl `
+            --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
+            --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
+            --header "x-upsert: true" `
+            --header "cache-control: max-age=31536000, immutable" `
+            --header "Content-Type: application/json" `
+            --data-binary "@$($versionManifest.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish version manifest." }
 
           $manifest = Get-Item -Path (Join-Path $feedRoot 'latest.json')
           $manifestUrl = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/latest.json"
