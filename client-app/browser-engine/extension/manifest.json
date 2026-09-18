@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "userFLEX Browser Guard",
+  "version": "1.0.0",
+  "description": "Protección local del navegador administrado por userFLEX.",
+  "permissions": ["tabs", "webNavigation", "storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "run_at": "document_start",
+      "js": ["content.js"]
+    }
+  ]
+}
