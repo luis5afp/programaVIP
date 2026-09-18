@@ -113,12 +113,22 @@ export function SystemView({ session }: { session: AdminSession }) {
         {active ? (
           <div style={{ display: 'grid', gap: 14, marginTop: 14 }}>
             <div className="toolbar" style={{ margin: 0 }}>
-              <Badge tone="ok">Activa: v{active.version}</Badge>
+              <Badge tone={release?.activeCompatible === false ? 'bad' : 'ok'}>Activa: v{active.version}</Badge>
+              {release?.minimumCompatibleVersion && (
+                <Badge tone={release.activeCompatible === false ? 'bad' : 'neutral'}>
+                  Mínima compatible: v{release.minimumCompatibleVersion}
+                </Badge>
+              )}
               <Badge tone="neutral">{formatBytes(active.size)}</Badge>
               <Badge tone="neutral">{active.chunks.length} partes</Badge>
               {active.publishedAt && <Badge tone="neutral">{new Date(active.publishedAt).toLocaleString('es-PE')}</Badge>}
             </div>
 
+            {release?.activeCompatible === false && (
+              <div style={{ padding: 12, border: '1px solid #fecaca', background: '#fef2f2', borderRadius: 10, color: '#991b1b' }}>
+                La versión activa es incompatible con el servidor. Activa una versión igual o superior a v{release.minimumCompatibleVersion}.
+              </div>
+            )}
             <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 10 }}>
               <div className="help">SHA-256 del instalador</div>
               <div className="mono" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{active.sha256}</div>
