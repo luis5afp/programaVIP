@@ -560,6 +560,124 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   const path = new URL(request.url).pathname;
   const method = request.method.toUpperCase();
 
+  if (path === '/api/client-test/bootstrap' && method === 'POST') {
+    const body = await bodyJson(request);
+    const rawToken = text(body.token, 'token', 128);
+    const job = await validationJob(env, rawToken);
+    const profile = await profileRow(env, job.profile_id);
+    const runtime = runtimeForProfile(profile);
+    const validation = await configurationValidation(env, profile, job.client_id || null);
+    if (!validation.ready) {
+      throw new HttpError(409, 'PROFILE_VALIDATION_BLOCKED', 'La configuración cambió y ya no está lista para probar.');
+    }
+
+    const network = await profileValidationNetwork(env, profile, job.client_id || null);
+    let connection: any = { mode: 'direct', locked: network.locked === true };
+    if (network.proxy) {
+      connection = {
+        mode: 'proxy',
+        locked: network.locked === true,
+        proxy: {
+          host: network.proxy.host,
+          port: network.proxy.port,
+          type: network.proxy.proxy_type || 'http',
+          validationStatus: network.proxy.validation_status || null,
+          publicIp: inetHost(network.proxy.public_ip),
+          username: network.proxy.username || null,
+          password: network.proxy.password_ciphertext
+            ? await decryptProxy(env, network.proxy.password_ciphertext, network.proxy.password_iv)
+            : null,
+        },
+      };
+    }
+
+    let sessionDelivery: any = {
+      ready: !snapshotAuthentication(runtime),
+      mode: profile.session_mode,
+      materialIncluded: false,
+      version: 0,
+    };
+    if (snapshotAuthentication(runtime)) {
+      const session = await managedSessionMaterial(env, profile.id);
+      if (!session) throw new HttpError(409, 'MANAGED_SESSION_NOT_READY');
+      sessionDelivery = {
+        ready: true,
+        mode: profile.session_mode,
+        materialIncluded: true,
+        version: session.version,
+        expectedPublicIp: connection.mode === 'proxy' && connection.locked
+          ? (inetHost(network.proxy?.public_ip) || session.publicIp)
+          : null,
+        networkLocked: connection.mode === 'proxy' && connection.locked,
+        capturedAt: session.capturedAt,
+        validatedAt: session.validatedAt,
+        material: session.material,
+      };
+    }
+
+    const credential = await credentialRow(env, profile.id);
+    const credentialRequired = credentialAuthentication(runtime);
+    let credentialDelivery: any = null;
+    if (credentialRequired && !credential) throw new HttpError(409, 'MANAGED_CREDENTIALS_NOT_READY');
+    if (credential && (credentialRequired || runtime.authStrategy === 'cookie-snapshot')) {
+      credentialDelivery = {
+        included: true,
+        required: credentialRequired,
+        username: credential.login_username,
+        password: await decryptProxy(env, credential.password_ciphertext, credential.password_iv),
+        updatedAt: credential.updated_at || null,
+      };
+    }
+
+    const now = new Date().toISOString();
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'running', started_at: job.started_at || now }),
+    });
+
+    return json({
+      ok: true,
+      job: { id: job.id, expiresAt: job.expires_at },
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        url: profile.url,
+        sessionMode: profile.session_mode,
+        sessionReady: profile.session_ready === true,
+        runtime,
+      },
+      connection,
+      sessionDelivery,
+      credentialDelivery,
+      validation,
+    });
+  }
+
+  if (path === '/api/client-test/report' && method === 'POST') {
+    const body = await bodyJson(request, 150_000);
+    const rawToken = text(body.token, 'token', 128);
+    const job = await validationJob(env, rawToken);
+    const result = safeValidationResult(body.result);
+    const serialized = JSON.stringify(result);
+    if (new TextEncoder().encode(serialized).byteLength > MAX_VALIDATION_RESULT_BYTES) {
+      throw new HttpError(413, 'VALIDATION_RESULT_TOO_LARGE');
+    }
+    const now = new Date().toISOString();
+    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        status: result.ok ? 'completed' : 'failed',
+        result,
+        error: result.ok ? null : optional(body.error, 1000),
+        completed_at: now,
+      }),
+    });
+    return json({ ok: true, job_id: job.id, status: result.ok ? 'completed' : 'failed' });
+  }
+
+
   if (path === '/api/session-manager/bootstrap' && method === 'POST') {
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
