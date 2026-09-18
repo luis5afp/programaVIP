@@ -282,6 +282,8 @@ export interface ClientReleaseStatus {
   active: ClientReleaseManifest;
   available: ClientReleaseManifest[];
   downloadUrl: string;
+  minimumCompatibleVersion: string;
+  activeCompatible: boolean;
 }
 
 
