@@ -1204,6 +1204,120 @@ async function openProfile(profileId) {
   }
 }
 
+async function handleClientTestProtocol(rawUrl) {
+  let token = '';
+  let testClientId = null;
+  let profileId = null;
+  try {
+    const parsed = new URL(String(rawUrl || ''));
+    if (parsed.protocol !== 'userflow-client:' || parsed.hostname !== 'profile-test') {
+      throw new UserflexError('Enlace de prueba no compatible.', 'CLIENT_TEST_URL_INVALID');
+    }
+    const endpoint = String(parsed.searchParams.get('endpoint') || '').replace(/\/$/, '');
+    if (endpoint !== API_ORIGIN) {
+      throw new UserflexError('El enlace de prueba no pertenece al servidor autorizado.', 'CLIENT_TEST_ORIGIN_INVALID');
+    }
+    token = String(parsed.searchParams.get('token') || '');
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) {
+      throw new UserflexError('El ticket de prueba no es válido.', 'CLIENT_TEST_TOKEN_INVALID');
+    }
+
+    const bootstrap = await apiRequest('/api/client-test/bootstrap', {
+      method: 'POST',
+      token: false,
+      body: { token },
+      timeout: 25_000,
+    });
+    const profile = bootstrap?.profile;
+    profileId = profile?.id || null;
+    if (!bootstrap?.job?.id || !profile?.id || !profile?.url) {
+      throw new UserflexError('El servidor devolvió una prueba incompleta.', 'CLIENT_TEST_INVALID');
+    }
+
+    testClientId = `validation_${bootstrap.job.id}`;
+    const result = await getKaizenBrowserEngine().launch({
+      clientId: testClientId,
+      profile,
+      connection: bootstrap.connection || { mode: 'direct', locked: false },
+      delivery: bootstrap.sessionDelivery || null,
+      credentials: bootstrap.credentialDelivery || null,
+      usageId: null,
+      ephemeral: true,
+    });
+    const inspection = await getKaizenBrowserEngine()
+      .inspect(testClientId, profile.id)
+      .catch(() => null);
+
+    const authStrategy = profile?.runtime?.authStrategy || 'manual';
+    const loginFieldsVisible = Boolean(inspection?.usernameFieldVisible || inspection?.passwordFieldVisible);
+    const helperReady = Boolean(
+      result?.autofill?.installed
+      && (inspection?.helperVisible || inspection?.usernameFilled || inspection?.passwordFilled || loginFieldsVisible),
+    );
+    const snapshotLooksAuthenticated = Boolean(
+      result?.restore
+      && inspection
+      && inspection.loginLikeUrl !== true
+      && !loginFieldsVisible,
+    );
+
+    let outcome = 'browser-launched';
+    if (authStrategy === 'credential-autofill') {
+      outcome = helperReady ? 'autofill-ready' : 'autofill-fields-not-detected';
+    } else if (authStrategy === 'cookie-snapshot') {
+      outcome = snapshotLooksAuthenticated
+        ? 'snapshot-authenticated'
+        : helperReady ? 'snapshot-needs-login-autofill-ready' : 'snapshot-needs-login';
+    } else if (authStrategy === 'hybrid') {
+      outcome = snapshotLooksAuthenticated
+        ? 'snapshot-authenticated'
+        : helperReady ? 'hybrid-autofill-ready' : 'hybrid-login-not-detected';
+    } else {
+      outcome = loginFieldsVisible ? 'manual-login-visible' : 'manual-browser-ready';
+    }
+
+    const report = {
+      ...result,
+      ok: true,
+      outcome,
+      inspection,
+    };
+    await apiRequest('/api/client-test/report', {
+      method: 'POST',
+      token: false,
+      body: { token, result: report },
+      timeout: 20_000,
+    });
+    return report;
+  } catch (error) {
+    if (token) {
+      await apiRequest('/api/client-test/report', {
+        method: 'POST',
+        token: false,
+        body: {
+          token,
+          result: {
+            ok: false,
+            profileState: 'launch-failed',
+            outcome: 'launch-failed',
+            runtime: null,
+          },
+          error: error?.message || String(error || 'La prueba falló.'),
+        },
+        timeout: 12_000,
+      }).catch(() => null);
+    }
+    console.error('userFLOW client-test failed:', error?.message || error);
+    return { ok: false, error: serializeError(error) };
+  }
+}
+
+globalThis.__userflowHandleProtocolUrl = handleClientTestProtocol;
+for (const pendingUrl of Array.from(globalThis.__userflowPendingProtocolUrls || [])) {
+  void handleClientTestProtocol(pendingUrl);
+}
+globalThis.__userflowPendingProtocolUrls = [];
+
 ipcMain.handle('userflex:bootstrap', async (event) => {
   try {
     if (!accessToken) await loadAuth();
