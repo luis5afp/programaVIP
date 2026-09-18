@@ -167,40 +167,41 @@ async function readWebStorageAndIndexedDb(page) {
         const db = request.result;
         try {
           const storeNames = Array.from(db.objectStoreNames);
-          const tx = storeNames.length ? db.transaction(storeNames, 'readonly') : null;
           const stores = [];
-          if (tx) {
-            for (const name of storeNames) {
-              try {
-                const store = tx.objectStore(name);
-                const indexes = Array.from(store.indexNames).map((indexName) => {
-                  const index = store.index(indexName);
-                  return {
-                    name: index.name,
-                    keyPath: index.keyPath,
-                    unique: index.unique === true,
-                    multiEntry: index.multiEntry === true,
-                  };
+          for (const name of storeNames) {
+            try {
+              // One transaction per store keeps the transaction alive while its
+              // getAll/getAllKeys pair completes. A single transaction spanning
+              // many stores can auto-commit between awaited stores.
+              const tx = db.transaction([name], 'readonly');
+              const store = tx.objectStore(name);
+              const indexes = Array.from(store.indexNames).map((indexName) => {
+                const index = store.index(indexName);
+                return {
+                  name: index.name,
+                  keyPath: index.keyPath,
+                  unique: index.unique === true,
+                  multiEntry: index.multiEntry === true,
+                };
+              });
+              const [values, keys] = await readStore(store);
+              const records = [];
+              const count = Math.min(values.length, keys.length, 50000);
+              for (let i = 0; i < count; i += 1) {
+                records.push({
+                  primaryKey: await encode(keys[i]),
+                  value: await encode(values[i]),
                 });
-                const [values, keys] = await readStore(store);
-                const records = [];
-                const count = Math.min(values.length, keys.length, 50000);
-                for (let i = 0; i < count; i += 1) {
-                  records.push({
-                    primaryKey: await encode(keys[i]),
-                    value: await encode(values[i]),
-                  });
-                }
-                stores.push({
-                  name,
-                  keyPath: store.keyPath,
-                  autoIncrement: store.autoIncrement === true,
-                  indexes,
-                  records,
-                  truncated: values.length > count,
-                });
-              } catch {}
-            }
+              }
+              stores.push({
+                name,
+                keyPath: store.keyPath,
+                autoIncrement: store.autoIncrement === true,
+                indexes,
+                records,
+                truncated: values.length > count,
+              });
+            } catch {}
           }
           resolve({
             name: db.name,
