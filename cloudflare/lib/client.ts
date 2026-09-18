@@ -9,6 +9,11 @@ import {
   selectNetworkPolicy,
   snapshotAuthentication,
 } from './profile-runtime';
+import {
+  MIN_USERFLOW_VERSION,
+  clientVersionFrom,
+  versionAtLeast,
+} from './release-compat';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -29,6 +34,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
+      minimumClientVersion: MIN_USERFLOW_VERSION,
     });
   }
 
@@ -145,6 +151,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
+    minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
 
@@ -154,6 +161,15 @@ export async function clientLaunch(
   id: ClientIdentity,
   profileId: string,
 ) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(
+      426,
+      'CLIENT_UPDATE_REQUIRED',
+      `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior antes de abrir perfiles.`,
+    );
+  }
+
   const [memberships, assignments, profiles, defaults] = await Promise.all([
     sb(
       env,
@@ -312,6 +328,8 @@ export async function clientLaunch(
     sessionDelivery,
     credentialDelivery,
     usage,
+    minimumClientVersion: MIN_USERFLOW_VERSION,
+    clientVersion,
   });
 }
 
@@ -332,6 +350,7 @@ export async function clientHeartbeat(env: Env, id: ClientIdentity) {
     expiresAt: id.subscription.expires_at,
     sessionExpiresAt,
     serverTime: new Date().toISOString(),
+    minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
 
