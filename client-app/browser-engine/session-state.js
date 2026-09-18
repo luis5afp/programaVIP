@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { gunzipSync } from 'node:zlib';
 import puppeteer from 'puppeteer-core';
 
 function normalizeSameSite(value) {
@@ -49,17 +50,30 @@ async function applyCookies(browser, cookies) {
   return { installed, rejected };
 }
 
+function compressedIndexedDb(storage) {
+  const packed = storage?.indexedDBCompressed;
+  if (!packed || packed.encoding !== 'gzip+base64' || typeof packed.data !== 'string') return [];
+  try {
+    const raw = gunzipSync(Buffer.from(packed.data, 'base64')).toString('utf8');
+    const value = JSON.parse(raw);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
 function storagePayload(material) {
   const storage = material?.storage && typeof material.storage === 'object' ? material.storage : {};
+  const indexedDB = Array.isArray(storage.indexedDB)
+    ? storage.indexedDB
+    : Array.isArray(material?.indexedDB)
+      ? material.indexedDB
+      : compressedIndexedDb(storage);
   return {
     origin: typeof storage.origin === 'string' ? storage.origin : null,
     localStorage: storage.localStorage && typeof storage.localStorage === 'object' ? storage.localStorage : {},
     sessionStorage: storage.sessionStorage && typeof storage.sessionStorage === 'object' ? storage.sessionStorage : {},
-    indexedDB: Array.isArray(storage.indexedDB)
-      ? storage.indexedDB
-      : Array.isArray(material?.indexedDB)
-        ? material.indexedDB
-        : [],
+    indexedDB,
   };
 }
 
