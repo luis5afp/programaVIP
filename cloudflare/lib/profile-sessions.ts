@@ -41,7 +41,7 @@ function safeState(profileId: string, credential: any, session: any) {
 async function profileRow(env: Env, profileId: string) {
   const rows = await sb(
     env,
-    `userflex_profiles?select=id,name,url,session_mode,session_ready,enabled&id=eq.${profileId}&limit=1`,
+    `userflex_profiles?select=id,name,url,session_mode,session_ready,enabled,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
   );
   const profile = rows?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND', 'El perfil no existe.');
@@ -134,7 +134,7 @@ export async function adminProfileSessionRoutes(
     await sb(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ session_mode: 'managed-first-party', updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ updated_at: new Date().toISOString() }),
     });
     await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.credentials.update', 'profile', profileId, {
@@ -148,11 +148,14 @@ export async function adminProfileSessionRoutes(
   if (captureMatch && method === 'POST') {
     const profileId = uuid(captureMatch[1], 'profileId');
     const profile = await profileRow(env, profileId);
-    if (profile.session_mode !== 'managed-first-party') {
-      throw new HttpError(409, 'MANAGED_SESSION_REQUIRED', 'Activa el modo de sesión administrada primero.');
+    const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    if (!['cookie-snapshot', 'hybrid'].includes(authStrategy)) {
+      throw new HttpError(409, 'SESSION_CAPTURE_NOT_REQUIRED', 'Este tipo de perfil no usa captura de cookies/sesión.');
     }
     const credentials = await credentialRow(env, profileId);
-    if (!credentials) throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'Guarda correo/usuario y contraseña primero.');
+    if (authStrategy === 'hybrid' && !credentials) {
+      throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'El modo híbrido necesita credenciales además de la sesión capturada.');
+    }
     const proxy = await defaultProxy(env, profileId);
     if (proxy && proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
     if (proxy?.proxy_type === 'ssh') {
@@ -236,8 +239,9 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await defaultProxy(env, job.profile_id);
-    if (!credentials) {
-      throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil ya no tiene credenciales guardadas.');
+    const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    if (authStrategy === 'hybrid' && !credentials) {
+      throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil híbrido ya no tiene credenciales guardadas.');
     }
     if (proxy && proxy.enabled !== true) {
       throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
@@ -248,11 +252,20 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     return json({
       ok: true,
       job: { id: job.id, expiresAt: job.expires_at },
-      profile: { id: profile.id, name: profile.name, url: profile.url },
-      credentials: {
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        url: profile.url,
+        browserEngine: profile.browser_engine || 'chrome-native',
+        authStrategy,
+        storageStrategy: profile.storage_strategy || 'portable-first-party',
+        networkStrategy: profile.network_strategy || 'auto',
+        extensionStrategy: profile.extension_strategy || 'custom',
+      },
+      credentials: credentials ? {
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
-      },
+      } : null,
       proxy: proxy ? {
         id: proxy.id,
         name: proxy.name,
@@ -315,6 +328,16 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   return null;
+}
+
+export async function managedProfileCredentials(env: Env, profileId: string) {
+  const row = await credentialRow(env, profileId);
+  if (!row) return null;
+  return {
+    username: row.login_username,
+    password: await decryptProxy(env, row.password_ciphertext, row.password_iv),
+    updatedAt: row.updated_at || null,
+  };
 }
 
 export async function managedSessionMaterial(env: Env, profileId: string) {
