@@ -253,27 +253,58 @@ export async function restorePortableSession({ debugPort, profileUrl, material }
 
     const state = storagePayload(material);
     const stateOrigin = state.origin || target.origin;
-    if (stateOrigin === target.origin) await installStorageScript(page, target.origin, state);
+    let indexedDb = { restored: 0, total: state.indexedDB.length };
 
-    await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    if (stateOrigin === target.origin) {
+      // Seed a synthetic document at the target origin before the real site is
+      // allowed to execute. This gives Local/Session Storage and IndexedDB a
+      // deterministic head start instead of racing Netflix/app JavaScript.
+      const script = await installStorageScript(page, target.origin, state);
+      let seeded = false;
+      const intercept = async (request) => {
+        try {
+          const requestUrl = new URL(request.url());
+          const isMain = request.isNavigationRequest() && request.frame() === page.mainFrame();
+          if (!seeded && isMain && requestUrl.origin === target.origin) {
+            seeded = true;
+            await request.respond({
+              status: 200,
+              contentType: 'text/html; charset=utf-8',
+              body: '<!doctype html><meta charset="utf-8"><title>userFLEX</title>',
+            });
+            return;
+          }
+          await request.continue();
+        } catch {
+          try { await request.continue(); } catch {}
+        }
+      };
 
-    let indexedDb = { restored: 0, total: 0 };
-    if (state.indexedDB.length) {
+      await page.setRequestInterception(true);
+      page.on('request', intercept);
       try {
+        await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
         indexedDb = await page.evaluate(async () => {
           const pending = globalThis.__userflexSessionRestore;
           return pending && typeof pending.then === 'function'
             ? await Promise.race([
               pending,
-              new Promise((resolve) => setTimeout(() => resolve({ restored: 0, total: -1 }), 15_000)),
+              new Promise((resolve) => setTimeout(() => resolve({ restored: 0, total: -1 }), 20_000)),
             ])
             : { restored: 0, total: 0 };
-        });
-        if (indexedDb?.restored > 0) {
-          await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => null);
+        }).catch(() => ({ restored: 0, total: state.indexedDB.length }));
+      } finally {
+        page.off('request', intercept);
+        await page.setRequestInterception(false).catch(() => null);
+        if (script?.identifier && typeof page.removeScriptToEvaluateOnNewDocument === 'function') {
+          await page.removeScriptToEvaluateOnNewDocument(script.identifier).catch(() => null);
         }
-      } catch {}
+      }
     }
+
+    // Only now load the real application. Browser-owned profile state is in
+    // place before its first-party scripts start.
+    await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
 
     for (const extra of pages) {
       if (extra === page) continue;
