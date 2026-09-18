@@ -202,7 +202,6 @@ jobs:
           if (@($parsed.chunks).Count -lt 1) { throw "Updater manifest contains no chunks." }
 
       - name: Upload installer artifact
-        if: github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
