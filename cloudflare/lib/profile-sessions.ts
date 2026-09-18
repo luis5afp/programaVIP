@@ -278,7 +278,7 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
   };
 }
 
-async function validationJob(env: Env, rawToken: string) {
+async function validationJob(env: Env, rawToken: string, allowRunning = true) {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_VALIDATION_TOKEN');
   const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
   const rows = await sb(
@@ -287,6 +287,7 @@ async function validationJob(env: Env, rawToken: string) {
   );
   const job = rows?.[0];
   if (!job || !['pending', 'running'].includes(job.status)) throw new HttpError(401, 'VALIDATION_TOKEN_INVALID');
+  if (!allowRunning && job.status !== 'pending') throw new HttpError(401, 'VALIDATION_TOKEN_ALREADY_USED');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
     await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
@@ -432,6 +433,11 @@ export async function adminProfileSessionRoutes(
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
     const expiresAt = new Date(Date.now() + VALIDATION_TTL_MS).toISOString();
+    await sb(env, `userflex_profile_validation_jobs?profile_id=eq.${profileId}&status=in.(pending,running)`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
+    });
     const jobs = await sb(env, 'userflex_profile_validation_jobs', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
@@ -468,8 +474,17 @@ export async function adminProfileSessionRoutes(
       env,
       `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,result,error,expires_at,started_at,completed_at,created_at&id=eq.${jobId}&limit=1`,
     );
-    const job = rows?.[0];
+    let job = rows?.[0];
     if (!job) throw new HttpError(404, 'VALIDATION_JOB_NOT_FOUND');
+    if (['pending', 'running'].includes(job.status) && new Date(job.expires_at).getTime() <= Date.now()) {
+      const completedAt = new Date().toISOString();
+      await sb(env, `userflex_profile_validation_jobs?id=eq.${jobId}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'expired', completed_at: completedAt }),
+      });
+      job = { ...job, status: 'expired', completed_at: completedAt };
+    }
     return json({ ok: true, job });
   }
 
@@ -564,7 +579,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   if (path === '/api/client-test/bootstrap' && method === 'POST') {
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
-    const job = await validationJob(env, rawToken);
+    const job = await validationJob(env, rawToken, false);
     const profile = await profileRow(env, job.profile_id);
     const runtime = runtimeForProfile(profile);
     const validation = await configurationValidation(env, profile, job.client_id || null);
