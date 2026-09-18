@@ -1,4 +1,4 @@
-import { AdminIdentity } from './auth';
+import type { AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
 import {
   credentialAuthentication,
