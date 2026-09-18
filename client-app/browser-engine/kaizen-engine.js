@@ -264,6 +264,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     try { await onClosed?.(entry, reason); } catch (error) {
       log.warn?.('userFLOW KAIZEN onClosed failed:', error?.message || error);
     }
+    if (entry.ephemeral === true) {
+      await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
+      await fsp.rm(profileExtensionDir(entry.clientId, entry.profile.id), { recursive: true, force: true }).catch(() => null);
+    }
   }
 
   async function close(clientId, profileId, reason = 'profile_closed') {
@@ -283,6 +287,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     delivery = null,
     credentials = null,
     usageId = null,
+    ephemeral = false,
   }) {
     if (!profile?.id || !profile?.url) throw new Error('El perfil no tiene ID o URL.');
     const target = new URL(profile.url);
@@ -379,6 +384,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       connection,
       delivery,
       usageId,
+      ephemeral: ephemeral === true,
       relay,
       debugPort,
       userDataDir,
