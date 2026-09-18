@@ -60,6 +60,37 @@ function browserKind(executable, resourcesPath = process.resourcesPath) {
   return 'chrome';
 }
 
+function sessionMarkerPath(userDataDir) {
+  return path.join(userDataDir, '.userflex-session.json');
+}
+
+async function readSessionMarker(userDataDir) {
+  try {
+    const value = JSON.parse(await fsp.readFile(sessionMarkerPath(userDataDir), 'utf8'));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSessionMarker(userDataDir, profile, delivery, restore) {
+  const marker = {
+    profileId: profile.id,
+    version: Number(delivery?.version || 0),
+    format: delivery?.material?.format || null,
+    capturedAt: delivery?.capturedAt || null,
+    restoredAt: new Date().toISOString(),
+    restore: restore || null,
+  };
+  await fsp.writeFile(sessionMarkerPath(userDataDir), JSON.stringify(marker, null, 2), 'utf8');
+  return marker;
+}
+
+async function resetProfileDirectory(userDataDir) {
+  await fsp.rm(userDataDir, { recursive: true, force: true });
+  await fsp.mkdir(userDataDir, { recursive: true });
+}
+
 function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -77,17 +108,15 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
     '--allow-browser-signin=false',
     '--force-device-scale-factor=1',
     '--lang=es-ES',
-    '--disable-component-update',
     '--disable-background-networking',
     '--disable-client-side-phishing-detection',
     '--disable-default-apps',
     '--disable-domain-reliability',
-    '--disable-features=OptimizationHints,MediaRouter,SignInProfileCreation,SigninConsistency',
     '--disable-popup-blocking',
   ];
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>');
   if (extensionDir && fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
-    args.push(`--load-extension=${extensionDir}`);
+    args.push(`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`);
   }
   args.push('about:blank');
   return args;
@@ -182,17 +211,27 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (!['https:', 'http:'].includes(target.protocol)) throw new Error('La URL del perfil no es compatible.');
 
     const key = profileKey(clientId, profile.id);
+    const managed = profile.sessionMode === 'managed-first-party';
+    const desiredSessionVersion = managed ? Number(delivery?.version || 0) : 0;
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
-      await navigateBrowserHome(existing.debugPort, profile.url).catch(() => null);
-      return {
-        ok: true,
-        reused: true,
-        external: true,
-        pid: existing.process.pid,
-        browser: existing.browserKind,
-        sessionVersion: Number(delivery?.version || 0),
-      };
+      const versionMatches = !managed || Number(existing.sessionVersion || 0) === desiredSessionVersion;
+      if (versionMatches) {
+        await navigateBrowserHome(existing.debugPort, profile.url).catch(() => null);
+        return {
+          ok: true,
+          reused: true,
+          external: true,
+          pid: existing.process.pid,
+          browser: existing.browserKind,
+          sessionVersion: desiredSessionVersion,
+          profileState: 'persistent-reuse',
+        };
+      }
+
+      // KAIZEN-style profile synchronization: a newer server session must never
+      // keep running inside the old local browser process.
+      await close(clientId, profile.id, 'session_version_changed');
     }
 
     const executable = resolveKaizenBrowserExecutable();
@@ -204,8 +243,23 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }
 
     const userDataDir = profileDir(clientId, profile.id);
-    await fsp.mkdir(userDataDir, { recursive: true });
     await killStrayProfileProcesses(userDataDir);
+
+    let sessionMarker = managed ? await readSessionMarker(userDataDir) : null;
+    const sessionVersionMatches = managed
+      && desiredSessionVersion > 0
+      && Number(sessionMarker?.version || 0) === desiredSessionVersion
+      && sessionMarker?.profileId === profile.id;
+
+    if (managed && !sessionVersionMatches) {
+      // The server is authoritative. Remove stale Chromium state before applying
+      // a new managed-session generation so old cookies/IDB/service state cannot
+      // leak into the freshly delivered version.
+      await resetProfileDirectory(userDataDir);
+      sessionMarker = null;
+    } else {
+      await fsp.mkdir(userDataDir, { recursive: true });
+    }
 
     let relay = null;
     let proxyRules = null;
@@ -244,6 +298,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       stderr: [],
       startedAt: Date.now(),
       devtoolsTimer: null,
+      sessionVersion: desiredSessionVersion,
+      sessionMarker,
     };
     processes.set(key, entry);
 
@@ -277,15 +333,30 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
 
       let restore = null;
-      if (profile.sessionMode === 'managed-first-party') {
+      if (managed) {
         if (!delivery?.ready || !delivery?.materialIncluded || !delivery?.material) {
           throw new Error('La sesión administrada todavía no está lista.');
         }
-        restore = await restorePortableSession({
-          debugPort,
-          profileUrl: profile.url,
-          material: delivery.material,
-        });
+
+        if (sessionVersionMatches) {
+          // Keep the entire local Chromium profile intact when the server
+          // generation is unchanged. This is the core KAIZEN profile behavior:
+          // browser-owned state continues naturally between launches.
+          await navigateBrowserHome(debugPort, profile.url);
+          restore = {
+            reusedProfile: true,
+            version: desiredSessionVersion,
+            format: sessionMarker?.format || delivery.material.format || null,
+          };
+        } else {
+          restore = await restorePortableSession({
+            debugPort,
+            profileUrl: profile.url,
+            material: delivery.material,
+          });
+          sessionMarker = await writeSessionMarker(userDataDir, profile, delivery, restore);
+          entry.sessionMarker = sessionMarker;
+        }
       } else {
         await navigateBrowserHome(debugPort, profile.url);
       }
@@ -304,7 +375,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         network: connection?.mode || 'direct',
         networkLocked: connection?.locked === true,
         publicIp: entry.publicIp || null,
-        sessionVersion: Number(delivery?.version || 0),
+        sessionVersion: desiredSessionVersion,
+        profileState: managed ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored') : 'persistent-local',
         restore,
       };
     } catch (error) {
