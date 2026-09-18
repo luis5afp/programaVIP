@@ -11,7 +11,7 @@ import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
+const HEARTBEAT_MS = 60 * 1000;
 const GOOGLE_URL = 'https://www.google.com/';
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
@@ -308,12 +308,10 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   if (freshCatalog) {
     mergeValidationMeta(freshCatalog);
     const clientId = authMeta?.client?.id || null;
-    const authorizedProfileIds = Array.isArray(freshCatalog.profiles)
-      ? freshCatalog.profiles.map((profile) => profile?.id).filter(Boolean)
-      : [];
+    const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
     if (clientId) {
       await getKaizenBrowserEngine()
-        .reconcileAuthorizedProfiles(clientId, authorizedProfileIds)
+        .reconcileCatalogProfiles(clientId, catalogProfiles)
         .catch((error) => console.warn('KAIZEN profile reconciliation failed:', error?.message || error));
     }
   }
@@ -338,7 +336,11 @@ async function runHeartbeat(reason = 'scheduled') {
 
 function startHeartbeat() {
   stopHeartbeat();
-  heartbeatTimer = setInterval(() => void runHeartbeat('12h'), HEARTBEAT_MS);
+  // KAIZEN keeps browser sessions under frequent server revalidation. A short
+  // heartbeat lets userFLOW react to revocation, plan/profile changes and new
+  // managed-session generations without leaving a stale browser alive for hours.
+  void runHeartbeat('startup');
+  heartbeatTimer = setInterval(() => void runHeartbeat('60s'), HEARTBEAT_MS);
 }
 
 function stopHeartbeat() {
