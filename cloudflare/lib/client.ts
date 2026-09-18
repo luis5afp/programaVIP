@@ -2,32 +2,18 @@ import { ClientIdentity } from './auth';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
 import { managedProfileCredentials, managedSessionMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
+import {
+  credentialAuthentication,
+  proxyRuntimeUsable,
+  runtimeForProfile,
+  selectNetworkPolicy,
+  snapshotAuthentication,
+} from './profile-runtime';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return null;
   return raw.split('/')[0] || null;
-}
-
-function runtimeFor(profile: any) {
-  const authStrategy = profile?.auth_strategy
-    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
-  return {
-    browserEngine: profile?.browser_engine || 'chrome-native',
-    authStrategy,
-    storageStrategy: profile?.storage_strategy
-      || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
-    networkStrategy: profile?.network_strategy || 'auto',
-    extensionStrategy: profile?.extension_strategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
-  };
-}
-
-function needsSnapshot(runtime: any) {
-  return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
-}
-
-function needsCredentials(runtime: any) {
-  return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
 }
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
@@ -78,7 +64,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   const proxyRows = proxyIds.length
     ? await sb(
         env,
-        `userflex_proxies?select=id,proxy_type,validation_status,public_ip&id=in.(${proxyIds.join(',')})`,
+        `userflex_proxies?select=id,proxy_type,validation_status,public_ip,enabled&id=in.(${proxyIds.join(',')})`,
       )
     : [];
 
@@ -93,9 +79,9 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     .map((profileId: string) => {
       const profile: any = profileMap.get(profileId);
       if (!profile) return null;
-      const runtime = runtimeFor(profile);
-      const snapshotRequired = needsSnapshot(runtime);
-      const credentialsRequired = needsCredentials(runtime);
+      const runtime = runtimeForProfile(profile);
+      const snapshotRequired = snapshotAuthentication(runtime);
+      const credentialsRequired = credentialAuthentication(runtime);
       const session: any = sessionMap.get(profile.id);
       const assignment: any = assignmentMap.get(profile.id);
       const assignmentProxyId = assignment?.proxy_id || null;
@@ -105,21 +91,18 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       const hasCredentials = credentialProfileIds.has(String(profile.id));
       const snapshotReady = profile.session_ready === true && session?.status === 'ready';
       const sessionReady = (!snapshotRequired || snapshotReady) && (!credentialsRequired || hasCredentials);
-      const networkUsesProxy = runtime.networkStrategy === 'profile-proxy'
-        ? Boolean(profileProxyId)
-        : runtime.networkStrategy === 'assigned-proxy'
-          ? Boolean(assignmentProxyId)
-          : runtime.networkStrategy === 'client-direct'
-            ? false
-            : runtime.authStrategy === 'manual'
-              ? Boolean(assignmentProxyId || profileProxyId)
-              : Boolean(profileProxyId);
-      const activeProxy: any = runtime.networkStrategy === 'assigned-proxy'
-        ? assignmentProxy
-        : runtime.networkStrategy === 'client-direct'
-          ? null
-          : profileProxy || assignmentProxy;
-      const currentPublicIp = inetHost(activeProxy?.public_ip) || session?.expected_egress_ip || null;
+      const networkPolicy = selectNetworkPolicy(runtime, profileProxyId, assignmentProxyId);
+      const activeProxy: any = networkPolicy.effectiveProxyId
+        ? proxyMap.get(networkPolicy.effectiveProxyId)
+        : null;
+      const networkReady = networkPolicy.required
+        ? Boolean(networkPolicy.effectiveProxyId && proxyRuntimeUsable(activeProxy))
+        : !networkPolicy.effectiveProxyId || proxyRuntimeUsable(activeProxy);
+      const networkUsesProxy = Boolean(networkPolicy.effectiveProxyId);
+      const currentPublicIp = networkUsesProxy
+        ? (inetHost(activeProxy?.public_ip) || session?.expected_egress_ip || null)
+        : null;
+      const launchReady = sessionReady && networkReady;
       return {
         id: profile.id,
         name: profile.name,
@@ -130,15 +113,26 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         managedConnection: networkUsesProxy,
         sessionMode: profile.session_mode,
         sessionReady,
+        networkReady,
+        launchReady,
+        unavailableReason: !sessionReady
+          ? 'Autenticación/sesión no lista'
+          : !networkReady
+            ? networkPolicy.required && !networkPolicy.effectiveProxyId
+              ? 'Falta el proxy requerido por el perfil'
+              : 'El proxy configurado no está disponible o no es compatible'
+            : null,
         sessionVersion: Number(session?.session_version || 0),
         credentialVersion: credentialMap.get(String(profile.id))?.updated_at || null,
         runtime,
         networkIdentity: {
-          locked: runtime.networkStrategy === 'profile-proxy' || runtime.networkStrategy === 'assigned-proxy',
-          publicIp: networkUsesProxy ? currentPublicIp : null,
+          locked: networkPolicy.locked,
+          publicIp: currentPublicIp,
           proxyType: activeProxy?.proxy_type || null,
           proxyStatus: activeProxy?.validation_status || null,
           strategy: runtime.networkStrategy,
+          source: networkPolicy.source,
+          ready: networkReady,
         },
       };
     })
@@ -186,58 +180,41 @@ export async function clientLaunch(
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 
-  const runtime = runtimeFor(profile);
-  const snapshotRequired = needsSnapshot(runtime);
-  const credentialsRequired = needsCredentials(runtime);
+  const runtime = runtimeForProfile(profile);
+  const snapshotRequired = snapshotAuthentication(runtime);
+  const credentialsRequired = credentialAuthentication(runtime);
   const defaultProxyId = defaults?.[0]?.proxy_id || null;
   const assignmentProxyId = assignment?.proxy_id || null;
 
-  let effectiveProxyId: string | null = null;
-  let proxySource = 'direct';
-  let proxyRequired = false;
-  if (runtime.networkStrategy === 'client-direct') {
-    effectiveProxyId = null;
-  } else if (runtime.networkStrategy === 'profile-proxy') {
-    effectiveProxyId = defaultProxyId;
-    proxySource = 'profile-locked';
-    proxyRequired = true;
-  } else if (runtime.networkStrategy === 'assigned-proxy') {
-    effectiveProxyId = assignmentProxyId;
-    proxySource = 'assignment-locked';
-    proxyRequired = true;
-  } else if (runtime.authStrategy === 'manual') {
-    effectiveProxyId = assignmentProxyId || defaultProxyId;
-    proxySource = assignmentProxyId ? 'assignment' : defaultProxyId ? 'profile' : 'direct';
-  } else {
-    effectiveProxyId = defaultProxyId;
-    proxySource = defaultProxyId ? 'profile-locked' : 'direct';
-  }
+  const networkPolicy = selectNetworkPolicy(runtime, defaultProxyId, assignmentProxyId);
+  const effectiveProxyId = networkPolicy.effectiveProxyId;
+  const proxySource = networkPolicy.source;
 
-  if (proxyRequired && !effectiveProxyId) {
+  if (networkPolicy.required && !effectiveProxyId) {
     throw new HttpError(409, 'PROFILE_PROXY_REQUIRED', 'La estrategia de red del perfil exige un proxy que no está configurado.');
   }
 
-  const autoManagedProxyLocked = runtime.networkStrategy === 'auto' && runtime.authStrategy !== 'manual' && Boolean(defaultProxyId);
-  let connection: any = { mode: 'direct', locked: proxyRequired || autoManagedProxyLocked };
+  let connection: any = { mode: 'direct', locked: networkPolicy.locked };
   let effectiveProxy: any = null;
 
   if (effectiveProxyId) {
     const rows = await sb(
       env,
-      `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv,proxy_type,validation_status,public_ip&enabled=eq.true&id=eq.${effectiveProxyId}&limit=1`,
+      `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv,proxy_type,validation_status,public_ip,enabled&id=eq.${effectiveProxyId}&limit=1`,
     );
     const proxy = rows?.[0];
-    if (!proxy && (proxyRequired || effectiveProxyId)) {
-      throw new HttpError(409, 'MANAGED_PROXY_UNAVAILABLE', 'El proxy requerido por el perfil no está disponible. Se bloqueó la salida directa para proteger la IP.');
+    if (!proxy || !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'MANAGED_PROXY_UNAVAILABLE',
+        'El proxy seleccionado está deshabilitado, no es compatible o falló validación. Se bloqueó la salida directa para proteger la IP.',
+      );
     }
     if (proxy) {
       effectiveProxy = proxy;
-      if (proxy.proxy_type === 'ssh') {
-        throw new HttpError(409, 'PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse directamente en userFLOW.');
-      }
       connection = {
         mode: 'proxy',
-        locked: proxyRequired || autoManagedProxyLocked,
+        locked: networkPolicy.locked,
         proxy: {
           host: proxy.host,
           port: proxy.port,
