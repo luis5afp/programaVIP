@@ -67,7 +67,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     ),
     sb(
       env,
-      `userflex_profile_credentials?select=profile_id&profile_id=in.(${ids})`,
+      `userflex_profile_credentials?select=profile_id,updated_at&profile_id=in.(${ids})`,
     ),
   ]);
 
@@ -86,7 +86,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
   const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
-  const credentialProfileIds = new Set((credentials || []).map((row: any) => String(row.profile_id)));
+  const credentialMap = new Map((credentials || []).map((row: any) => [String(row.profile_id), row]));
+  const credentialProfileIds = new Set(credentialMap.keys());
   const proxyMap = new Map((proxyRows || []).map((row: any) => [row.id, row]));
   const result = profileIds
     .map((profileId: string) => {
@@ -130,6 +131,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         sessionMode: profile.session_mode,
         sessionReady,
         sessionVersion: Number(session?.session_version || 0),
+        credentialVersion: credentialMap.get(String(profile.id))?.updated_at || null,
         runtime,
         networkIdentity: {
           locked: runtime.networkStrategy === 'profile-proxy' || runtime.networkStrategy === 'assigned-proxy',
