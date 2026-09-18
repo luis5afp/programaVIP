@@ -958,7 +958,7 @@ export function ProfilesView() {
                     placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'}
                   />
                 </Field>
-                {current && currentState?.has_credentials && authStrategy !== 'manual' && (
+                {current && currentState?.has_credentials && (
                   <div className="span-2">
                     <button
                       type="button"
