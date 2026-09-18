@@ -23,6 +23,8 @@ jobs:
         run: node --experimental-strip-types scripts/profile-runtime-matrix.test.ts
       - name: Test release compatibility
         run: node --experimental-strip-types scripts/release-hardening.test.ts
+      - name: Test password security
+        run: node --experimental-strip-types scripts/password-security.test.ts
       - run: npm run typecheck
       - run: npm run build
       - run: npx wrangler@4.130.0 deploy --dry-run
