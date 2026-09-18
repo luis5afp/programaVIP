@@ -2,6 +2,11 @@ export type ClientStatus = 'active' | 'suspended';
 export type SubscriptionStatus = 'active' | 'suspended' | 'cancelled';
 export type DeviceStatus = 'active' | 'revoked';
 export type SessionMode = 'manual-login' | 'managed-first-party';
+export type BrowserEngine = 'chrome-native' | 'nstchrome';
+export type AuthStrategy = 'manual' | 'cookie-snapshot' | 'credential-autofill' | 'hybrid';
+export type StorageStrategy = 'local-persistent' | 'cookies-only' | 'portable-first-party' | 'netflix-local-device';
+export type NetworkStrategy = 'auto' | 'client-direct' | 'profile-proxy' | 'assigned-proxy';
+export type ExtensionStrategy = 'guard-only' | 'main' | 'google' | 'custom';
 export type ManagedSessionStatus = 'empty' | 'active' | 'needs_auth' | 'expired';
 export type AdminRole = 'owner' | 'admin';
 export type ProxyProtocol = 'unknown' | 'http' | 'https' | 'socks4' | 'socks5' | 'ssh';
@@ -78,6 +83,11 @@ export interface Profile {
   enabled: boolean;
   session_mode: SessionMode;
   session_ready: boolean;
+  browser_engine: BrowserEngine;
+  auth_strategy: AuthStrategy;
+  storage_strategy: StorageStrategy;
+  network_strategy: NetworkStrategy;
+  extension_strategy: ExtensionStrategy;
   created_at: string;
   updated_at: string;
 }

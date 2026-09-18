@@ -28,6 +28,36 @@ function cleanTags(value: unknown): string[] {
     .map((item) => item.slice(0, 40));
 }
 
+const BROWSER_ENGINES = ['chrome-native', 'nstchrome'] as const;
+const AUTH_STRATEGIES = ['manual', 'cookie-snapshot', 'credential-autofill', 'hybrid'] as const;
+const STORAGE_STRATEGIES = ['local-persistent', 'cookies-only', 'portable-first-party', 'netflix-local-device'] as const;
+const NETWORK_STRATEGIES = ['auto', 'client-direct', 'profile-proxy', 'assigned-proxy'] as const;
+const EXTENSION_STRATEGIES = ['guard-only', 'main', 'google', 'custom'] as const;
+
+function profileChoice(value: unknown, allowed: readonly string[], fallback: string, code: string): string {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value !== 'string' || !allowed.includes(value)) throw new HttpError(400, code);
+  return value;
+}
+
+function runtimeDefaults(body: any) {
+  const legacyManaged = body?.session_mode === 'managed-first-party';
+  const auth = profileChoice(body?.auth_strategy, AUTH_STRATEGIES, legacyManaged ? 'cookie-snapshot' : 'manual', 'INVALID_AUTH_STRATEGY');
+  return {
+    browser_engine: profileChoice(body?.browser_engine, BROWSER_ENGINES, 'chrome-native', 'INVALID_BROWSER_ENGINE'),
+    auth_strategy: auth,
+    storage_strategy: profileChoice(
+      body?.storage_strategy,
+      STORAGE_STRATEGIES,
+      auth === 'manual' || auth === 'credential-autofill' ? 'local-persistent' : 'portable-first-party',
+      'INVALID_STORAGE_STRATEGY',
+    ),
+    network_strategy: profileChoice(body?.network_strategy, NETWORK_STRATEGIES, 'auto', 'INVALID_NETWORK_STRATEGY'),
+    extension_strategy: profileChoice(body?.extension_strategy, EXTENSION_STRATEGIES, auth === 'manual' ? 'guard-only' : 'custom', 'INVALID_EXTENSION_STRATEGY'),
+    session_mode: auth === 'manual' ? 'manual-login' : 'managed-first-party',
+  };
+}
+
 function proxyHost(value: unknown): string {
   const host = text(value, 'host', 255);
   if (/[\s/@]/.test(host)) throw new HttpError(400, 'INVALID_PROXY_HOST', 'El host del proxy no es válido.');
@@ -282,12 +312,12 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   }
 
   if (path === '/api/profiles' && method === 'GET') {
-    return json(await sb(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,created_at,updated_at&order=name.asc'));
+    return json(await sb(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,created_at,updated_at&order=name.asc'));
   }
 
   if (path === '/api/profiles' && method === 'POST') {
     const body = await bodyJson(request);
-    const mode = ['manual-login', 'managed-first-party'].includes(body.session_mode) ? body.session_mode : 'manual-login';
+    const runtime = runtimeDefaults(body);
     const row = {
       name: text(body.name, 'name', 100),
       url: httpsUrl(body.url, 'url'),
@@ -295,7 +325,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       image_url: httpsUrl(body.image_url, 'image_url', true),
       tags: cleanTags(body.tags),
       enabled: body.enabled !== false,
-      session_mode: mode,
+      ...runtime,
       session_ready: false,
     };
     const rows = await sb(env, 'userflex_profiles', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
@@ -314,9 +344,18 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (body.image_url !== undefined) patch.image_url = httpsUrl(body.image_url, 'image_url', true);
     if (body.tags !== undefined) patch.tags = cleanTags(body.tags);
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
-    if (body.session_mode !== undefined) {
+    if (body.browser_engine !== undefined) patch.browser_engine = profileChoice(body.browser_engine, BROWSER_ENGINES, 'chrome-native', 'INVALID_BROWSER_ENGINE');
+    if (body.storage_strategy !== undefined) patch.storage_strategy = profileChoice(body.storage_strategy, STORAGE_STRATEGIES, 'local-persistent', 'INVALID_STORAGE_STRATEGY');
+    if (body.network_strategy !== undefined) patch.network_strategy = profileChoice(body.network_strategy, NETWORK_STRATEGIES, 'auto', 'INVALID_NETWORK_STRATEGY');
+    if (body.extension_strategy !== undefined) patch.extension_strategy = profileChoice(body.extension_strategy, EXTENSION_STRATEGIES, 'guard-only', 'INVALID_EXTENSION_STRATEGY');
+    if (body.auth_strategy !== undefined) {
+      patch.auth_strategy = profileChoice(body.auth_strategy, AUTH_STRATEGIES, 'manual', 'INVALID_AUTH_STRATEGY');
+      patch.session_mode = patch.auth_strategy === 'manual' ? 'manual-login' : 'managed-first-party';
+      if (patch.auth_strategy === 'manual' || patch.auth_strategy === 'credential-autofill') patch.session_ready = false;
+    } else if (body.session_mode !== undefined) {
       if (!['manual-login', 'managed-first-party'].includes(body.session_mode)) throw new HttpError(400, 'INVALID_SESSION_MODE');
       patch.session_mode = body.session_mode;
+      patch.auth_strategy = body.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual';
       if (body.session_mode === 'manual-login') patch.session_ready = false;
     }
     const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });

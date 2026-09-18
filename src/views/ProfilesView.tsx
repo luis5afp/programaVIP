@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode } from '../types';
+import type { AuthStrategy, BrowserEngine, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -19,7 +19,7 @@ type ProfilePlanMembership = {
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.2.0/userFLEX-Session-Manager-0.2.0-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.2.1/userFLEX-Session-Manager-0.2.1-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 function profileLabel(profile: Profile) {
@@ -52,7 +52,11 @@ export function ProfilesView() {
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
-  const [sessionMode, setSessionMode] = useState<SessionMode>('manual-login');
+  const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
+  const [authStrategy, setAuthStrategy] = useState<AuthStrategy>('manual');
+  const [storageStrategy, setStorageStrategy] = useState<StorageStrategy>('local-persistent');
+  const [networkStrategy, setNetworkStrategy] = useState<NetworkStrategy>('client-direct');
+  const [extensionStrategy, setExtensionStrategy] = useState<ExtensionStrategy>('guard-only');
   const [error, setError] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState('');
@@ -115,7 +119,14 @@ export function ProfilesView() {
     replaceObjectUrl(null);
     setImageFile(null);
     setImageUrl(current?.image_url || '');
-    setSessionMode(current?.session_mode || 'manual-login');
+    const initialAuth = current?.auth_strategy
+      || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    setBrowserEngine(current?.browser_engine || 'chrome-native');
+    setAuthStrategy(initialAuth);
+    setStorageStrategy(current?.storage_strategy
+      || (initialAuth === 'manual' || initialAuth === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'));
+    setNetworkStrategy(current?.network_strategy || 'auto');
+    setExtensionStrategy(current?.extension_strategy || (initialAuth === 'manual' ? 'guard-only' : 'custom'));
     setSelectedPlanIds(current ? planIdsFor(current.id) : []);
     setEditor(value);
     setError(null);
@@ -125,7 +136,11 @@ export function ProfilesView() {
     replaceObjectUrl(null);
     setImageFile(null);
     setImageUrl('');
-    setSessionMode('manual-login');
+    setBrowserEngine('chrome-native');
+    setAuthStrategy('manual');
+    setStorageStrategy('local-persistent');
+    setNetworkStrategy('client-direct');
+    setExtensionStrategy('guard-only');
     setSelectedPlanIds([]);
     setEditor(null);
   }
@@ -194,9 +209,13 @@ export function ProfilesView() {
     try {
       setSaving(true);
       setError(null);
-      if (sessionMode === 'managed-first-party') {
-        if (!loginUsername) throw new Error('Ingresa el correo o usuario de la cuenta.');
-        if (!currentState?.has_credentials && !loginPassword) throw new Error('Ingresa la contraseña para preparar la sesión administrada.');
+      const credentialsRequired = authStrategy === 'credential-autofill' || authStrategy === 'hybrid';
+      if (credentialsRequired) {
+        if (!loginUsername) throw new Error('Ingresa el correo o usuario para el autocompletado.');
+        if (!currentState?.has_credentials && !loginPassword) throw new Error('Ingresa la contraseña del perfil.');
+      }
+      if (networkStrategy === 'profile-proxy' && !proxyId) {
+        throw new Error('La estrategia Proxy fijo del perfil requiere seleccionar un proxy.');
       }
 
       let finalImageUrl = imageUrl.trim() || null;
@@ -212,7 +231,12 @@ export function ProfilesView() {
         image_url: finalImageUrl,
         tags: [label],
         enabled: String(form.get('enabled')) === 'true',
-        session_mode: sessionMode,
+        session_mode: (authStrategy === 'manual' ? 'manual-login' : 'managed-first-party') as SessionMode,
+        browser_engine: browserEngine,
+        auth_strategy: authStrategy,
+        storage_strategy: storageStrategy,
+        network_strategy: networkStrategy,
+        extension_strategy: extensionStrategy,
       };
 
       const savedProfile = editor && editor !== 'new'
@@ -221,8 +245,12 @@ export function ProfilesView() {
 
       if (editor === 'new') setEditor(savedProfile);
       await api.profilePlans.set(savedProfile.id, selectedPlanIds);
-      await api.profileProxyDefaults.set(savedProfile.id, proxyId);
-      if (sessionMode === 'managed-first-party') {
+      const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
+      await api.profileProxyDefaults.set(savedProfile.id, profileProxyId);
+      const shouldSaveCredentials = authStrategy === 'credential-autofill'
+        || authStrategy === 'hybrid'
+        || (authStrategy === 'cookie-snapshot' && Boolean(loginUsername));
+      if (shouldSaveCredentials) {
         await api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined);
       }
       closeEditor();
@@ -338,7 +366,11 @@ export function ProfilesView() {
           {filteredProfiles.map((profile) => {
             const selectedProxy = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id));
             const session = stateFor(profile.id);
-            const managed = profile.session_mode === 'managed-first-party';
+            const profileAuth = profile.auth_strategy
+              || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+            const snapshotManaged = profileAuth === 'cookie-snapshot' || profileAuth === 'hybrid';
+            const credentialManaged = profileAuth === 'credential-autofill' || profileAuth === 'hybrid';
+            const managed = profileAuth !== 'manual';
             const profilePlanIds = planIdsFor(profile.id);
             return (
               <Card className="profile-card" key={profile.id}>
@@ -359,29 +391,37 @@ export function ProfilesView() {
                         ? 'Sin plan'
                         : `${profilePlanIds.length} ${profilePlanIds.length === 1 ? 'plan' : 'planes'}`}
                     </Badge>
+                    <Badge tone="neutral">Motor: {profile.browser_engine || 'chrome-native'}</Badge>
+                    <Badge tone="neutral">Auth: {profileAuth}</Badge>
+                    <Badge tone="neutral">Red: {profile.network_strategy || 'auto'}</Badge>
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>
                         Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
                       </Badge>
                     ) : (
-                      <Badge tone="neutral">{managed ? 'Sin proxy · IP del cliente' : 'Conexión directa'}</Badge>
+                      <Badge tone="neutral">{profile.network_strategy === 'assigned-proxy' ? 'Proxy por cliente' : 'IP local/directa'}</Badge>
                     )}
-                    {managed && (
+                    {snapshotManaged && (
                       <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
-                        Sesión: {session?.status === 'active' ? `activa · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
+                        Snapshot: {session?.status === 'active' ? `activo · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
+                      </Badge>
+                    )}
+                    {credentialManaged && (
+                      <Badge tone={session?.has_credentials ? 'ok' : 'bad'}>
+                        Credenciales: {session?.has_credentials ? 'listas' : 'faltan'}
                       </Badge>
                     )}
                     {managed && selectedProxy && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
                   </div>
-                  {managed && (
+                  {snapshotManaged && (
                     <div className="toolbar" style={{ margin: '10px 0 0' }}>
                       <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
                         {session?.status === 'active' ? <RefreshCw size={12} /> : <KeyRound size={12} />}
-                        {session?.status === 'active' ? 'Renovar sesión' : 'Cargar sesión'}
+                        {session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
                       </button>
                       {session?.status === 'active' && (
                         <button className="button danger small" disabled={sessionAction === profile.id} onClick={() => void clearSession(profile)}>
-                          Borrar sesión
+                          Borrar snapshot
                         </button>
                       )}
                     </div>
@@ -520,39 +560,108 @@ export function ProfilesView() {
               </div>
             </Field>
 
-            <Field
-              label="Proxy (opcional)"
-              className="span-2"
-              help={sessionMode === 'managed-first-party'
-                ? 'Opcional. Si eliges uno, todos los clientes de este perfil usarán esa salida y no habrá fallback directo. Sin proxy, cada cliente usará su propia IP pública.'
-                : 'Opcional. Si no eliges uno, el perfil puede usar conexión directa o la configuración de la asignación.'}
-            >
-              <select className="select" name="proxyId" defaultValue={currentProxyId || ''}>
-                <option value="">Sin proxy · conexión directa</option>
-                {proxies.map((proxy) => (
-                  <option value={proxy.id} key={proxy.id}>{proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}</option>
-                ))}
+            <Field label="Motor de navegador">
+              <select className="select" value={browserEngine} onChange={(event) => setBrowserEngine(event.target.value as BrowserEngine)}>
+                <option value="chrome-native">Chrome nativo / Chrome instalado</option>
+                <option value="nstchrome">nstchrome · requiere runtime autorizado empaquetado</option>
               </select>
             </Field>
 
-            <Field label="Modo de sesión" className="span-2">
-              <select className="select" name="sessionMode" value={sessionMode} onChange={(event) => setSessionMode(event.target.value as SessionMode)}>
-                <option value="manual-login">Login manual en el Client</option>
-                <option value="managed-first-party">Sesión Chromium administrada</option>
+            <Field label="Estrategia de extensión">
+              <select className="select" value={extensionStrategy} onChange={(event) => setExtensionStrategy(event.target.value as ExtensionStrategy)}>
+                <option value="guard-only">Guard only</option>
+                <option value="main">MAIN</option>
+                <option value="google">GOOGLE</option>
+                <option value="custom">CUSTOM</option>
               </select>
             </Field>
 
-            {sessionMode === 'managed-first-party' && (
+            <Field label="Autenticación" className="span-2">
+              <select className="select" value={authStrategy} onChange={(event) => {
+                const value = event.target.value as AuthStrategy;
+                setAuthStrategy(value);
+                if (value === 'manual' || value === 'credential-autofill') setStorageStrategy('local-persistent');
+                else if (storageStrategy === 'local-persistent') setStorageStrategy('portable-first-party');
+                if (value === 'manual') setExtensionStrategy('guard-only');
+                else if (extensionStrategy === 'guard-only') setExtensionStrategy('custom');
+              }}>
+                <option value="manual">Login manual / estado local persistente</option>
+                <option value="cookie-snapshot">Snapshot de cookies/sesión</option>
+                <option value="credential-autofill">Autocompletado de credenciales</option>
+                <option value="hybrid">Híbrido: snapshot + credenciales</option>
+              </select>
+            </Field>
+
+            <Field label="Persistencia / storage">
+              <select className="select" value={storageStrategy} onChange={(event) => setStorageStrategy(event.target.value as StorageStrategy)}>
+                <option value="local-persistent">Solo estado persistente del cliente</option>
+                <option value="cookies-only">Importar solo cookies</option>
+                <option value="portable-first-party">Cookies + Local/Session Storage + IndexedDB</option>
+                <option value="netflix-local-device">Netflix: cookies + storage local del dispositivo</option>
+              </select>
+            </Field>
+
+            <Field label="Estrategia de red">
+              <select className="select" value={networkStrategy} onChange={(event) => setNetworkStrategy(event.target.value as NetworkStrategy)}>
+                <option value="client-direct">IP local/pública del cliente</option>
+                <option value="profile-proxy">Proxy fijo del perfil</option>
+                <option value="assigned-proxy">Proxy asignado por cliente</option>
+                <option value="auto">Automático / compatibilidad</option>
+              </select>
+            </Field>
+
+            {(networkStrategy === 'profile-proxy' || networkStrategy === 'auto') && (
+              <Field
+                label={networkStrategy === 'profile-proxy' ? 'Proxy fijo del perfil' : 'Proxy por defecto (opcional)'}
+                className="span-2"
+                help={networkStrategy === 'profile-proxy'
+                  ? 'Obligatorio. El perfil falla cerrado si este proxy no está disponible.'
+                  : 'Compatibilidad: perfiles administrados usan este proxy; perfiles manuales pueden usar asignación o este valor.'}
+              >
+                <select className="select" name="proxyId" defaultValue={currentProxyId || ''}>
+                  <option value="">Sin proxy configurado</option>
+                  {proxies.map((proxy) => (
+                    <option value={proxy.id} key={proxy.id}>{proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+
+            {authStrategy !== 'manual' && (
               <>
                 <div className="span-2" style={{ padding: 12, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12, display: 'flex', gap: 10 }}>
                   <ShieldCheck size={18} />
-                  <div className="help">El correo y la contraseña se cifran para preparar o renovar la sesión y no se entregan al cliente. Si eliges un proxy, el cliente deberá usar ese proxy; sin proxy, la sesión funciona por conexión directa.</div>
+                  <div className="help">
+                    {authStrategy === 'cookie-snapshot'
+                      ? 'La captura de cookies puede hacerse con login manual. Las credenciales son opcionales y solo ayudan al Session Manager.'
+                      : authStrategy === 'credential-autofill'
+                        ? 'Las credenciales se entregan temporalmente al motor autorizado para completar el formulario del origen del perfil. No se autoclickea Enviar.'
+                        : 'El modo híbrido exige snapshot y credenciales: el snapshot restaura estado y el autofill puede recuperar el login si la web vuelve a pedirlo.'}
+                  </div>
                 </div>
-                <Field label="Correo / usuario de acceso" className="span-2">
-                  <input className="input" name="loginUsername" autoComplete="off" defaultValue={currentState?.login_username || ''} required placeholder="correo@dominio.com" />
+                <Field label={authStrategy === 'cookie-snapshot' ? 'Correo / usuario (opcional)' : 'Correo / usuario'} className="span-2">
+                  <input
+                    className="input"
+                    name="loginUsername"
+                    autoComplete="off"
+                    defaultValue={currentState?.login_username || ''}
+                    required={authStrategy === 'credential-autofill' || authStrategy === 'hybrid'}
+                    placeholder="correo@dominio.com"
+                  />
                 </Field>
-                <Field label="Contraseña" className="span-2" help={currentState?.has_credentials ? 'Déjala vacía para conservar la contraseña actual.' : 'Se usará solo en el Session Manager para preparar la sesión.'}>
-                  <input className="input" name="loginPassword" type="password" autoComplete="new-password" required={!currentState?.has_credentials} placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'} />
+                <Field
+                  label={authStrategy === 'cookie-snapshot' ? 'Contraseña (opcional)' : 'Contraseña'}
+                  className="span-2"
+                  help={currentState?.has_credentials ? 'Déjala vacía para conservar la contraseña actual.' : 'Se guarda cifrada en el backend.'}
+                >
+                  <input
+                    className="input"
+                    name="loginPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    required={(authStrategy === 'credential-autofill' || authStrategy === 'hybrid') && !currentState?.has_credentials}
+                    placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'}
+                  />
                 </Field>
               </>
             )}
@@ -583,7 +692,7 @@ export function ProfilesView() {
               Abrir Chromium ahora
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.2.0
+              Instalar / actualizar Session Manager v0.2.1
             </a>
             <div className="help">Al abrirse Chromium, completa el primer inicio de sesión, 2FA o CAPTCHA si aparece y pulsa <b>Guardar sesión</b> en el panel flotante de userFLEX. El enlace de captura es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.</div>
           </div>

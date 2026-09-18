@@ -8,6 +8,7 @@ import { startKaizenProxyRelay } from './proxy-relay.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
+  installCredentialAutofill,
   navigateBrowserHome,
   restorePortableSession,
 } from './session-state.js';
@@ -37,13 +38,17 @@ function existingFile(candidates) {
   return null;
 }
 
-export function resolveKaizenBrowserExecutable(resourcesPath = process.resourcesPath) {
+export function resolveKaizenBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
   const localApp = process.env.LOCALAPPDATA || '';
   const programFiles = process.env.PROGRAMFILES || '';
   const programFilesX86 = process.env['PROGRAMFILES(X86)'] || '';
+  if (browserEngine === 'nstchrome') {
+    return existingFile([
+      path.join(resourcesPath, 'nstchrome', 'chrome.exe'),
+    ]);
+  }
   return existingFile([
     path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
-    path.join(resourcesPath, 'nstchrome', 'chrome.exe'),
     programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -58,6 +63,45 @@ function browserKind(executable, resourcesPath = process.resourcesPath) {
   if (normalized === path.resolve(resourcesPath, 'nstchrome', 'chrome.exe').toLowerCase()) return 'nstchrome';
   if (normalized.endsWith('msedge.exe')) return 'edge';
   return 'chrome';
+}
+
+function runtimeFor(profile) {
+  const runtime = profile?.runtime || {};
+  const authStrategy = runtime.authStrategy
+    || (profile?.sessionMode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+  return {
+    browserEngine: runtime.browserEngine || 'chrome-native',
+    authStrategy,
+    storageStrategy: runtime.storageStrategy
+      || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
+    networkStrategy: runtime.networkStrategy || 'auto',
+    extensionStrategy: runtime.extensionStrategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
+  };
+}
+
+function snapshotAuthentication(runtime) {
+  return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
+}
+
+function credentialAuthentication(runtime) {
+  return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
+}
+
+function runtimeKey(runtime) {
+  return [
+    runtime.browserEngine,
+    runtime.authStrategy,
+    runtime.storageStrategy,
+    runtime.networkStrategy,
+    runtime.extensionStrategy,
+  ].join('|');
+}
+
+function effectiveStoragePolicy(target, requested) {
+  const host = String(target?.hostname || '').toLowerCase();
+  const netflix = host === 'netflix.com' || host.endsWith('.netflix.com');
+  if (netflix && requested !== 'cookies-only') return 'netflix-local-device';
+  return requested || 'portable-first-party';
 }
 
 function sessionMarkerPath(userDataDir) {
@@ -184,6 +228,32 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     safeSegment(profileId),
   );
 
+  const clientExtensionsDir = (clientId) => path.join(
+    app.getPath('userData'),
+    'browserExtensionsData',
+    safeSegment(clientId, 'client'),
+  );
+  const profileExtensionDir = (clientId, profileId) => path.join(
+    clientExtensionsDir(clientId),
+    safeSegment(profileId),
+  );
+
+  async function prepareProfileExtension(clientId, profileId, strategy) {
+    const source = path.join(process.resourcesPath, 'browser-engine', 'extension');
+    const target = profileExtensionDir(clientId, profileId);
+    if (!fs.existsSync(path.join(source, 'manifest.json'))) return null;
+    await fsp.rm(target, { recursive: true, force: true });
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.cp(source, target, { recursive: true });
+    const safeStrategy = ['guard-only', 'main', 'google', 'custom'].includes(strategy) ? strategy : 'guard-only';
+    await fsp.writeFile(
+      path.join(target, 'strategy.js'),
+      `globalThis.USERFLEX_RUNTIME_STRATEGY = ${JSON.stringify(safeStrategy)};\n`,
+      'utf8',
+    );
+    return target;
+  }
+
   async function cleanup(entry, reason = 'closed') {
     if (!entry || entry.cleaned) return;
     entry.cleaned = true;
@@ -210,19 +280,26 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     profile,
     connection = { mode: 'direct', locked: false },
     delivery = null,
+    credentials = null,
     usageId = null,
   }) {
     if (!profile?.id || !profile?.url) throw new Error('El perfil no tiene ID o URL.');
     const target = new URL(profile.url);
     if (!['https:', 'http:'].includes(target.protocol)) throw new Error('La URL del perfil no es compatible.');
 
+    const runtime = runtimeFor(profile);
+    const snapshotManaged = snapshotAuthentication(runtime);
+    const credentialManaged = credentialAuthentication(runtime);
+    const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
+    const desiredCredentialRevision = credentialManaged ? String(credentials?.updatedAt || '') : '';
+    const desiredRuntimeKey = runtimeKey(runtime);
     const key = profileKey(clientId, profile.id);
-    const managed = profile.sessionMode === 'managed-first-party';
-    const desiredSessionVersion = managed ? Number(delivery?.version || 0) : 0;
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
-      const versionMatches = !managed || Number(existing.sessionVersion || 0) === desiredSessionVersion;
-      if (versionMatches) {
+      const generationMatches = (!snapshotManaged || Number(existing.sessionVersion || 0) === desiredSessionVersion)
+        && String(existing.credentialRevision || '') === desiredCredentialRevision
+        && String(existing.runtimeKey || '') === desiredRuntimeKey;
+      if (generationMatches) {
         await navigateBrowserHome(existing.debugPort, profile.url).catch(() => null);
         return {
           ok: true,
@@ -232,40 +309,35 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           browser: existing.browserKind,
           sessionVersion: desiredSessionVersion,
           profileState: 'persistent-reuse',
+          runtime,
         };
       }
-
-      // KAIZEN-style profile synchronization: a newer server session must never
-      // keep running inside the old local browser process.
-      await close(clientId, profile.id, 'session_version_changed');
+      await close(clientId, profile.id, 'profile_generation_changed');
     }
 
-    const executable = resolveKaizenBrowserExecutable();
+    const executable = resolveKaizenBrowserExecutable(process.resourcesPath, runtime.browserEngine);
     if (!executable) {
-      throw Object.assign(
-        new Error('No se encontró Chrome/Chromium para el motor de perfiles. Instala Google Chrome o incluye chrome_native en userFLOW.'),
-        { code: 'KAIZEN_BROWSER_RUNTIME_MISSING' },
-      );
+      const message = runtime.browserEngine === 'nstchrome'
+        ? 'Este perfil exige nstchrome, pero el runtime nstchrome no está instalado dentro de userFLOW.'
+        : 'No se encontró Chrome/Chromium para el motor del perfil. Instala Google Chrome o incluye chrome_native en userFLOW.';
+      throw Object.assign(new Error(message), { code: 'KAIZEN_BROWSER_RUNTIME_MISSING' });
     }
 
     const userDataDir = profileDir(clientId, profile.id);
     await killStrayProfileProcesses(userDataDir);
 
-    let sessionMarker = managed ? await readSessionMarker(userDataDir) : null;
-    const netflixManaged = managed
-      && (target.hostname.toLowerCase() === 'netflix.com' || target.hostname.toLowerCase().endsWith('.netflix.com'));
-    const restorePolicyMatches = !netflixManaged
-      || sessionMarker?.restore?.storagePolicy === 'netflix-local-device';
-    const sessionVersionMatches = managed
+    let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
+    const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
+    const restorePolicyMatches = !snapshotManaged
+      || !sessionMarker
+      || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
+    const sessionVersionMatches = snapshotManaged
       && desiredSessionVersion > 0
       && Number(sessionMarker?.version || 0) === desiredSessionVersion
       && sessionMarker?.profileId === profile.id
       && restorePolicyMatches;
 
-    if (managed && !sessionVersionMatches) {
-      // The server is authoritative. Remove stale Chromium state before applying
-      // a new managed-session generation so old cookies/IDB/service state cannot
-      // leak into the freshly delivered version.
+    if (snapshotManaged && !sessionVersionMatches) {
       await resetProfileDirectory(userDataDir);
       sessionMarker = null;
     } else {
@@ -283,8 +355,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }
 
     const debugPort = await freePort();
-    const extensionDir = path.join(process.resourcesPath, 'browser-engine', 'extension');
-    const capturedUserAgent = managed && typeof delivery?.material?.browser?.userAgent === 'string'
+    const extensionDir = await prepareProfileExtension(clientId, profile.id, runtime.extensionStrategy);
+    const capturedUserAgent = snapshotManaged && typeof delivery?.material?.browser?.userAgent === 'string'
       ? delivery.material.browser.userAgent
       : null;
     const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgent: capturedUserAgent });
@@ -299,6 +371,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       process: proc,
       clientId,
       profile,
+      runtime,
+      runtimeKey: desiredRuntimeKey,
+      credentialRevision: desiredCredentialRevision,
       connection,
       delivery,
       usageId,
@@ -341,26 +416,37 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         const detectedIp = await browserPublicIp(debugPort);
         if (!detectedIp) throw new Error('No se pudo validar la IP de salida del navegador mediante el proxy.');
         entry.publicIp = detectedIp;
-        if (delivery?.expectedPublicIp && detectedIp !== delivery.expectedPublicIp) {
-          throw new Error(`La IP del navegador no coincide con la sesión. Esperada: ${delivery.expectedPublicIp}. Detectada: ${detectedIp}.`);
+        const expectedIp = delivery?.expectedPublicIp || (connection?.locked ? connection?.proxy?.publicIp : null);
+        if (expectedIp && detectedIp !== expectedIp) {
+          throw new Error(`La IP del navegador no coincide con la configuración. Esperada: ${expectedIp}. Detectada: ${detectedIp}.`);
         }
       }
 
+      let autofill = null;
+      if (credentialManaged) {
+        if (!credentials?.username || !credentials?.password) {
+          throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
+        }
+        autofill = await installCredentialAutofill({
+          debugPort,
+          profileUrl: profile.url,
+          credentials,
+        });
+      }
+
       let restore = null;
-      if (managed) {
+      if (snapshotManaged) {
         if (!delivery?.ready || !delivery?.materialIncluded || !delivery?.material) {
-          throw new Error('La sesión administrada todavía no está lista.');
+          throw new Error('La sesión capturada del perfil todavía no está lista.');
         }
 
         if (sessionVersionMatches) {
-          // Keep the entire local Chromium profile intact when the server
-          // generation is unchanged. This is the core KAIZEN profile behavior:
-          // browser-owned state continues naturally between launches.
           await navigateBrowserHome(debugPort, profile.url);
           restore = {
             reusedProfile: true,
             version: desiredSessionVersion,
             format: sessionMarker?.format || delivery.material.format || null,
+            storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
           };
         } else {
           restore = await restorePortableSession({
@@ -368,6 +454,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             profileUrl: profile.url,
             profileId: profile.id,
             material: delivery.material,
+            storageStrategy: runtime.storageStrategy,
           });
           sessionMarker = await writeSessionMarker(userDataDir, profile, delivery, restore);
           entry.sessionMarker = sessionMarker;
@@ -391,7 +478,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         networkLocked: connection?.locked === true,
         publicIp: entry.publicIp || null,
         sessionVersion: desiredSessionVersion,
-        profileState: managed ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored') : 'persistent-local',
+        profileState: snapshotManaged
+          ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored')
+          : credentialManaged ? 'credential-autofill' : 'persistent-local',
+        runtime,
+        autofill,
         restore,
       };
     } catch (error) {
@@ -416,6 +507,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const dir = profileDir(clientId, profileId);
     await killStrayProfileProcesses(dir);
     await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rm(profileExtensionDir(clientId, profileId), { recursive: true, force: true });
   }
 
   async function reconcileAuthorizedProfiles(clientId, profileIds = []) {
@@ -442,6 +534,90 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return { removed };
   }
 
+  async function reconcileCatalogProfiles(clientId, profiles = []) {
+    const catalogProfiles = Array.isArray(profiles) ? profiles.filter((profile) => profile?.id) : [];
+    const catalogById = new Map(catalogProfiles.map((profile) => [String(profile.id), profile]));
+    const authorizedProfileIds = catalogProfiles.map((profile) => String(profile.id));
+    const authorization = await reconcileAuthorizedProfiles(clientId, authorizedProfileIds);
+
+    const invalidated = [];
+    for (const profile of catalogProfiles) {
+      const key = profileKey(clientId, profile.id);
+      const runningEntry = processes.get(key);
+      const dir = profileDir(clientId, profile.id);
+      const marker = runningEntry?.sessionMarker || await readSessionMarker(dir);
+      const runtime = runtimeFor(profile);
+      const wantsSnapshot = snapshotAuthentication(runtime);
+      const wantsCredentials = credentialAuthentication(runtime);
+      const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
+      const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
+      const desiredCredentialRevision = wantsCredentials ? String(profile.credentialVersion || '') : '';
+      const desiredRuntimeKey = runtimeKey(runtime);
+
+      const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
+      const snapshotChanged = runningEntry && wantsSnapshot && (
+        !snapshotReady || Number(runningEntry.sessionVersion || 0) !== desiredVersion
+      );
+      const credentialsChanged = runningEntry && wantsCredentials
+        && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
+
+      if (runningEntry && (runtimeChanged || snapshotChanged || credentialsChanged)) {
+        const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
+        const reason = runtimeChanged
+          ? 'profile_runtime_changed'
+          : snapshotChanged
+            ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
+            : 'credentials_changed';
+        await close(clientId, profile.id, reason).catch(() => null);
+
+        // Runtime/auth/storage changes and snapshot generation changes invalidate
+        // browser-owned authenticated state. A credentials-only refresh just
+        // restarts the process so the persistent local profile remains intact.
+        if (runtimeChanged || snapshotChanged) {
+          await killStrayProfileProcesses(dir);
+          await fsp.rm(dir, { recursive: true, force: true });
+        }
+        invalidated.push({
+          profileId: profile.id,
+          from: previousVersion,
+          to: snapshotReady ? desiredVersion : 0,
+          running: true,
+          reason,
+        });
+        continue;
+      }
+
+      if (!runningEntry && marker) {
+        const markerVersion = Number(marker.version || 0);
+        const markerPolicy = String(marker?.restore?.storagePolicy || '');
+        const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
+        const markerInvalid = !wantsSnapshot
+          || !snapshotReady
+          || markerVersion !== desiredVersion
+          || markerPolicy !== desiredPolicy;
+        if (markerInvalid) {
+          await killStrayProfileProcesses(dir);
+          await fsp.rm(dir, { recursive: true, force: true });
+          invalidated.push({
+            profileId: profile.id,
+            from: markerVersion,
+            to: snapshotReady ? desiredVersion : 0,
+            running: false,
+            reason: 'stored_generation_changed',
+          });
+        }
+      }
+    }
+
+    for (const entry of Array.from(processes.values())) {
+      if (safeSegment(entry.clientId, 'client') !== safeSegment(clientId, 'client')) continue;
+      if (catalogById.has(String(entry.profile.id))) continue;
+      await close(clientId, entry.profile.id, 'profile_revoked').catch(() => null);
+    }
+
+    return { removed: authorization.removed || [], invalidated };
+  }
+
   async function clearClientProfiles(clientId, reason = 'client_logout') {
     const keyPrefix = `${safeSegment(clientId, 'client')}:`;
     const live = Array.from(processes.entries())
@@ -462,6 +638,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
     } catch {}
     await fsp.rm(root, { recursive: true, force: true });
+    await fsp.rm(clientExtensionsDir(clientId), { recursive: true, force: true });
   }
 
   function running() {
@@ -472,6 +649,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       browser: entry.browserKind,
       startedAt: entry.startedAt,
       network: entry.connection?.mode || 'direct',
+      sessionVersion: Number(entry.sessionVersion || 0),
     }));
   }
 
@@ -482,6 +660,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     running,
     profileDir,
     reconcileAuthorizedProfiles,
+    reconcileCatalogProfiles,
     clearClientProfiles,
   };
 }
