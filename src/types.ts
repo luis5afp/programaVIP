@@ -263,6 +263,8 @@ export interface HealthInfo {
   version: string;
   supabaseConfigured: boolean;
   proxyEncryptionConfigured: boolean;
+  minimumClientVersion: string;
+  minimumSessionManagerVersion: string;
   timestamp: string;
 }
 
