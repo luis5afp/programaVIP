@@ -1,6 +1,13 @@
 import { AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
 import {
+  credentialAuthentication,
+  proxyRuntimeUsable,
+  runtimeForProfile,
+  selectNetworkPolicy,
+  snapshotAuthentication,
+} from './profile-runtime';
+import {
   Env,
   HttpError,
   audit,
@@ -90,76 +97,55 @@ async function sessionRow(env: Env, profileId: string) {
   return rows?.[0] || null;
 }
 
-function runtimeForProfile(profile: any) {
-  const authStrategy = profile?.auth_strategy
-    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
-  return {
-    browserEngine: profile?.browser_engine || 'chrome-native',
-    authStrategy,
-    storageStrategy: profile?.storage_strategy
-      || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
-    networkStrategy: profile?.network_strategy || 'auto',
-    extensionStrategy: profile?.extension_strategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
-  };
-}
-
-function snapshotAuthentication(runtime: any) {
-  return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
-}
-
-function credentialAuthentication(runtime: any) {
-  return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
-}
-
 async function proxyRecord(env: Env, proxyId: string | null) {
   if (!proxyId) return null;
   const rows = await sb(
     env,
-    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip,browser_compatible&id=eq.${proxyId}&limit=1`,
+    `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip&id=eq.${proxyId}&limit=1`,
   );
   return rows?.[0] || null;
 }
 
 async function profileValidationNetwork(env: Env, profile: any, clientId: string | null) {
   const runtime = runtimeForProfile(profile);
-  if (runtime.networkStrategy === 'client-direct') {
-    return { mode: 'direct', locked: false, source: 'client-direct', proxy: null };
-  }
+  const fixedProxy = await defaultProxy(env, profile.id);
+  let assignmentProxy: any = null;
+  let assignmentProxyId: string | null = null;
 
-  let proxy: any = null;
-  let source = 'direct';
-  let locked = false;
-
-  if (runtime.networkStrategy === 'profile-proxy') {
-    proxy = await defaultProxy(env, profile.id);
-    source = 'profile-proxy';
-    locked = true;
-  } else if (runtime.networkStrategy === 'assigned-proxy') {
-    if (!clientId) return { mode: 'missing-client', locked: true, source: 'assigned-proxy', proxy: null };
+  if (clientId) {
     const rows = await sb(
       env,
       `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
     );
-    proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null);
-    source = 'assigned-proxy';
-    locked = true;
-  } else {
-    const fixed = await defaultProxy(env, profile.id);
-    if (runtime.authStrategy === 'manual' && clientId) {
-      const rows = await sb(
-        env,
-        `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
-      );
-      proxy = await proxyRecord(env, rows?.[0]?.proxy_id || null) || fixed;
-      source = rows?.[0]?.proxy_id ? 'assignment-auto' : fixed ? 'profile-auto' : 'direct';
-    } else {
-      proxy = fixed;
-      source = fixed ? 'profile-auto' : 'direct';
-    }
-    locked = runtime.authStrategy !== 'manual' && Boolean(fixed);
+    assignmentProxyId = rows?.[0]?.proxy_id || null;
+    assignmentProxy = await proxyRecord(env, assignmentProxyId);
   }
 
-  return { mode: proxy ? 'proxy' : 'direct', locked, source, proxy };
+  const policy = selectNetworkPolicy(
+    runtime,
+    fixedProxy?.id || null,
+    assignmentProxyId,
+  );
+  const selectedProxy = policy.effectiveProxyId === assignmentProxyId
+    ? assignmentProxy
+    : policy.effectiveProxyId === fixedProxy?.id
+      ? fixedProxy
+      : null;
+
+  if (runtime.networkStrategy === 'assigned-proxy' && !clientId) {
+    return { mode: 'missing-client', locked: true, source: policy.source, proxy: null };
+  }
+
+  return {
+    mode: selectedProxy ? 'proxy' : 'direct',
+    locked: policy.locked,
+    required: policy.required,
+    source: policy.source,
+    proxy: selectedProxy,
+    ready: policy.required
+      ? Boolean(policy.effectiveProxyId && proxyRuntimeUsable(selectedProxy))
+      : !policy.effectiveProxyId || proxyRuntimeUsable(selectedProxy),
+  };
 }
 
 function materialCookies(material: any): any[] {
@@ -243,20 +229,21 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
   const network = await profileValidationNetwork(env, profile, clientId);
   if (network.mode === 'missing-client') {
     add('network', 'Red', 'fail', 'Selecciona un cliente para probar su proxy asignado.');
-  } else if (network.locked && !network.proxy) {
-    add('network', 'Red', 'fail', 'La estrategia exige un proxy pero no hay uno disponible.');
-  } else if (network.proxy) {
-    const usable = network.proxy.enabled === true
-      && network.proxy.proxy_type !== 'ssh'
-      && network.proxy.browser_compatible !== false
-      && !['invalid'].includes(String(network.proxy.validation_status || ''));
+  } else if (!network.ready) {
     add(
       'network',
       'Red',
-      usable ? 'pass' : 'fail',
-      usable
-        ? `${network.source}: ${network.proxy.name || network.proxy.host} · ${network.proxy.validation_status || 'sin validar'}`
-        : 'El proxy seleccionado está deshabilitado, no es compatible o falló validación.',
+      'fail',
+      network.required && !network.proxy
+        ? 'La estrategia exige un proxy pero no hay uno disponible.'
+        : 'El proxy seleccionado está deshabilitado, usa un protocolo no compatible o falló validación.',
+    );
+  } else if (network.proxy) {
+    add(
+      'network',
+      'Red',
+      'pass',
+      `${network.source}: ${network.proxy.name || network.proxy.host} · ${network.proxy.validation_status || 'sin validar'}`,
     );
   } else {
     add('network', 'Red', 'pass', 'Salida directa; la IP real se verificará desde el equipo que ejecute userFLOW.');
@@ -501,9 +488,12 @@ export async function adminProfileSessionRoutes(
       throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'El modo híbrido necesita credenciales además de la sesión capturada.');
     }
     const proxy = await captureProxyForProfile(env, profile);
-    if (proxy && proxy.enabled !== true) throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
-    if (proxy?.proxy_type === 'ssh') {
-      throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
+    if (proxy && !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'PROFILE_PROXY_UNAVAILABLE',
+        'El proxy del perfil está inactivo, usa un protocolo no compatible o falló validación.',
+      );
     }
 
     const rawToken = token(32);
