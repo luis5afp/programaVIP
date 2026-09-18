@@ -300,6 +300,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     try { await entry.control?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
     await killProcessTree(entry.process);
+    if (entry.extensionDir) {
+      try { await fsp.rm(entry.extensionDir, { recursive: true, force: true }); } catch {}
+    }
     log.log?.(`Session Manager KAIZEN closed: ${reason}`);
   }
 
@@ -412,6 +415,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
         void entry.control?.close().catch(() => null);
         void entry.relay?.close().catch(() => null);
+        if (entry.extensionDir) {
+          void fsp.rm(entry.extensionDir, { recursive: true, force: true }).catch(() => null);
+        }
       }
     });
 
