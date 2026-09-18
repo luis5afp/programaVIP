@@ -222,7 +222,18 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   mergeValidationMeta(payload);
   let freshCatalog = knownCatalog;
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
-  if (freshCatalog) mergeValidationMeta(freshCatalog);
+  if (freshCatalog) {
+    mergeValidationMeta(freshCatalog);
+    const clientId = authMeta?.client?.id || null;
+    const authorizedProfileIds = Array.isArray(freshCatalog.profiles)
+      ? freshCatalog.profiles.map((profile) => profile?.id).filter(Boolean)
+      : [];
+    if (clientId) {
+      await getKaizenBrowserEngine()
+        .reconcileAuthorizedProfiles(clientId, authorizedProfileIds)
+        .catch((error) => console.warn('KAIZEN profile reconciliation failed:', error?.message || error));
+    }
+  }
   if (accessToken && authMeta) await saveAuth(accessToken, authMeta).catch(() => null);
   return { configChanged, catalog: freshCatalog, auth: authMeta, validationReason: reason };
 }
@@ -298,9 +309,13 @@ function enterWorkspace(sender) {
 }
 
 async function returnToLogin() {
+  const clientId = authMeta?.client?.id || null;
   await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
   closePrivateBrowser();
   await flushUsageCloseRequests();
+  if (clientId) {
+    await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
+  }
   await clearAuth();
   const loginWindow = createMainWindow();
   loginWindow.show();
