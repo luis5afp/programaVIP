@@ -1,8 +1,7 @@
-import { app, BrowserWindow, components, session } from 'electron';
+import { app } from 'electron';
 
-// Keep Session Manager and userFLOW on the same Chromium network/identity
-// settings so managed-session cookies are captured and later replayed under
-// the same browser characteristics.
+// The Session Manager window is now only a controller. Profile browsing itself
+// runs in a native external Chrome/Edge process, following the KAIZEN engine.
 app.commandLine.appendSwitch('disable-quic');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
@@ -16,124 +15,6 @@ function chromiumUserAgent() {
 const compatibleUserAgent = chromiumUserAgent();
 if (compatibleUserAgent) app.userAgentFallback = compatibleUserAgent;
 
-function secureRequestOrigin(value) {
-  try {
-    return new URL(String(value || '')).protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-const configuredSessions = new WeakSet();
-function enableProtectedContent(browserSession) {
-  if (!browserSession || configuredSessions.has(browserSession)) return;
-  configuredSessions.add(browserSession);
-
-  browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    if (permission !== 'mediaKeySystem') {
-      callback(true);
-      return;
-    }
-    const requestUrl = details?.requestingUrl || details?.requestingOrigin || webContents?.getURL?.() || '';
-    callback(secureRequestOrigin(requestUrl));
-  });
-
-  browserSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    if (permission !== 'mediaKeySystem') return true;
-    const requestUrl = requestingOrigin || details?.requestingUrl || webContents?.getURL?.() || '';
-    return secureRequestOrigin(requestUrl);
-  });
-}
-
-// Apply the protected-content policy to every isolated profile partition as it
-// is created. This keeps capture and client behavior aligned for Netflix and
-// other Widevine sites.
-app.on('session-created', (browserSession) => {
-  enableProtectedContent(browserSession);
-});
-
-function genericNavigationFailure(error) {
-  if (!error || typeof error !== 'object') return false;
-  return error.code === 'ERR_FAILED' || Number(error.errno) === -2;
-}
-
-// Electron can reject BrowserWindow.loadURL() with ERR_FAILED (-2) even when
-// Chromium has actually committed/finished the HTTPS navigation. Netflix and
-// other redirect-heavy sites can hit this race. Keep the real did-fail-load
-// signal authoritative and only ignore the generic promise rejection when a
-// successful HTTPS main-frame navigation was observed.
-const nativeLoadURL = BrowserWindow.prototype.loadURL;
-BrowserWindow.prototype.loadURL = async function guardedLoadURL(url, options = {}) {
-  const target = String(url || '');
-  if (!target.startsWith('https://') || this.isDestroyed()) {
-    return nativeLoadURL.call(this, url, options);
-  }
-
-  const contents = this.webContents;
-  let committedHttps = false;
-  let finishedLoad = false;
-  let mainFrameFailure = null;
-
-  const onNavigate = (_event, navigatedUrl) => {
-    if (String(navigatedUrl || '').startsWith('https://')) committedHttps = true;
-  };
-  const onFinish = () => {
-    finishedLoad = true;
-  };
-  const onFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame) return;
-    mainFrameFailure = { errorCode, errorDescription, validatedURL };
-  };
-
-  contents.on('did-navigate', onNavigate);
-  contents.on('did-finish-load', onFinish);
-  contents.on('did-fail-load', onFail);
-
-  try {
-    try {
-      return await nativeLoadURL.call(this, url, {
-        ...options,
-        reloadIgnoringCache: options?.reloadIgnoringCache ?? true,
-      });
-    } catch (error) {
-      if (!genericNavigationFailure(error) || mainFrameFailure) throw error;
-
-      // Give Chromium a short grace period to deliver a successful navigation
-      // event after Electron's generic promise rejection.
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
-      if (!this.isDestroyed() && !mainFrameFailure && (committedHttps || finishedLoad)) {
-        console.warn(`Session Manager: ignored spurious ERR_FAILED after successful HTTPS navigation to ${target}.`);
-        return;
-      }
-      throw error;
-    }
-  } finally {
-    if (!contents.isDestroyed()) {
-      contents.removeListener('did-navigate', onNavigate);
-      contents.removeListener('did-finish-load', onFinish);
-      contents.removeListener('did-fail-load', onFail);
-    }
-  }
-};
-
-// CastLabs ECS installs/updates Widevine through its component service. Wait
-// for that component once at startup before the capture runtime creates its
-// first BrowserWindow. If the service is temporarily unavailable, login/capture
-// can still continue; the status is logged and a later launch will retry.
-const widevineReady = app.whenReady().then(async () => {
-  enableProtectedContent(session.defaultSession);
-  if (!components || typeof components.whenReady !== 'function') {
-    console.warn('Session Manager: CastLabs component API is unavailable.');
-    return false;
-  }
-  try {
-    await components.whenReady();
-    console.log('Session Manager: Widevine components ready.', components.status?.() || 'ready');
-    return true;
-  } catch (error) {
-    console.warn('Session Manager: Widevine component setup failed:', error?.message || String(error));
-    return false;
-  }
-});
-
-void widevineReady.finally(() => import('./main.js'));
+// Dynamic import runs after command-line policy is configured but before
+// app.whenReady() resolves inside main.js.
+void import('./main.js');
