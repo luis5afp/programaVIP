@@ -526,6 +526,83 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   }
 }
 
+export async function inspectRuntimeProfile({ debugPort, profileUrl }) {
+  const target = new URL(profileUrl);
+  const browser = await connectKaizenBrowser(debugPort);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const pages = await browser.pages();
+    const page = pages.find((item) => {
+      try { return new URL(item.url()).hostname.endsWith(target.hostname.replace(/^www\./, '')); } catch { return false; }
+    }) || pages.find((item) => /^https?:/i.test(item.url())) || pages[0];
+    if (!page) {
+      return {
+        currentUrl: null,
+        loginLikeUrl: false,
+        usernameFieldVisible: false,
+        passwordFieldVisible: false,
+        usernameFilled: false,
+        passwordFilled: false,
+        helperVisible: false,
+      };
+    }
+    return await page.evaluate(() => {
+      const visible = (element) => {
+        try {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity || 1) !== 0
+            && rect.width > 0
+            && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const fieldKind = (element) => {
+        if (!(element instanceof HTMLInputElement)) return null;
+        const type = String(element.type || '').toLowerCase();
+        const hint = [
+          type,
+          element.name,
+          element.id,
+          element.autocomplete,
+          element.placeholder,
+          element.getAttribute('aria-label') || '',
+        ].join(' ').toLowerCase();
+        if (type === 'password' || /password|passcode|contrase/.test(hint)) return 'password';
+        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier/.test(hint)) return 'username';
+        return null;
+      };
+      const inputs = Array.from(document.querySelectorAll('input'))
+        .filter((element) => visible(element) && !element.disabled && !element.readOnly);
+      const username = inputs.find((element) => fieldKind(element) === 'username') || null;
+      const password = inputs.find((element) => fieldKind(element) === 'password') || null;
+      const href = location.href;
+      return {
+        currentUrl: href,
+        loginLikeUrl: /(?:\/|^)(login|signin|sign-in|auth)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
+        usernameFieldVisible: Boolean(username),
+        passwordFieldVisible: Boolean(password),
+        usernameFilled: Boolean(username && String(username.value || '').length > 0),
+        passwordFilled: Boolean(password && String(password.value || '').length > 0),
+        helperVisible: Boolean(document.getElementById('__userflex-credential-helper')),
+      };
+    }).catch(() => ({
+      currentUrl: page.url(),
+      loginLikeUrl: /(?:\/|^)(login|signin|sign-in|auth)(?:\/|\?|#|$)/i.test(page.url()),
+      usernameFieldVisible: false,
+      passwordFieldVisible: false,
+      usernameFilled: false,
+      passwordFilled: false,
+      helperVisible: false,
+    }));
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
 export async function restorePortableSession({ debugPort, profileUrl, profileId = null, material, storageStrategy = 'portable-first-party' }) {
   if (!material || !['userflex-browser-session-v1', 'userflex-browser-session-v2'].includes(material.format)) {
     throw new Error('El material de sesión del perfil no es compatible con el motor KAIZEN.');
