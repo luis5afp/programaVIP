@@ -50,6 +50,43 @@ async function applyCookies(browser, cookies) {
   return { installed, rejected };
 }
 
+function cookieDomainMatchesHost(cookie, hostname) {
+  const host = String(hostname || '').toLowerCase();
+  const domain = String(cookie?.domain || '').replace(/^\./, '').toLowerCase();
+  return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
+}
+
+async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
+  if (!(target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))) return;
+
+  const expected = new Map(
+    capturedCookies
+      .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+      .filter((cookie) => ['netflixid', 'securenetflixid'].includes(String(cookie.name || '').toLowerCase()))
+      .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
+  );
+  if (!expected.size) return;
+
+  const client = await page.createCDPSession();
+  try {
+    const result = await client.send('Storage.getCookies');
+    const installed = new Map(
+      (Array.isArray(result?.cookies) ? result.cookies : [])
+        .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+        .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
+    );
+    const missing = [];
+    for (const [name, value] of expected) {
+      if (!installed.has(name) || installed.get(name) !== value) missing.push(name);
+    }
+    if (missing.length) {
+      throw new Error(`Chrome no pudo conservar las cookies de autenticación de Netflix: ${missing.join(', ')}.`);
+    }
+  } finally {
+    await client.detach().catch(() => null);
+  }
+}
+
 function compressedIndexedDb(storage) {
   const packed = storage?.indexedDBCompressed;
   if (!packed || packed.encoding !== 'gzip+base64' || typeof packed.data !== 'string') return [];
@@ -246,6 +283,9 @@ export async function restorePortableSession({ debugPort, profileUrl, material }
   try {
     const cookies = flattenCookies(material);
     const cookieResult = await applyCookies(browser, cookies);
+    if (cookies.length > 0 && cookieResult.installed === 0) {
+      throw new Error('Chrome rechazó todas las cookies de la sesión administrada.');
+    }
 
     let pages = await browser.pages();
     let page = pages.find((item) => item.url() === 'about:blank') || pages[0];
@@ -305,6 +345,7 @@ export async function restorePortableSession({ debugPort, profileUrl, material }
     // Only now load the real application. Browser-owned profile state is in
     // place before its first-party scripts start.
     await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await verifyFirstPartyAuthCookies(page, target, cookies);
 
     for (const extra of pages) {
       if (extra === page) continue;
