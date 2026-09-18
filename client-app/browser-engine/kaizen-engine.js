@@ -481,7 +481,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         sessionVersion: desiredSessionVersion,
         profileState: snapshotManaged
           ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored')
-          : credentialManaged ? 'credential-autofill' : 'persistent-local',
+          : credentialHelperEnabled ? 'credential-autofill' : 'persistent-local',
         runtime,
         autofill,
         restore,
