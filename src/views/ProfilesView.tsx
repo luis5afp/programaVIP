@@ -528,6 +528,10 @@ export function ProfilesView() {
                   <div className="profile-actions">
                     <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
                     <div className="toolbar" style={{ margin: 0 }}>
+                      <button className="button secondary small" onClick={() => void openValidation(profile)}>
+                        <ShieldCheck size={12} />
+                        Validar
+                      </button>
                       <button className="button secondary small" onClick={() => openEditor(profile)}>
                         <Pencil size={12} />
                         Editar
@@ -543,6 +547,143 @@ export function ProfilesView() {
             );
           })}
         </div>
+      )}
+
+      {validationProfile && (
+        <Modal
+          title={`Validación · ${profileLabel(validationProfile)}`}
+          onClose={() => {
+            setValidationProfile(null);
+            setValidationResult(null);
+            setValidationJob(null);
+          }}
+          actions={
+            <button
+              className="button secondary"
+              onClick={() => {
+                setValidationProfile(null);
+                setValidationResult(null);
+                setValidationJob(null);
+              }}
+            >
+              Cerrar
+            </button>
+          }
+        >
+          <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ padding: 14, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12 }}>
+              <strong>La prueba real se ejecuta con userFLOW.</strong>
+              <div className="help" style={{ marginTop: 6 }}>
+                El servidor primero valida configuración. Después “Probar como cliente” abre un perfil temporal en el userFLOW instalado y usa el mismo motor, cookies, autofill y red que recibirá un cliente real. El perfil temporal se elimina al cerrar ese navegador.
+              </div>
+            </div>
+
+            {validationProfile.network_strategy === 'assigned-proxy' && (
+              <Field label="Cliente a simular" help="Se usará exactamente el proxy asignado a este cliente para este perfil.">
+                <select
+                  className="select"
+                  value={validationClientId}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setValidationClientId(value);
+                    setValidationJob(null);
+                    void refreshValidation(value);
+                  }}
+                >
+                  <option value="">Selecciona un cliente</option>
+                  {validationClientsFor(validationProfile.id).map((client) => (
+                    <option value={client.id} key={client.id}>{client.name} · {client.email}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+
+            <div className="toolbar" style={{ margin: 0 }}>
+              <button
+                className="button secondary"
+                disabled={validationBusy}
+                onClick={() => void refreshValidation()}
+              >
+                <RefreshCw size={14} />
+                {validationBusy ? 'Validando...' : 'Validar configuración'}
+              </button>
+              <button
+                className="button primary"
+                disabled={validationBusy || !validationResult?.ready}
+                onClick={() => void startClientTest()}
+              >
+                <Globe2 size={14} />
+                Probar como cliente
+              </button>
+            </div>
+
+            {validationResult && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <Badge tone={validationResult.ready ? 'ok' : 'bad'}>
+                    {validationResult.ready ? 'Configuración lista' : 'Configuración bloqueada'}
+                  </Badge>
+                  <Badge tone="neutral">Red: {validationResult.network.source}</Badge>
+                  {validationResult.network.publicIp && <Badge>IP: {validationResult.network.publicIp}</Badge>}
+                </div>
+                {validationResult.checks.map((check) => (
+                  <div
+                    key={check.key}
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: 10 }}
+                  >
+                    <Badge tone={check.status === 'pass' ? 'ok' : check.status === 'warn' ? 'warn' : 'bad'}>
+                      {check.status === 'pass' ? 'OK' : check.status === 'warn' ? 'Aviso' : 'Error'}
+                    </Badge>
+                    <div>
+                      <div className="table-primary">{check.label}</div>
+                      <div className="help">{check.detail}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {validationJob && (
+              <div style={{ padding: 14, border: '1px solid #e2e8f0', borderRadius: 12, display: 'grid', gap: 8 }}>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <strong>Prueba userFLOW</strong>
+                  <Badge tone={validationJob.status === 'completed' ? 'ok' : validationJob.status === 'failed' || validationJob.status === 'expired' ? 'bad' : 'warn'}>
+                    {validationJob.status}
+                  </Badge>
+                </div>
+                {validationJob.status === 'pending' && <div className="help">Esperando que Windows abra userFLOW...</div>}
+                {validationJob.status === 'running' && <div className="help">userFLOW está ejecutando el perfil temporal con la configuración real.</div>}
+                {validationJob.error && <div style={{ color: '#b91c1c', fontSize: 12 }}>{validationJob.error}</div>}
+                {validationJob.result && (
+                  <div style={{ display: 'grid', gap: 5, fontSize: 12 }}>
+                    <div><b>Resultado:</b> {String(validationJob.result.outcome || 'sin detalle')}</div>
+                    <div><b>Navegador:</b> {String(validationJob.result.browser || 'desconocido')}</div>
+                    <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
+                    {validationJob.result.publicIp && <div><b>IP detectada:</b> {String(validationJob.result.publicIp)}</div>}
+                    {validationJob.result.inspection && (
+                      <>
+                        <div><b>URL final:</b> {String(validationJob.result.inspection.currentUrl || '')}</div>
+                        <div>
+                          <b>Autofill:</b>{' '}
+                          {validationJob.result.inspection.helperVisible ? 'helper visible' : 'helper no visible'}
+                          {' · '}
+                          {validationJob.result.inspection.usernameFilled ? 'email completado' : 'email no completado'}
+                          {' · '}
+                          {validationJob.result.inspection.passwordFilled ? 'password completado' : 'password pendiente/no visible'}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                {['pending', 'running'].includes(validationJob.status) && (
+                  <button className="button secondary small" onClick={() => void pollValidationJob(validationJob.id)}>
+                    Actualizar resultado
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
 
       {editor && (
