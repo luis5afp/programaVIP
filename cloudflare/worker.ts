@@ -4,6 +4,7 @@ import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
+import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
 import { profilePlanAccessRoutes } from './lib/profile-plan-access';
@@ -19,7 +20,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -94,6 +95,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path === '/api/profile-images' && method === 'POST') {
     return uploadProfileImage(request, env, admin);
   }
+  const releaseResponse = await adminClientReleaseRoutes(request, env, admin);
+  if (releaseResponse) return releaseResponse;
   const adminUserResponse = await adminUserRoutes(request, env, admin);
   if (adminUserResponse) return adminUserResponse;
   const profileUsageResponse = await adminProfileUsageRoutes(request, env, admin);
