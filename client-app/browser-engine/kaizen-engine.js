@@ -542,45 +542,69 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const runningEntry = processes.get(key);
       const dir = profileDir(clientId, profile.id);
       const marker = runningEntry?.sessionMarker || await readSessionMarker(dir);
-      const managed = profile.sessionMode === 'managed-first-party';
-      const desiredVersion = Number(profile.sessionVersion || 0);
-      const ready = profile.sessionReady === true && desiredVersion > 0;
+      const runtime = runtimeFor(profile);
+      const wantsSnapshot = snapshotAuthentication(runtime);
+      const wantsCredentials = credentialAuthentication(runtime);
+      const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
+      const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
+      const desiredCredentialRevision = wantsCredentials ? String(profile.credentialVersion || '') : '';
+      const desiredRuntimeKey = runtimeKey(runtime);
 
-      // The server is authoritative. Clearing a managed session, changing a
-      // profile out of managed mode, or publishing a new generation must not
-      // leave the previous authenticated Chromium profile usable locally.
-      const shouldInvalidate = marker && (
-        !managed
-        || !ready
-        || Number(marker.version || 0) !== desiredVersion
+      const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
+      const snapshotChanged = runningEntry && wantsSnapshot && (
+        !snapshotReady || Number(runningEntry.sessionVersion || 0) !== desiredVersion
       );
-      const runningNeedsInvalidation = runningEntry && marker && (
-        !managed
-        || !ready
-        || Number(runningEntry.sessionVersion || marker.version || 0) !== desiredVersion
-      );
+      const credentialsChanged = runningEntry && wantsCredentials
+        && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
 
-      if (runningNeedsInvalidation) {
+      if (runningEntry && (runtimeChanged || snapshotChanged || credentialsChanged)) {
         const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
-        const reason = !managed ? 'session_mode_changed' : ready ? 'session_version_changed' : 'session_revoked';
+        const reason = runtimeChanged
+          ? 'profile_runtime_changed'
+          : snapshotChanged
+            ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
+            : 'credentials_changed';
         await close(clientId, profile.id, reason).catch(() => null);
-        await killStrayProfileProcesses(dir);
-        await fsp.rm(dir, { recursive: true, force: true });
-        invalidated.push({ profileId: profile.id, from: previousVersion, to: ready ? desiredVersion : 0, running: true });
+
+        // Runtime/auth/storage changes and snapshot generation changes invalidate
+        // browser-owned authenticated state. A credentials-only refresh just
+        // restarts the process so the persistent local profile remains intact.
+        if (runtimeChanged || snapshotChanged) {
+          await killStrayProfileProcesses(dir);
+          await fsp.rm(dir, { recursive: true, force: true });
+        }
+        invalidated.push({
+          profileId: profile.id,
+          from: previousVersion,
+          to: snapshotReady ? desiredVersion : 0,
+          running: true,
+          reason,
+        });
         continue;
       }
 
-      if (!runningEntry && shouldInvalidate) {
-        const previousVersion = Number(marker?.version || 0);
-        await killStrayProfileProcesses(dir);
-        await fsp.rm(dir, { recursive: true, force: true });
-        invalidated.push({ profileId: profile.id, from: previousVersion, to: ready ? desiredVersion : 0, running: false });
+      if (!runningEntry && marker) {
+        const markerVersion = Number(marker.version || 0);
+        const markerPolicy = String(marker?.restore?.storagePolicy || '');
+        const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
+        const markerInvalid = !wantsSnapshot
+          || !snapshotReady
+          || markerVersion !== desiredVersion
+          || markerPolicy !== desiredPolicy;
+        if (markerInvalid) {
+          await killStrayProfileProcesses(dir);
+          await fsp.rm(dir, { recursive: true, force: true });
+          invalidated.push({
+            profileId: profile.id,
+            from: markerVersion,
+            to: snapshotReady ? desiredVersion : 0,
+            running: false,
+            reason: 'stored_generation_changed',
+          });
+        }
       }
     }
 
-    // A profile can disappear from the catalog while a browser process is still
-    // alive. Directory reconciliation normally removes it first, but explicitly
-    // close any remaining process as a fail-closed defense.
     for (const entry of Array.from(processes.values())) {
       if (safeSegment(entry.clientId, 'client') !== safeSegment(clientId, 'client')) continue;
       if (catalogById.has(String(entry.profile.id))) continue;
