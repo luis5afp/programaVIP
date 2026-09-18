@@ -512,7 +512,15 @@ export async function adminProfileSessionRoutes(
 
   if (credentialsMatch && method === 'DELETE') {
     const profileId = uuid(credentialsMatch[1], 'profileId');
-    await profileRow(env, profileId);
+    const profile = await profileRow(env, profileId);
+    const runtime = runtimeForProfile(profile);
+    if (credentialAuthentication(runtime)) {
+      throw new HttpError(
+        409,
+        'CREDENTIALS_REQUIRED_BY_STRATEGY',
+        'La estrategia actual exige credenciales. Cambia primero la autenticación a snapshot o manual.',
+      );
+    }
     await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
