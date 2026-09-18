@@ -91,7 +91,7 @@ async function resetProfileDirectory(userDataDir) {
   await fsp.mkdir(userDataDir, { recursive: true });
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgent = null }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -114,6 +114,9 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
     '--disable-domain-reliability',
     '--disable-popup-blocking',
   ];
+  if (userAgent && typeof userAgent === 'string' && userAgent.length <= 600 && !/[\r\n]/.test(userAgent)) {
+    args.push(`--user-agent=${userAgent}`);
+  }
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>');
   if (extensionDir && fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
     args.push(`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`);
@@ -273,7 +276,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     const debugPort = await freePort();
     const extensionDir = path.join(process.resourcesPath, 'browser-engine', 'extension');
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir });
+    const capturedUserAgent = managed && typeof delivery?.material?.browser?.userAgent === 'string'
+      ? delivery.material.browser.userAgent
+      : null;
+    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgent: capturedUserAgent });
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
