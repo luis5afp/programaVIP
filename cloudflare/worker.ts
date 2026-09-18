@@ -5,6 +5,7 @@ import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './li
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
 import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION } from './lib/release-compat';
+import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
@@ -132,6 +133,16 @@ export default {
       }
       console.error('Unhandled userFLEX Worker error', error instanceof Error ? error.message : String(error));
       return json({ ok: false, error: 'Error interno del servidor.', code: 'INTERNAL_ERROR' }, 500);
+    }
+  },
+
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
+    try {
+      const result = await cleanupRuntimeState(env);
+      console.log('userFLEX runtime maintenance', JSON.stringify(result));
+    } catch (error) {
+      console.error('userFLEX runtime maintenance failed', error instanceof Error ? error.message : String(error));
+      throw error;
     }
   },
 };
