@@ -121,8 +121,11 @@ async function startCapture(rawUrl) {
   const credentials = bootstrap.credentials;
   const proxy = bootstrap.proxy || null;
 
-  if (!profile?.id || !profile?.url || !credentials?.username || !credentials?.password) {
+  if (!profile?.id || !profile?.url) {
     throw new Error('La configuración de captura está incompleta.');
+  }
+  if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
+    throw new Error('El perfil híbrido necesita credenciales para la captura.');
   }
 
   if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
