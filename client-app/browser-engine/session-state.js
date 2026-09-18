@@ -293,8 +293,9 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   try {
     const pages = await browser.pages();
     const page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
-    await page.evaluateOnNewDocument(({ allowedOrigin, username, password }) => {
-      if (location.origin !== allowedOrigin) return;
+    await page.evaluateOnNewDocument(({ allowedProtocol, allowedRootHost, username, password }) => {
+      const currentRootHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+      if (location.protocol !== allowedProtocol || currentRootHost !== allowedRootHost) return;
 
       const HELPER_ID = '__userflex-credential-helper';
       let dismissed = false;
@@ -514,7 +515,8 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       if (document.documentElement) start();
       else addEventListener('DOMContentLoaded', start, { once: true });
     }, {
-      allowedOrigin: target.origin,
+      allowedProtocol: target.protocol,
+      allowedRootHost: target.hostname.toLowerCase().replace(/^www\./, ''),
       username: String(credentials.username),
       password: String(credentials.password),
     });
