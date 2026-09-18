@@ -252,10 +252,15 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await killStrayProfileProcesses(userDataDir);
 
     let sessionMarker = managed ? await readSessionMarker(userDataDir) : null;
+    const netflixManaged = managed
+      && (target.hostname.toLowerCase() === 'netflix.com' || target.hostname.toLowerCase().endsWith('.netflix.com'));
+    const restorePolicyMatches = !netflixManaged
+      || sessionMarker?.restore?.storagePolicy === 'netflix-local-device';
     const sessionVersionMatches = managed
       && desiredSessionVersion > 0
       && Number(sessionMarker?.version || 0) === desiredSessionVersion
-      && sessionMarker?.profileId === profile.id;
+      && sessionMarker?.profileId === profile.id
+      && restorePolicyMatches;
 
     if (managed && !sessionVersionMatches) {
       // The server is authoritative. Remove stale Chromium state before applying
