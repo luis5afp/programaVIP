@@ -300,6 +300,12 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
     }
 
     const storage = await readWebStorageAndIndexedDb(page);
+    const browserIdentity = {
+      product: await browser.version().catch(() => null),
+      userAgent: await browser.userAgent().catch(() => null),
+      platform: await page.evaluate(() => navigator.platform || '').catch(() => ''),
+      language: await page.evaluate(() => navigator.language || '').catch(() => ''),
+    };
     const rawIndexedDb = JSON.stringify(storage.indexedDB || []);
     const packedIndexedDb = gzipSync(Buffer.from(rawIndexedDb, 'utf8'), { level: 9 }).toString('base64');
 
@@ -311,6 +317,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
         capturedUrl: pageState.href,
         capturedAt: new Date().toISOString(),
         network: { mode: networkMode },
+        browser: browserIdentity,
         cookies,
         storage: {
           origin: storage.origin,
