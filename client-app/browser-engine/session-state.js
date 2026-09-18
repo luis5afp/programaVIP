@@ -108,6 +108,20 @@ function installStorageScript(page, targetOrigin, state) {
           const ctor = globalThis[node.name] || Uint8Array;
           try { return new ctor(bytes.buffer); } catch { return bytes; }
         }
+        case 'blob':
+        case 'file': {
+          const binary = atob(node.value || '');
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+          if (node.__ufType === 'file' && typeof File !== 'undefined') {
+            try { return new File([bytes], node.name || 'file', { type: node.type || '', lastModified: Number(node.lastModified || Date.now()) }); } catch {}
+          }
+          try { return new Blob([bytes], { type: node.type || '' }); } catch { return bytes; }
+        }
+        case 'map':
+          return new Map((node.value || []).map(([key, value]) => [decode(key), decode(value)]));
+        case 'set':
+          return new Set((node.value || []).map(decode));
         default: return node.value;
       }
     };
