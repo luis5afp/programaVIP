@@ -442,6 +442,52 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return { removed };
   }
 
+  async function reconcileCatalogProfiles(clientId, profiles = []) {
+    const catalogProfiles = Array.isArray(profiles) ? profiles.filter((profile) => profile?.id) : [];
+    const catalogById = new Map(catalogProfiles.map((profile) => [String(profile.id), profile]));
+    const authorizedProfileIds = catalogProfiles.map((profile) => String(profile.id));
+    const authorization = await reconcileAuthorizedProfiles(clientId, authorizedProfileIds);
+
+    const invalidated = [];
+    for (const profile of catalogProfiles) {
+      if (profile.sessionMode !== 'managed-first-party') continue;
+      const desiredVersion = Number(profile.sessionVersion || 0);
+      if (desiredVersion <= 0) continue;
+
+      const key = profileKey(clientId, profile.id);
+      const runningEntry = processes.get(key);
+      if (runningEntry && Number(runningEntry.sessionVersion || 0) !== desiredVersion) {
+        await close(clientId, profile.id, 'session_version_changed').catch(() => null);
+        await killStrayProfileProcesses(runningEntry.userDataDir);
+        await fsp.rm(runningEntry.userDataDir, { recursive: true, force: true });
+        invalidated.push({ profileId: profile.id, from: Number(runningEntry.sessionVersion || 0), to: desiredVersion, running: true });
+        continue;
+      }
+
+      if (runningEntry) continue;
+      const dir = profileDir(clientId, profile.id);
+      const marker = await readSessionMarker(dir);
+      if (!marker) continue;
+      const markerVersion = Number(marker.version || 0);
+      if (markerVersion === desiredVersion) continue;
+      await killStrayProfileProcesses(dir);
+      await fsp.rm(dir, { recursive: true, force: true });
+      invalidated.push({ profileId: profile.id, from: markerVersion, to: desiredVersion, running: false });
+    }
+
+    // A profile can disappear from the catalog while a browser process is still
+    // alive. The directory reconciliation above normally catches UUID-backed
+    // profiles, but close any remaining live entry explicitly as a fail-closed
+    // defense.
+    for (const entry of Array.from(processes.values())) {
+      if (safeSegment(entry.clientId, 'client') !== safeSegment(clientId, 'client')) continue;
+      if (catalogById.has(String(entry.profile.id))) continue;
+      await close(clientId, entry.profile.id, 'profile_revoked').catch(() => null);
+    }
+
+    return { removed: authorization.removed || [], invalidated };
+  }
+
   async function clearClientProfiles(clientId, reason = 'client_logout') {
     const keyPrefix = `${safeSegment(clientId, 'client')}:`;
     const live = Array.from(processes.entries())
@@ -472,6 +518,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       browser: entry.browserKind,
       startedAt: entry.startedAt,
       network: entry.connection?.mode || 'direct',
+      sessionVersion: Number(entry.sessionVersion || 0),
     }));
   }
 
@@ -482,6 +529,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     running,
     profileDir,
     reconcileAuthorizedProfiles,
+    reconcileCatalogProfiles,
     clearClientProfiles,
   };
 }
