@@ -88,21 +88,23 @@ function credentialAuthentication(runtime) {
   return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
 }
 
-function runtimeKey(runtime, profile = null) {
-  const extensionKey = Array.isArray(profile?.extensions)
-    ? profile.extensions
-        .map((item) => `${String(item?.id || '')}:${String(item?.sha256 || '')}`)
-        .sort()
-        .join(',')
-    : '';
+function runtimeKey(runtime) {
   return [
     runtime.browserEngine,
     runtime.authStrategy,
     runtime.storageStrategy,
     runtime.networkStrategy,
     runtime.extensionStrategy,
-    `extensions:${extensionKey}`,
   ].join('|');
+}
+
+function managedExtensionKey(profile) {
+  return Array.isArray(profile?.extensions)
+    ? profile.extensions
+        .map((item) => `${String(item?.id || '')}:${String(item?.sha256 || '')}`)
+        .sort()
+        .join(',')
+    : '';
 }
 
 function effectiveStoragePolicy(target, requested) {
@@ -328,13 +330,15 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const credentialHelperEnabled = Boolean(credentials?.username && credentials?.password);
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
-    const desiredRuntimeKey = runtimeKey(runtime, profile);
+    const desiredRuntimeKey = runtimeKey(runtime);
+    const desiredExtensionKey = managedExtensionKey(profile);
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
       const generationMatches = (!snapshotManaged || Number(existing.sessionVersion || 0) === desiredSessionVersion)
         && String(existing.credentialRevision || '') === desiredCredentialRevision
-        && String(existing.runtimeKey || '') === desiredRuntimeKey;
+        && String(existing.runtimeKey || '') === desiredRuntimeKey
+        && String(existing.extensionKey || '') === desiredExtensionKey;
       if (generationMatches) {
         await navigateBrowserHome(existing.debugPort, profile.url, { closeExtraPages: true }).catch(() => null);
         return {
@@ -455,6 +459,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       profile,
       runtime,
       runtimeKey: desiredRuntimeKey,
+      extensionKey: desiredExtensionKey,
       credentialRevision: desiredCredentialRevision,
       connection,
       delivery,
@@ -703,27 +708,30 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
       const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
       const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
-      const desiredRuntimeKey = runtimeKey(runtime, profile);
+      const desiredRuntimeKey = runtimeKey(runtime);
+      const desiredExtensionKey = managedExtensionKey(profile);
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
+      const extensionsChanged = runningEntry && String(runningEntry.extensionKey || '') !== desiredExtensionKey;
       const snapshotChanged = runningEntry && wantsSnapshot && (
         !snapshotReady || Number(runningEntry.sessionVersion || 0) !== desiredVersion
       );
       const credentialsChanged = runningEntry
         && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
 
-      if (runningEntry && (runtimeChanged || snapshotChanged || credentialsChanged)) {
+      if (runningEntry && (runtimeChanged || extensionsChanged || snapshotChanged || credentialsChanged)) {
         const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
         const reason = runtimeChanged
           ? 'profile_runtime_changed'
-          : snapshotChanged
-            ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
-            : 'credentials_changed';
+          : extensionsChanged
+            ? 'profile_extensions_changed'
+            : snapshotChanged
+              ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
+              : 'credentials_changed';
         await close(clientId, profile.id, reason).catch(() => null);
 
-        // Runtime/auth/storage changes and snapshot generation changes invalidate
-        // browser-owned authenticated state. A credentials-only refresh just
-        // restarts the process so the persistent local profile remains intact.
+        // Extension-only changes restart Chrome so the new list is loaded, but
+        // must not erase cookies, local storage, or the persistent profile.
         if (runtimeChanged || snapshotChanged) {
           await killStrayProfileProcesses(dir);
           await fsp.rm(dir, { recursive: true, force: true });
