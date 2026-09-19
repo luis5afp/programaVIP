@@ -1,5 +1,5 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
@@ -145,6 +145,8 @@ export function ProfilesView() {
   const [sessionAction, setSessionAction] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
+  const [showLoginUsername, setShowLoginUsername] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   async function load() {
     try {
@@ -223,6 +225,8 @@ export function ProfilesView() {
     setNetworkStrategy(current?.network_strategy || 'auto');
     setExtensionStrategy(current?.extension_strategy || (initialAuth === 'manual' ? 'guard-only' : 'custom'));
     setSelectedPlanIds(current ? planIdsFor(current.id) : []);
+    setShowLoginUsername(false);
+    setShowLoginPassword(false);
     setEditor(value);
     setError(null);
   }
@@ -237,6 +241,8 @@ export function ProfilesView() {
     setNetworkStrategy('client-direct');
     setExtensionStrategy('guard-only');
     setSelectedPlanIds([]);
+    setShowLoginUsername(false);
+    setShowLoginPassword(false);
     setEditor(null);
   }
 
@@ -1234,14 +1240,26 @@ export function ProfilesView() {
                   </div>
                 </div>
                 <Field label={authStrategy === 'cookie-snapshot' ? 'Correo / usuario para autofill (opcional)' : 'Correo / usuario'} className="span-2">
-                  <input
-                    className="input"
-                    name="loginUsername"
-                    autoComplete="off"
-                    defaultValue={currentState?.login_username || ''}
-                    required={authStrategy === 'credential-autofill' || authStrategy === 'hybrid'}
-                    placeholder="correo@dominio.com"
-                  />
+                  <div className="credential-input-wrap">
+                    <input
+                      className="input credential-input"
+                      name="loginUsername"
+                      type={showLoginUsername ? 'text' : 'password'}
+                      autoComplete="off"
+                      defaultValue={currentState?.login_username || ''}
+                      required={authStrategy === 'credential-autofill' || authStrategy === 'hybrid'}
+                      placeholder="correo@dominio.com"
+                    />
+                    <button
+                      type="button"
+                      className="credential-visibility-toggle"
+                      onClick={() => setShowLoginUsername((value) => !value)}
+                      aria-label={showLoginUsername ? 'Ocultar correo o usuario' : 'Ver correo o usuario'}
+                      title={showLoginUsername ? 'Ocultar' : 'Ver'}
+                    >
+                      {showLoginUsername ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </Field>
                 <Field
                   label={authStrategy === 'cookie-snapshot' ? 'Contraseña para autofill (opcional)' : 'Contraseña'}
@@ -1250,14 +1268,25 @@ export function ProfilesView() {
                     ? 'Autofill ya está configurado. Déjala vacía para conservar la contraseña cifrada actual.'
                     : 'Se guarda cifrada en el backend y solo se entrega temporalmente al motor autorizado.'}
                 >
-                  <input
-                    className="input"
-                    name="loginPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    required={(authStrategy === 'credential-autofill' || authStrategy === 'hybrid') && !currentState?.has_credentials}
-                    placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'}
-                  />
+                  <div className="credential-input-wrap">
+                    <input
+                      className="input credential-input"
+                      name="loginPassword"
+                      type={showLoginPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      required={(authStrategy === 'credential-autofill' || authStrategy === 'hybrid') && !currentState?.has_credentials}
+                      placeholder={currentState?.has_credentials ? '•••••••• (sin cambios)' : 'Contraseña de la cuenta'}
+                    />
+                    <button
+                      type="button"
+                      className="credential-visibility-toggle"
+                      onClick={() => setShowLoginPassword((value) => !value)}
+                      aria-label={showLoginPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      title={showLoginPassword ? 'Ocultar' : 'Ver'}
+                    >
+                      {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </Field>
                 {current && currentState?.has_credentials && authStrategy === 'cookie-snapshot' && (
                   <div className="span-2">
