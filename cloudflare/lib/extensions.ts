@@ -112,25 +112,39 @@ function inspectExtensionZip(bytes: Uint8Array) {
   }
 
   let archive: Record<string, Uint8Array>;
+  let declaredUnpacked = 0;
   try {
-    archive = unzipSync(bytes);
-  } catch {
+    archive = unzipSync(bytes, {
+      filter(file: any) {
+        declaredUnpacked += Number(file?.originalSize || 0);
+        if (declaredUnpacked > MAX_UNPACKED_BYTES) {
+          throw new HttpError(413, 'EXTENSION_UNPACKED_SIZE', 'La extensión descomprimida supera el límite permitido.');
+        }
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
     throw new HttpError(400, 'EXTENSION_ZIP_INVALID', 'El archivo no es un ZIP válido.');
   }
 
-  const names = Object.keys(archive).map(cleanZipName);
+  const normalizedArchive: Record<string, Uint8Array> = {};
+  for (const [rawName, value] of Object.entries(archive)) {
+    normalizedArchive[cleanZipName(rawName)] = value;
+  }
+  const names = Object.keys(normalizedArchive);
   if (names.length < 1 || names.length > MAX_FILES) {
     throw new HttpError(400, 'EXTENSION_FILE_COUNT', 'El paquete contiene demasiados archivos.');
   }
   let unpacked = 0;
-  for (const name of names) {
-    unpacked += archive[name]?.byteLength || 0;
+  for (const value of Object.values(normalizedArchive)) {
+    unpacked += value.byteLength || 0;
     if (unpacked > MAX_UNPACKED_BYTES) {
       throw new HttpError(413, 'EXTENSION_UNPACKED_SIZE', 'La extensión descomprimida supera el límite permitido.');
     }
   }
 
-  const manifestBytes = archive['manifest.json'];
+  const manifestBytes = normalizedArchive['manifest.json'];
   if (!manifestBytes) {
     const nestedManifest = names.find((name) => /\/manifest\.json$/i.test(name));
     if (nestedManifest) {
@@ -158,7 +172,7 @@ function inspectExtensionZip(bytes: Uint8Array) {
   }
 
   for (const file of referencedFiles(manifest)) {
-    if (!archive[file]) {
+    if (!normalizedArchive[file]) {
       throw new HttpError(400, 'EXTENSION_FILE_MISSING', `El manifest hace referencia a un archivo que no existe: ${file}`);
     }
   }
