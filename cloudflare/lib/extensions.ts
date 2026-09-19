@@ -237,6 +237,11 @@ async function touchExtensionProfiles(env: Env, extensionId: string) {
   }
 }
 
+async function touchAllProfiles(env: Env) {
+  const profiles = await sb(env, 'userflex_profiles?select=id');
+  await Promise.all((profiles || []).map((row: any) => touchProfileClients(env, row.id).catch(() => null)));
+}
+
 async function parseUpload(request: Request) {
   const length = Number(request.headers.get('content-length') || 0);
   if (length > MAX_PACKAGE_BYTES + 1024 * 1024) throw new HttpError(413, 'EXTENSION_PACKAGE_SIZE');
@@ -353,6 +358,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const body = await bodyJson(request, 64 * 1024);
     const values = Array.isArray(body.profileIds) ? body.profileIds : [];
     const profileIds = [...new Set(values.map((value: unknown) => uuid(value, 'profileId')))].slice(0, 500);
+    const previousMemberships = await sb(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
+    const previousProfileIds = (previousMemberships || []).map((row: any) => row.profile_id);
     await sb(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
@@ -364,7 +371,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
         body: JSON.stringify(profileIds.map((profileId) => ({ profile_id: profileId, extension_id: extensionId }))),
       });
     }
-    await Promise.all(profileIds.map((profileId) => touchProfileClients(env, profileId).catch(() => null)));
+    const affected = [...new Set([...previousProfileIds, ...profileIds])];
+    await Promise.all(affected.map((profileId) => touchProfileClients(env, profileId).catch(() => null)));
     await audit(env, request, 'admin', admin.userId, 'extension.profiles.set', 'extension', extensionId, {
       profileCount: extension.scope === 'global' ? 'all' : profileIds.length,
     });
@@ -467,7 +475,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
         headers: { Prefer: 'return=minimal' },
       });
     }
-    await touchExtensionProfiles(env, extensionId);
+    if (current.scope === 'global' || rows[0].scope === 'global') await touchAllProfiles(env);
+    else await touchExtensionProfiles(env, extensionId);
     await audit(env, request, 'admin', admin.userId, 'extension.update', 'extension', extensionId, {
       scope: rows[0].scope,
       enabled: rows[0].enabled,
