@@ -314,6 +314,15 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   try {
     const bootstrap = ({ allowedOrigins, username, password }) => {
       const currentHost = String(location.hostname || '').toLowerCase();
+      if (location.protocol === 'https:'
+        && currentHost !== 'accounts.google.com'
+        && /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost)
+        && /^\/accounts\/SetSID(?:\/|$)/i.test(location.pathname)) {
+        const canonical = new URL(location.href);
+        canonical.hostname = 'accounts.google.com';
+        location.replace(canonical.toString());
+        return;
+      }
       const googleAuthAllowed = Array.isArray(allowedOrigins)
         && allowedOrigins.includes('https://accounts.google.com')
         && location.protocol === 'https:'
