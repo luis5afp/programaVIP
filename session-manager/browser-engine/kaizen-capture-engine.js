@@ -5,10 +5,9 @@ import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { probeKaizenProxyDestination, startKaizenProxyRelay } from './proxy-relay.js';
+import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import { credentialAutofillOrigins } from './credential-policy.js';
 import {
-  browserPublicIp,
   capturePortableSession,
   closeDevtoolsTargets,
   connectCaptureBrowser,
@@ -313,7 +312,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
     `--disable-extensions-except=${extensionDir}`,
     `--load-extension=${extensionDir}`,
   ];
-  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>');
+  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>', '--disable-quic');
   args.push('about:blank');
   return args;
 }
@@ -361,22 +360,43 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
     let relay = null;
     let proxyRules = null;
+    let verifiedPublicIp = null;
     if (proxy?.host && proxy?.port) {
       if (String(proxy.type || '').toLowerCase() === 'ssh') throw new Error('El proxy SSH todavía no está soportado por el motor KAIZEN.');
       const target = new URL(profile.url);
       const destinationPort = target.protocol === 'http:' ? 80 : 443;
       await probeKaizenProxyDestination(proxy, { host: target.hostname, port: destinationPort });
+
+      if (target.protocol === 'https:') {
+        await probeKaizenProxyHttps(proxy, {
+          host: target.hostname,
+          port: 443,
+          path: target.pathname || '/',
+        });
+      }
+
       const googleProfile = String(profile.extensionStrategy || '').toLowerCase() === 'google'
         || target.hostname === 'google.com'
         || target.hostname.endsWith('.google.com');
-      if (googleProfile && target.hostname !== 'accounts.google.com') {
+      if (googleProfile) {
         try {
-          await probeKaizenProxyDestination(proxy, { host: 'accounts.google.com', port: 443 });
+          await probeKaizenProxyHttps(proxy, {
+            host: 'accounts.google.com',
+            port: 443,
+            path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F',
+          });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
-          throw new Error(`El proxy del perfil puede abrir ${target.hostname}, pero no permite el inicio de sesión de Google en accounts.google.com. ${detail}`);
+          throw new Error(`El proxy del perfil permite la salida general, pero no puede completar HTTPS con accounts.google.com. ${detail}`);
         }
       }
+
+      verifiedPublicIp = await kaizenProxyPublicIp(proxy);
+      if (!verifiedPublicIp) throw new Error('El proxy respondió, pero no se pudo verificar su IP pública.');
+      if (proxy.publicIp && verifiedPublicIp !== proxy.publicIp) {
+        throw new Error(`La IP real del proxy cambió. Esperada: ${proxy.publicIp}. Detectada: ${verifiedPublicIp}.`);
+      }
+
       relay = await startKaizenProxyRelay(proxy);
       proxyRules = relay.proxyRules;
     }
@@ -395,11 +415,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
-        const publicIp = await browserPublicIp(debugPort);
-        if (proxy && !publicIp) throw new Error('No se pudo validar la IP de salida mediante el proxy.');
-        if (proxy?.publicIp && publicIp !== proxy.publicIp) {
-          throw new Error(`La IP de captura no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp || 'sin IP'}.`);
-        }
+        const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
         const completed = await onComplete({
           material: captured.material,
           publicIp,
@@ -474,12 +490,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       await browser.disconnect().catch(() => null);
 
       if (proxy) {
-        const publicIp = await browserPublicIp(debugPort);
-        if (!publicIp) throw new Error('El navegador no pudo salir a Internet mediante el proxy asignado.');
-        if (proxy.publicIp && publicIp !== proxy.publicIp) {
-          throw new Error(`La IP del navegador no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp}.`);
-        }
-        entry.publicIp = publicIp;
+        entry.publicIp = verifiedPublicIp || proxy.publicIp || null;
       }
 
       await navigateCaptureHome(debugPort, profile.url);
