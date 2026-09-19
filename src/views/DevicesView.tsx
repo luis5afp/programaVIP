@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Laptop, RotateCcw, Search, ShieldX } from 'lucide-react';
 import { api } from '../api';
 import type { Device } from '../types';
-import { Badge, Card, Empty, ErrorBanner, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, PageHead, SuccessBanner } from '../components/ui';
 
 function normalizeSearchValue(value: string) {
   return value
@@ -14,6 +14,7 @@ function normalizeSearchValue(value: string) {
 export function DevicesView() {
   const [items, setItems] = useState<Device[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   async function load() {
@@ -32,7 +33,10 @@ export function DevicesView() {
   async function revoke(item: Device) {
     if (!confirm(`¿Revocar ${item.name}? Se invalidarán sus sesiones activas.`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.devices.revoke(item.id);
+      setSuccess(`Dispositivo ${item.name} revocado correctamente.`);
       await load();
     } catch (revokeError: any) {
       setError(revokeError.message);
@@ -42,7 +46,10 @@ export function DevicesView() {
   async function reactivate(item: Device) {
     if (!confirm(`¿Reactivar ${item.name}? El límite del plan se validará antes de autorizarlo.`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.devices.reactivate(item.id);
+      setSuccess(`Dispositivo ${item.name} reactivado correctamente.`);
       await load();
     } catch (reactivateError: any) {
       setError(reactivateError.message);
@@ -88,6 +95,7 @@ export function DevicesView() {
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
       <Card>
         {items.length === 0 ? (
           <Empty title="Sin dispositivos" description="Aparecerán cuando un Client se autentique desde Windows." />
