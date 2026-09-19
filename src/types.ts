@@ -142,6 +142,23 @@ export interface ProfileProxyDefault {
   updated_at: string;
 }
 
+export interface CookieImportInspection {
+  format: string;
+  target_host: string;
+  target_origin: string;
+  total_cookies: number;
+  valid_cookies: number;
+  matching_cookies: number;
+  expired_cookies: number;
+  invalid_cookies: number;
+  ignored_cookies: number;
+  domains: Array<{
+    domain: string;
+    count: number;
+    matchesProfile: boolean;
+  }>;
+}
+
 export interface ProfileSessionState {
   profile_id: string;
   has_credentials: boolean;
