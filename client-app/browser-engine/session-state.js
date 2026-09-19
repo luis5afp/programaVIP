@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { gunzipSync } from 'node:zlib';
 import puppeteer from 'puppeteer-core';
+import { credentialAutofillAllowsUrl, credentialAutofillOrigins } from './credential-policy.js';
 
 function normalizeSameSite(value) {
   switch (String(value || '').toLowerCase()) {
@@ -305,14 +306,14 @@ export async function connectKaizenBrowser(debugPort) {
   });
 }
 
-export async function installCredentialAutofill({ debugPort, profileUrl, credentials }) {
+export async function installCredentialAutofill({ debugPort, profileUrl, credentials, extensionStrategy = 'custom' }) {
   if (!credentials?.username || !credentials?.password) return { installed: false };
   const target = new URL(profileUrl);
+  const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
   const browser = await connectKaizenBrowser(debugPort);
   try {
-    const bootstrap = ({ allowedProtocol, allowedRootHost, username, password }) => {
-      const currentRootHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
-      if (location.protocol !== allowedProtocol || currentRootHost !== allowedRootHost) return;
+    const bootstrap = ({ allowedOrigins, username, password }) => {
+      if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(location.origin)) return;
 
       const HELPER_ID = '__userflex-credential-helper';
       let dismissed = false;
@@ -541,8 +542,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       else addEventListener('DOMContentLoaded', start, { once: true });
     };
     const payload = {
-      allowedProtocol: target.protocol,
-      allowedRootHost: target.hostname.toLowerCase().replace(/^www\./, ''),
+      allowedOrigins,
       username: String(credentials.username),
       password: String(credentials.password),
     };
@@ -553,9 +553,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
     for (const page of pages) {
       await page.evaluateOnNewDocument(bootstrap, payload);
       try {
-        const current = new URL(page.url());
-        const currentRootHost = current.hostname.toLowerCase().replace(/^www\./, '');
-        if (current.protocol === payload.allowedProtocol && currentRootHost === payload.allowedRootHost) {
+        if (credentialAutofillAllowsUrl(page.url(), payload.allowedOrigins)) {
           await page.evaluate(bootstrap, payload);
           immediatePages += 1;
         }
@@ -565,6 +563,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
     return {
       installed: true,
       origin: target.origin,
+      allowedOrigins,
       visibleHelper: true,
       pagesPrepared: pages.length,
       immediatePages,
@@ -574,15 +573,15 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   }
 }
 
-export async function inspectRuntimeProfile({ debugPort, profileUrl }) {
-  const target = new URL(profileUrl);
+export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionStrategy = 'custom' }) {
+  const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
   const browser = await connectKaizenBrowser(debugPort);
   try {
     await new Promise((resolve) => setTimeout(resolve, 1200));
     const pages = await browser.pages();
-    const page = pages.find((item) => {
-      try { return new URL(item.url()).hostname.endsWith(target.hostname.replace(/^www\./, '')); } catch { return false; }
-    }) || pages.find((item) => /^https?:/i.test(item.url())) || pages[0];
+    const page = pages.find((item) => credentialAutofillAllowsUrl(item.url(), allowedOrigins))
+      || pages.find((item) => /^https?:/i.test(item.url()))
+      || pages[0];
     if (!page) {
       return {
         currentUrl: null,
