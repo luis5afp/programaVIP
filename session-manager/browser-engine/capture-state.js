@@ -1,7 +1,7 @@
 import { gzipSync } from 'node:zlib';
 import { setTimeout as delay } from 'node:timers/promises';
 import puppeteer from 'puppeteer-core';
-import { credentialAutofillAllowsUrl, credentialAutofillOrigins } from './credential-policy.js';
+import { canonicalGoogleAccountsUrl, credentialAutofillAllowsUrl, credentialAutofillOrigins } from './credential-policy.js';
 
 export async function waitForDevtools(debugPort, timeoutMs = 25_000) {
   const started = Date.now();
@@ -534,6 +534,10 @@ export async function installCaptureAutomation({
   const instrument = async (page) => {
     if (!page) return;
     try {
+      const canonicalUrl = canonicalGoogleAccountsUrl(page.url());
+      if (canonicalUrl) {
+        await page.goto(canonicalUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => null);
+      }
       if (!prepared.has(page)) {
         prepared.add(page);
         if (typeof onSave === 'function' && payload.saveBinding) {
