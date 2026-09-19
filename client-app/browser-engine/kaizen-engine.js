@@ -88,13 +88,20 @@ function credentialAuthentication(runtime) {
   return runtime.authStrategy === 'credential-autofill' || runtime.authStrategy === 'hybrid';
 }
 
-function runtimeKey(runtime) {
+function runtimeKey(runtime, profile = null) {
+  const extensionKey = Array.isArray(profile?.extensions)
+    ? profile.extensions
+        .map((item) => `${String(item?.id || '')}:${String(item?.sha256 || '')}`)
+        .sort()
+        .join(',')
+    : '';
   return [
     runtime.browserEngine,
     runtime.authStrategy,
     runtime.storageStrategy,
     runtime.networkStrategy,
     runtime.extensionStrategy,
+    `extensions:${extensionKey}`,
   ].join('|');
 }
 
@@ -136,7 +143,7 @@ async function resetProfileDirectory(userDataDir) {
   await fsp.mkdir(userDataDir, { recursive: true });
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgent = null }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], userAgent = null }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -164,8 +171,11 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgen
     args.push(`--user-agent=${userAgent}`);
   }
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
-  if (extensionDir && fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
-    args.push(`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`);
+  const validExtensionDirs = extensionDirs
+    .filter((dir) => typeof dir === 'string' && fs.existsSync(path.join(dir, 'manifest.json')));
+  if (validExtensionDirs.length) {
+    const extensionList = validExtensionDirs.join(',');
+    args.push(`--disable-extensions-except=${extensionList}`, `--load-extension=${extensionList}`);
   }
   args.push('about:blank');
   return args;
@@ -304,6 +314,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     connection = { mode: 'direct', locked: false },
     delivery = null,
     credentials = null,
+    managedExtensions = [],
     usageId = null,
     ephemeral = false,
   }) {
@@ -317,7 +328,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const credentialHelperEnabled = Boolean(credentials?.username && credentials?.password);
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
-    const desiredRuntimeKey = runtimeKey(runtime);
+    const desiredRuntimeKey = runtimeKey(runtime, profile);
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
@@ -423,10 +434,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     const debugPort = await freePort();
     const extensionDir = await prepareProfileExtension(clientId, profile.id, runtime.extensionStrategy);
+    const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
+      .map((item) => item?.dir)
+      .filter((dir) => typeof dir === 'string');
+    const extensionDirs = [extensionDir, ...managedExtensionDirs].filter(Boolean);
     const capturedUserAgent = snapshotManaged && typeof delivery?.material?.browser?.userAgent === 'string'
       ? delivery.material.browser.userAgent
       : null;
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgent: capturedUserAgent });
+    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, userAgent: capturedUserAgent });
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
@@ -457,6 +472,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       devtoolsTimer: null,
       sessionVersion: desiredSessionVersion,
       sessionMarker,
+      managedExtensions: Array.isArray(managedExtensions) ? managedExtensions : [],
     };
     processes.set(key, entry);
 
@@ -582,6 +598,50 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     });
   }
 
+  async function inspectExtensions(clientId, profileId) {
+    const entry = processes.get(profileKey(clientId, profileId));
+    if (!entry || entry.process?.exitCode !== null) {
+      throw new Error('El navegador de prueba ya no está activo.');
+    }
+    const browser = await connectKaizenBrowser(entry.debugPort);
+    let page = null;
+    try {
+      page = await browser.newPage();
+      await page.goto('chrome://extensions/', { waitUntil: 'domcontentloaded', timeout: 12_000 });
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      const items = await page.evaluate(() => {
+        const found = [];
+        const visit = (root) => {
+          if (!root || !root.querySelectorAll) return;
+          for (const node of root.querySelectorAll('*')) {
+            if (String(node.tagName || '').toLowerCase() === 'extensions-item') {
+              const data = node.data || node.extension || null;
+              found.push({
+                id: String(data?.id || node.id || ''),
+                name: String(data?.name || ''),
+                state: String(data?.state || ''),
+                enabled: data?.state === 'ENABLED' || data?.enabled === true,
+                text: String(node.shadowRoot?.textContent || node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 800),
+              });
+            }
+            if (node.shadowRoot) visit(node.shadowRoot);
+          }
+        };
+        visit(document);
+        return found;
+      });
+      return {
+        ok: true,
+        count: Array.isArray(items) ? items.length : 0,
+        items: Array.isArray(items) ? items : [],
+        stderr: entry.stderr.slice(-8),
+      };
+    } finally {
+      if (page) await page.close().catch(() => null);
+      await browser.disconnect().catch(() => null);
+    }
+  }
+
   async function closeAll(reason = 'app_closed') {
     const entries = Array.from(processes.values());
     await Promise.all(entries.map(async (entry) => {
@@ -643,7 +703,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
       const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
       const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
-      const desiredRuntimeKey = runtimeKey(runtime);
+      const desiredRuntimeKey = runtimeKey(runtime, profile);
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
       const snapshotChanged = runningEntry && wantsSnapshot && (
@@ -747,6 +807,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
   return {
     launch,
     inspect,
+    inspectExtensions,
     close,
     closeAll,
     running,
