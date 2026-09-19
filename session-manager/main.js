@@ -8,6 +8,7 @@ let readyWindow = null;
 let pendingProtocolUrl = null;
 let protocolRegistered = false;
 let captureEngine = null;
+let activeCaptureToken = null;
 let quitAfterCleanup = false;
 
 function engine() {
@@ -108,21 +109,32 @@ async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
   return payload;
 }
 
-function assertCaptureUrl(rawUrl) {
+function assertSessionProtocolUrl(rawUrl, action) {
   const url = new URL(rawUrl);
-  if (url.protocol !== 'userflex-session:' || url.hostname !== 'capture') throw new Error('Enlace de captura inválido.');
+  if (url.protocol !== 'userflex-session:' || url.hostname !== action) {
+    throw new Error(action === 'save' ? 'Enlace de guardado inválido.' : 'Enlace de captura inválido.');
+  }
   const endpoint = url.searchParams.get('endpoint') || '';
   const token = url.searchParams.get('token') || '';
   const endpointUrl = new URL(endpoint);
   if (endpointUrl.origin !== API_ORIGIN) {
-    throw new Error('El enlace de captura no pertenece al servidor oficial de userFLEX.');
+    throw new Error('El enlace no pertenece al servidor oficial de userFLEX.');
   }
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new Error('Token de captura inválido.');
   return { endpoint: API_ORIGIN, token };
 }
 
+function sameCaptureToken(left, right) {
+  if (!left || !right || left.length !== right.length) return false;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
 async function startCapture(rawUrl) {
-  const { endpoint, token } = assertCaptureUrl(rawUrl);
+  const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'capture');
   const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
   const profile = bootstrap.profile;
   const credentials = bootstrap.credentials;
@@ -147,6 +159,7 @@ async function startCapture(rawUrl) {
         publicIp,
         material,
       }, 90_000);
+      if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
       console.log(
         `Session Manager KAIZEN saved profile ${profile.id} v${completed.version}: `
         + `${diagnostics.cookieCount} cookies, ${diagnostics.indexedDbCount} IndexedDB databases.`,
@@ -158,12 +171,35 @@ async function startCapture(rawUrl) {
     },
   });
 
+  activeCaptureToken = token;
   console.log(
     `Session Manager KAIZEN launched ${profile.name || profile.id} `
     + `pid=${result.pid} debugPort=${result.debugPort} `
     + `network=${proxy ? 'proxy' : 'direct'}.`,
   );
   return result;
+}
+
+async function saveActiveCapture(rawUrl) {
+  const { token } = assertSessionProtocolUrl(rawUrl, 'save');
+  if (!sameCaptureToken(activeCaptureToken, token)) {
+    throw new Error('Este botón Guardar sesión ya no corresponde a la captura activa. Genera una captura nueva desde el Administrador.');
+  }
+  const result = await engine().saveActive();
+  activeCaptureToken = null;
+  console.log(
+    `Session Manager KAIZEN saved active capture v${result.version || '?'}: `
+    + `${result.cookieCount || 0} cookies, ${result.indexedDbCount || 0} IndexedDB databases.`,
+  );
+  return result;
+}
+
+async function handleProtocolUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'userflex-session:') throw new Error('Enlace de Session Manager inválido.');
+  if (url.hostname === 'capture') return startCapture(rawUrl);
+  if (url.hostname === 'save') return saveActiveCapture(rawUrl);
+  throw new Error('Acción de Session Manager no compatible.');
 }
 
 function showFatalError(error) {
@@ -189,7 +225,7 @@ if (!gotLock) {
   app.on('second-instance', (_event, argv) => {
     const protocolUrl = protocolUrlFromArgs(argv);
     if (protocolUrl) {
-      void startCapture(protocolUrl).catch(showFatalError);
+      void handleProtocolUrl(protocolUrl).catch(showFatalError);
       return;
     }
     showReadyWindow();
@@ -198,14 +234,14 @@ if (!gotLock) {
   app.on('open-url', (event, url) => {
     event.preventDefault();
     if (!app.isReady()) pendingProtocolUrl = url;
-    else void startCapture(url).catch(showFatalError);
+    else void handleProtocolUrl(url).catch(showFatalError);
   });
 
   app.whenReady().then(async () => {
     protocolRegistered = registerProtocol();
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
     pendingProtocolUrl = null;
-    if (protocolUrl) await startCapture(protocolUrl).catch(showFatalError);
+    if (protocolUrl) await handleProtocolUrl(protocolUrl).catch(showFatalError);
     else showReadyWindow();
   });
 
