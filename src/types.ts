@@ -11,6 +11,8 @@ export type ManagedSessionStatus = 'empty' | 'active' | 'needs_auth' | 'expired'
 export type AdminRole = 'owner' | 'admin';
 export type ProxyProtocol = 'unknown' | 'http' | 'https' | 'socks4' | 'socks5' | 'ssh';
 export type ProxyValidationStatus = 'pending' | 'valid' | 'reachable' | 'invalid' | 'unverifiable';
+export type ManagedExtensionScope = 'global' | 'selective';
+export type ManagedExtensionValidationStatus = 'package_valid' | 'runtime_valid' | 'error' | 'incompatible';
 
 export interface AdminSession {
   id: string;
@@ -88,6 +90,48 @@ export interface Profile {
   storage_strategy: StorageStrategy;
   network_strategy: NetworkStrategy;
   extension_strategy: ExtensionStrategy;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagedExtension {
+  id: string;
+  name: string;
+  description: string | null;
+  version: string;
+  manifest: Record<string, unknown>;
+  permissions: string[];
+  package_sha256: string;
+  package_size: number;
+  scope: ManagedExtensionScope;
+  enabled: boolean;
+  validation_status: ManagedExtensionValidationStatus;
+  validation_message: string | null;
+  runtime_validated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileExtensionMembership {
+  profile_id: string;
+  extension_id: string;
+  created_at: string;
+}
+
+export interface ExtensionValidationJob {
+  id: string;
+  extension_id: string;
+  status: 'pending' | 'running' | 'pass' | 'fail' | 'expired';
+  result: {
+    ok?: boolean;
+    loaded?: boolean;
+    browser?: string | null;
+    extensionCount?: number;
+    extensions?: Array<Record<string, unknown>>;
+    stderr?: string[];
+  } | null;
+  error: string | null;
+  expires_at: string;
   created_at: string;
   updated_at: string;
 }
@@ -292,6 +336,7 @@ export type ViewKey =
   | 'clients'
   | 'plans'
   | 'profiles'
+  | 'extensions'
   | 'proxies'
   | 'assignments'
   | 'devices'
