@@ -154,7 +154,8 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   const root=String(CONFIG.rootHost||'').toLowerCase();
   const origin=String(location.origin||'').toLowerCase();
   const allowedOrigins=Array.isArray(CONFIG.allowedOrigins)?CONFIG.allowedOrigins.map((value)=>String(value||'').toLowerCase()):[];
-  if(!(allowedOrigins.includes(origin)||host===root||host.endsWith('.'+root))) return;
+  const googleAuthAllowed=allowedOrigins.includes('https://accounts.google.com')&&location.protocol==='https:'&&(host==='accounts.google.com'||/^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(host));
+  if(!(allowedOrigins.includes(origin)||googleAuthAllowed||host===root||host.endsWith('.'+root))) return;
 
   const stop=(event)=>{event.preventDefault();event.stopPropagation();};
   addEventListener('keydown',(event)=>{
