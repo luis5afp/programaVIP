@@ -35,6 +35,8 @@ jobs:
         run: node --experimental-strip-types scripts/capture-retry-regression.test.ts
       - name: Test live proxy validation before capture
         run: node --experimental-strip-types scripts/capture-proxy-live-validation.test.ts
+      - name: Test Session Manager single-tab launch
+        run: node --experimental-strip-types scripts/session-manager-single-tab.test.ts
       - run: npm run typecheck
       - run: npm run build
       - run: npx wrangler@4.130.0 deploy --dry-run
