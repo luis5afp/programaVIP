@@ -720,6 +720,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     if (snapshotAuthentication(runtime)) {
       const session = await managedSessionMaterial(env, profile.id);
       if (!session) throw new HttpError(409, 'MANAGED_SESSION_NOT_READY');
+      validateCapturedMaterial(profile, session.material);
       sessionDelivery = {
         ready: true,
         mode: profile.session_mode,
@@ -768,6 +769,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/client-test/report' && method === 'POST') {
+    assertUserflowVersion(request);
     const body = await bodyJson(request, 150_000);
     const rawToken = text(body.token, 'token', 128);
     const job = await validationJob(env, rawToken);
