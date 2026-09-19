@@ -27,6 +27,8 @@ jobs:
         run: node --experimental-strip-types scripts/password-security.test.ts
       - name: Test captured session validation
         run: node --experimental-strip-types scripts/captured-session-validation.test.ts
+      - name: Test managed browser launch and autofill
+        run: node --experimental-strip-types scripts/browser-launch-regression.test.ts
       - run: npm run typecheck
       - run: npm run build
       - run: npx wrangler@4.130.0 deploy --dry-run
