@@ -33,6 +33,7 @@ let authMeta = null;
 let heartbeatTimer = null;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
+let pendingAuthInvalidation = null;
 const profileTabs = new Map();
 let profileOrder = [];
 let profileDragMonitor = null;
@@ -423,7 +424,7 @@ async function catalog() {
   try {
     return await apiRequest('/api/client/catalog');
   } catch (error) {
-    if (authError(error)) await returnToLogin();
+    if (authError(error)) await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
     throw error;
   }
 }
@@ -507,7 +508,7 @@ async function runHeartbeat(reason = 'scheduled') {
     sendClient('userflex:heartbeat', { ...result, ...sync, connectionLost: false });
   } catch (error) {
     if (authError(error)) {
-      await returnToLogin();
+      await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
       return;
     }
 
@@ -614,6 +615,10 @@ async function returnToLogin(message = null, code = null) {
     await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
   }
   await clearAuth();
+  pendingAuthInvalidation = message ? {
+    message: String(message),
+    code: code || null,
+  } : null;
 
   const loginWindow = createMainWindow();
   loginWindow.show();
@@ -623,10 +628,7 @@ async function returnToLogin(message = null, code = null) {
   closePrivateBrowser();
 
   if (message) {
-    sendClient('userflex:auth-invalidated', {
-      message: String(message),
-      code: code || null,
-    });
+    sendClient('userflex:auth-invalidated', pendingAuthInvalidation);
   }
 }
 
@@ -1659,7 +1661,13 @@ globalThis.__userflowPendingProtocolUrls = [];
 ipcMain.handle('userflex:bootstrap', async (event) => {
   try {
     if (!accessToken) await loadAuth();
-    if (!accessToken) return { authenticated: false };
+    if (!accessToken) {
+      const pending = pendingAuthInvalidation;
+      pendingAuthInvalidation = null;
+      return pending
+        ? { authenticated: false, error: { ...pending, status: 401 } }
+        : { authenticated: false };
+    }
     const data = await catalog();
     await syncClientConfiguration(data, 'bootstrap', data);
     startHeartbeat();
@@ -1672,6 +1680,7 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
 
 ipcMain.handle('userflex:login', async (event, input) => {
   try {
+    pendingAuthInvalidation = null;
     const identifier = String(input?.identifier || '').trim();
     const password = String(input?.password || '');
     if (!identifier || !password) throw new UserflexError('Ingresa usuario/correo y contraseña.', 'LOGIN_REQUIRED');
