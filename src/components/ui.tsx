@@ -24,7 +24,25 @@ export function Field({ label, children, help, tooltip, className = '' }: { labe
     </div>
   );
 }
-export function Modal({ title, children, onClose, actions }: { title: string; children: ReactNode; onClose: () => void; actions: ReactNode }) { return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-label={title}><div className="modal-head"><h3>{title}</h3><button className="icon-button" type="button" onClick={onClose} aria-label="Cerrar"><X size={17} /></button></div><div className="modal-body">{children}</div><div className="modal-actions">{actions}</div></div></div>; }
+export function Modal({ title, children, onClose, actions, error = null, success = null }: { title: string; children: ReactNode; onClose: () => void; actions: ReactNode; error?: string | null; success?: string | null }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Cerrar"><X size={17} /></button>
+        </div>
+        <div className="modal-body">
+          {error ? <div className="error-banner modal-feedback" role="alert">{error}</div> : null}
+          {success ? <div className="success-banner modal-feedback" role="status">{success}</div> : null}
+          {children}
+        </div>
+        <div className="modal-actions">{actions}</div>
+      </div>
+    </div>
+  );
+}
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'ok' | 'warn' | 'bad' | 'neutral' }) { return <span className={`badge ${tone}`}>{children}</span>; }
-export function ErrorBanner({ message }: { message: string | null }) { return message ? <div className="error-banner">{message}</div> : null; }
+export function ErrorBanner({ message }: { message: string | null }) { return message ? <div className="error-banner" role="alert">{message}</div> : null; }
+export function SuccessBanner({ message }: { message: string | null }) { return message ? <div className="success-banner" role="status">{message}</div> : null; }
 export function Empty({ title, description }: { title: string; description: string }) { return <div className="empty"><strong>{title}</strong>{description}</div>; }
