@@ -322,6 +322,33 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
   }
 
   try {
+    const [globalExtensions, profileMemberships] = await Promise.all([
+      sb(env, 'userflex_extensions?select=id,name,enabled,validation_status,scope&scope=eq.global&order=name.asc'),
+      sb(env, `userflex_profile_extensions?select=extension_id&profile_id=eq.${profile.id}`),
+    ]);
+    const selectiveIds = (profileMemberships || []).map((row: any) => row.extension_id);
+    const selectiveExtensions = selectiveIds.length
+      ? await sb(env, `userflex_extensions?select=id,name,enabled,validation_status,scope&id=in.(${selectiveIds.join(',')})&order=name.asc`)
+      : [];
+    const configuredExtensions = [...(globalExtensions || []), ...(selectiveExtensions || [])];
+    const activeExtensions = configuredExtensions.filter((row: any) => row.enabled === true && row.validation_status === 'runtime_valid');
+    const unavailableExtensions = configuredExtensions.filter((row: any) => row.enabled !== true || row.validation_status !== 'runtime_valid');
+
+    add(
+      'extensions',
+      'Extensiones administradas',
+      unavailableExtensions.length ? 'warn' : 'pass',
+      configuredExtensions.length === 0
+        ? 'Solo se cargará Browser Guard; no hay extensiones administradas configuradas.'
+        : unavailableExtensions.length
+          ? `${activeExtensions.length} listas para cargar. ${unavailableExtensions.length} configuradas no se cargarán porque están desactivadas o aún no están verificadas: ${unavailableExtensions.map((row: any) => row.name).join(', ')}.`
+          : `Browser Guard + ${activeExtensions.length} extensión(es) verificadas se cargarán en userFLOW.`,
+    );
+  } catch {
+    add('extensions', 'Extensiones administradas', 'warn', 'No se pudo comprobar el catálogo de extensiones en este momento.');
+  }
+
+  try {
     const target = new URL(profile.url);
     const host = target.hostname.toLowerCase();
     if (material && (host === 'netflix.com' || host.endsWith('.netflix.com'))) {
