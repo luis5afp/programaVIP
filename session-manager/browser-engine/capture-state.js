@@ -352,6 +352,13 @@ export async function navigateCaptureHome(debugPort, profileUrl) {
     if (page.url() !== target.toString()) {
       await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
     }
+
+    const pages = await browser.pages();
+    for (const extra of pages) {
+      if (extra === page) continue;
+      await extra.close().catch(() => null);
+    }
+    await page.bringToFront().catch(() => null);
     return true;
   } finally {
     await browser.disconnect().catch(() => null);
