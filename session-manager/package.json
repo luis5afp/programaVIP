@@ -1,7 +1,7 @@
 {
   "name": "userflex-session-manager",
   "private": true,
-  "version": "0.3.16",
+  "version": "0.3.17",
   "description": "userFLEX KAIZEN external browser session capture helper",
   "type": "module",
   "main": "entry.js",

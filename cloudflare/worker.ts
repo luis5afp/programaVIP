@@ -4,7 +4,7 @@ import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
-import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION } from './lib/release-compat';
+import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION, clientVersionFrom, versionAtLeast } from './lib/release-compat';
 import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
@@ -23,7 +23,18 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
+
+function assertMinimumUserflowVersion(request: Request) {
+  const version = clientVersionFrom(request);
+  if (!versionAtLeast(version, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(
+      426,
+      'CLIENT_UPDATE_REQUIRED',
+      `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior antes de iniciar sesión.`,
+    );
+  }
+}
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -61,6 +72,7 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
 
   if (path === '/api/client/auth' && method === 'POST') {
+    assertMinimumUserflowVersion(request);
     return clientLogin(request, env);
   }
 
@@ -77,6 +89,7 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
 
   if (path.startsWith('/api/client/')) {
+    if (path === '/api/client/catalog' && method === 'GET') assertMinimumUserflowVersion(request);
     const identity = await requireClient(request, env);
     if (path === '/api/client/catalog' && method === 'GET') return clientCatalog(env, identity);
     if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(request, env, identity);
