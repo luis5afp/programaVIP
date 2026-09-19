@@ -4,7 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { startKaizenProxyRelay } from './proxy-relay.js';
+import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
@@ -163,7 +163,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgen
   if (userAgent && typeof userAgent === 'string' && userAgent.length <= 600 && !/[\r\n]/.test(userAgent)) {
     args.push(`--user-agent=${userAgent}`);
   }
-  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>');
+  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>', '--disable-quic');
   if (extensionDir && fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
     args.push(`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`);
   }
@@ -372,8 +372,43 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     let relay = null;
     let proxyRules = null;
+    let verifiedPublicIp = null;
     if (connection?.mode === 'proxy') {
       if (!connection.proxy) throw new Error('El perfil requiere proxy pero el servidor no entregó su configuración.');
+
+      const destinationPort = target.protocol === 'http:' ? 80 : 443;
+      await probeKaizenProxyDestination(connection.proxy, { host: target.hostname, port: destinationPort });
+      if (target.protocol === 'https:') {
+        await probeKaizenProxyHttps(connection.proxy, {
+          host: target.hostname,
+          port: 443,
+          path: target.pathname || '/',
+        });
+      }
+
+      const googleProfile = runtime.extensionStrategy === 'google'
+        || target.hostname === 'google.com'
+        || target.hostname.endsWith('.google.com');
+      if (googleProfile) {
+        try {
+          await probeKaizenProxyHttps(connection.proxy, {
+            host: 'accounts.google.com',
+            port: 443,
+            path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F',
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+          throw new Error(`El proxy del perfil no puede completar HTTPS con accounts.google.com. ${detail}`);
+        }
+      }
+
+      verifiedPublicIp = await kaizenProxyPublicIp(connection.proxy);
+      if (!verifiedPublicIp) throw new Error('El proxy respondió, pero no se pudo verificar su IP pública.');
+      const expectedIp = delivery?.expectedPublicIp || (connection?.locked ? connection?.proxy?.publicIp : null);
+      if (expectedIp && verifiedPublicIp !== expectedIp) {
+        throw new Error(`La IP real del proxy cambió. Esperada: ${expectedIp}. Detectada: ${verifiedPublicIp}.`);
+      }
+
       relay = await startKaizenProxyRelay(connection.proxy);
       proxyRules = relay.proxyRules;
     } else if (connection?.locked === true) {
@@ -440,17 +475,17 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await browser.disconnect().catch(() => null);
 
       if (connection?.mode === 'proxy') {
-        const detectedIp = await browserPublicIp(debugPort);
-        if (!detectedIp) throw new Error('No se pudo validar la IP de salida del navegador mediante el proxy.');
-        entry.publicIp = detectedIp;
-        const expectedIp = delivery?.expectedPublicIp || (connection?.locked ? connection?.proxy?.publicIp : null);
-        if (expectedIp && detectedIp !== expectedIp) {
-          throw new Error(`La IP del navegador no coincide con la configuración. Esperada: ${expectedIp}. Detectada: ${detectedIp}.`);
-        }
+        entry.publicIp = verifiedPublicIp || connection?.proxy?.publicIp || null;
       } else if (ephemeral === true) {
-        // Client-test runs also record the real direct egress IP so Admin can
-        // confirm what a client-direct profile would use on this Windows PC.
-        entry.publicIp = await browserPublicIp(debugPort);
+        // Direct diagnostics run outside the visible browser tab so the user
+        // never sees the internal IP-check page.
+        try {
+          const response = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(20_000) });
+          const payload = response.ok ? await response.json() : null;
+          entry.publicIp = typeof payload?.ip === 'string' ? payload.ip.trim() : null;
+        } catch {
+          entry.publicIp = null;
+        }
       }
 
       let autofill = null;

@@ -1,4 +1,5 @@
 import net from 'node:net';
+import tls from 'node:tls';
 import { SocksClient } from 'socks';
 
 function cleanHost(value) {
@@ -154,6 +155,78 @@ async function connectUpstream(proxy, destination) {
   return { socket: result.socket, leftover: null };
 }
 
+async function connectUpstreamWithRetry(proxy, destination, attempts = 3) {
+  let lastError = null;
+  const total = Math.max(1, Number(attempts) || 1);
+  for (let attempt = 0; attempt < total; attempt += 1) {
+    try {
+      return await connectUpstream(proxy, destination);
+    } catch (error) {
+      lastError = error;
+      if (attempt < total - 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 180 : 450));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || 'conexión rechazada'));
+}
+
+async function httpsProbe(proxy, { host, path = '/', port = 443, method = 'HEAD' }) {
+  const target = { host: cleanHost(host), port: cleanPort(port) };
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let tunnel = null;
+    try {
+      tunnel = await connectUpstreamWithRetry(proxy, target, 2);
+      const result = await new Promise((resolve, reject) => {
+        let settled = false;
+        let response = Buffer.alloc(0);
+        const socket = tls.connect({
+          socket: tunnel.socket,
+          servername: target.host,
+          rejectUnauthorized: true,
+        });
+
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          try { socket.destroy(); } catch {}
+          reject(error);
+        };
+
+        socket.setTimeout(20_000, () => fail(new Error('El destino HTTPS agotó el tiempo de respuesta.')));
+        socket.once('error', fail);
+        socket.once('secureConnect', () => {
+          socket.write(
+            `${method} ${path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: userFLEX-proxy-check/0.3.11\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
+          );
+        });
+        socket.on('data', (chunk) => {
+          response = Buffer.concat([response, chunk]);
+          if (response.length > 512_000) return fail(new Error('La respuesta HTTPS del destino fue demasiado grande.'));
+        });
+        socket.once('end', () => {
+          if (settled) return;
+          settled = true;
+          const text = response.toString('utf8');
+          const firstLine = text.split('\r\n', 1)[0] || '';
+          const status = Number(firstLine.split(' ')[1] || 0);
+          if (!status) return reject(new Error('El destino HTTPS no devolvió una respuesta HTTP válida.'));
+          resolve({ status, raw: text });
+        });
+      });
+      return { ok: true, ...result, destination: target };
+    } catch (error) {
+      lastError = error;
+      try { tunnel?.socket?.destroy(); } catch {}
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 650));
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError || 'conexión HTTPS rechazada');
+  throw new Error(`El proxy no pudo completar HTTPS con ${target.host}:${target.port}: ${detail}`);
+}
 
 export async function probeKaizenProxyDestination(input, destination) {
   const proxy = normalizedProxy(input);
@@ -161,19 +234,37 @@ export async function probeKaizenProxyDestination(input, destination) {
     host: cleanHost(destination?.host),
     port: cleanPort(destination?.port),
   };
-  let lastError = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const tunnel = await connectUpstream(proxy, target);
-      try { tunnel.socket.destroy(); } catch {}
-      return { ok: true, destination: target, upstream: { type: proxy.type, host: proxy.host, port: proxy.port } };
-    } catch (error) {
-      lastError = error;
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 200 : 500));
-    }
+  try {
+    const tunnel = await connectUpstreamWithRetry(proxy, target, 3);
+    try { tunnel.socket.destroy(); } catch {}
+    return { ok: true, destination: target, upstream: { type: proxy.type, host: proxy.host, port: proxy.port } };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+    throw new Error(`El proxy no pudo conectar con ${target.host}:${target.port}: ${detail}`);
   }
-  const detail = lastError instanceof Error ? lastError.message : String(lastError || 'conexión rechazada');
-  throw new Error(`El proxy no pudo conectar con ${target.host}:${target.port}: ${detail}`);
+}
+
+export async function probeKaizenProxyHttps(input, target) {
+  const proxy = normalizedProxy(input);
+  const result = await httpsProbe(proxy, target);
+  return {
+    ok: true,
+    status: result.status,
+    destination: result.destination,
+    upstream: { type: proxy.type, host: proxy.host, port: proxy.port },
+  };
+}
+
+export async function kaizenProxyPublicIp(input) {
+  const proxy = normalizedProxy(input);
+  const result = await httpsProbe(proxy, {
+    host: 'api.ipify.org',
+    port: 443,
+    path: '/?format=json',
+    method: 'GET',
+  });
+  const match = result.raw.match(/"ip"\s*:\s*"([^"]+)"/i);
+  return match?.[1]?.trim() || null;
 }
 
 function serveClient(clientSocket, proxy, sockets) {
@@ -204,7 +295,7 @@ function serveClient(clientSocket, proxy, sockets) {
     buffered = Buffer.alloc(0);
 
     try {
-      const tunnel = await connectUpstream(proxy, request.destination);
+      const tunnel = await connectUpstreamWithRetry(proxy, request.destination, 3);
       if (done || clientSocket.destroyed) {
         tunnel.socket.destroy();
         return;
