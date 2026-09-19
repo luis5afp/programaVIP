@@ -3,7 +3,7 @@ import { KeyRound, Pencil, Plus, Search, Shield, Trash2, UserCheck, UserX } from
 import { adminUsersApi } from '../admin-api';
 import { ApiError } from '../api';
 import type { AdminRole, AdminSession, AdminUser } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 function normalize(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
@@ -102,12 +102,12 @@ export function AdministratorsView({ session }: { session: AdminSession }) {
               <Search size={15} style={{ position: 'absolute', left: 11, color: '#94a3b8', pointerEvents: 'none' }} />
               <input className="input" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nombre, usuario, correo..." style={{ width: 300, paddingLeft: 34 }} />
             </label>
-            <button className="button primary" type="button" onClick={() => setCreateOpen(true)}><Plus size={15} /> Nuevo administrador</button>
+            <button className="button primary" type="button" onClick={() => { setError(null); setSuccess(null); setCreateOpen(true); }}><Plus size={15} /> Nuevo administrador</button>
           </div>
         }
       />
       <ErrorBanner message={error} />
-      {success ? <div className="success-banner">{success}</div> : null}
+      <SuccessBanner message={success} />
       <Card>
         {loading && rows.length === 0 ? (
           <Empty title="Cargando administradores" description="Consultando accesos autorizados." />
@@ -127,8 +127,8 @@ export function AdministratorsView({ session }: { session: AdminSession }) {
                     <td><Badge tone={row.enabled ? 'ok' : 'bad'}>{row.enabled ? 'Activo' : 'Suspendido'}</Badge></td>
                     <td>
                       <div className="toolbar" style={{ margin: 0, gap: 6 }}>
-                        <button className="button secondary small" type="button" onClick={() => setEditing(row)}><Pencil size={12} /> Editar</button>
-                        <button className="button secondary small" type="button" onClick={() => setPasswordTarget(row)}><KeyRound size={12} /> Contraseña</button>
+                        <button className="button secondary small" type="button" onClick={() => { setError(null); setSuccess(null); setEditing(row); }}><Pencil size={12} /> Editar</button>
+                        <button className="button secondary small" type="button" onClick={() => { setError(null); setSuccess(null); setPasswordTarget(row); }}><KeyRound size={12} /> Contraseña</button>
                         <button className="button secondary small" type="button" disabled={busy || row.id === session.id} onClick={() => void toggleEnabled(row)}>{row.enabled ? <UserX size={12} /> : <UserCheck size={12} />}{row.enabled ? 'Suspender' : 'Activar'}</button>
                         <button className="button danger small" type="button" disabled={busy || row.id === session.id} onClick={() => void remove(row)}><Trash2 size={12} /> Eliminar</button>
                       </div>
@@ -141,14 +141,14 @@ export function AdministratorsView({ session }: { session: AdminSession }) {
         )}
       </Card>
 
-      {createOpen ? <CreateAdminModal onClose={() => setCreateOpen(false)} onSaved={async () => { setCreateOpen(false); setSuccess('Administrador creado.'); await load(); }} setGlobalError={setError} /> : null}
-      {editing ? <EditAdminModal row={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setSuccess('Administrador actualizado.'); await load(); }} setGlobalError={setError} /> : null}
-      {passwordTarget ? <PasswordModal row={passwordTarget} onClose={() => setPasswordTarget(null)} onSaved={() => { setPasswordTarget(null); setSuccess('Contraseña actualizada.'); }} setGlobalError={setError} /> : null}
+      {createOpen ? <CreateAdminModal error={error} onClose={() => setCreateOpen(false)} onSaved={async () => { setCreateOpen(false); setSuccess('Administrador creado correctamente.'); await load(); }} setGlobalError={setError} /> : null}
+      {editing ? <EditAdminModal error={error} row={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setSuccess('Administrador actualizado correctamente.'); await load(); }} setGlobalError={setError} /> : null}
+      {passwordTarget ? <PasswordModal error={error} row={passwordTarget} onClose={() => setPasswordTarget(null)} onSaved={() => { setPasswordTarget(null); setSuccess('Contraseña actualizada correctamente.'); }} setGlobalError={setError} /> : null}
     </>
   );
 }
 
-function CreateAdminModal({ onClose, onSaved, setGlobalError }: { onClose: () => void; onSaved: () => Promise<void>; setGlobalError: (value: string | null) => void }) {
+function CreateAdminModal({ error, onClose, onSaved, setGlobalError }: { error: string | null; onClose: () => void; onSaved: () => Promise<void>; setGlobalError: (value: string | null) => void }) {
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -170,10 +170,10 @@ function CreateAdminModal({ onClose, onSaved, setGlobalError }: { onClose: () =>
     finally { setBusy(false); }
   }
 
-  return <Modal title="Nuevo administrador" onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="create-admin-form" type="submit" disabled={busy}>{busy ? 'Creando…' : 'Crear administrador'}</button></>}><form id="create-admin-form" onSubmit={submit}><div className="form-grid"><Field label="Nombre"><input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={120} /></Field><Field label="Usuario"><input className="input" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={120} autoComplete="off" /></Field><Field label="Correo"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={180} /></Field><Field label="Rol"><select className="select" value={role} onChange={(e) => setRole(e.target.value as AdminRole)}><option value="admin">Administrador</option><option value="owner">Propietario</option></select></Field><Field label="Contraseña" help="Mínimo 6 caracteres."><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field><Field label="Confirmar contraseña"><input className="input" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field></div></form></Modal>;
+  return <Modal title="Nuevo administrador" error={error} onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="create-admin-form" type="submit" disabled={busy}>{busy ? 'Creando…' : 'Crear administrador'}</button></>}><form id="create-admin-form" onSubmit={submit}><div className="form-grid"><Field label="Nombre"><input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={120} /></Field><Field label="Usuario"><input className="input" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={120} autoComplete="off" /></Field><Field label="Correo"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={180} /></Field><Field label="Rol"><select className="select" value={role} onChange={(e) => setRole(e.target.value as AdminRole)}><option value="admin">Administrador</option><option value="owner">Propietario</option></select></Field><Field label="Contraseña" help="Mínimo 6 caracteres."><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field><Field label="Confirmar contraseña"><input className="input" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field></div></form></Modal>;
 }
 
-function EditAdminModal({ row, onClose, onSaved, setGlobalError }: { row: AdminUser; onClose: () => void; onSaved: () => Promise<void>; setGlobalError: (value: string | null) => void }) {
+function EditAdminModal({ error, row, onClose, onSaved, setGlobalError }: { error: string | null; row: AdminUser; onClose: () => void; onSaved: () => Promise<void>; setGlobalError: (value: string | null) => void }) {
   const [displayName, setDisplayName] = useState(row.display_name);
   const [email, setEmail] = useState(row.email || '');
   const [role, setRole] = useState<AdminRole>(row.role);
@@ -186,10 +186,10 @@ function EditAdminModal({ row, onClose, onSaved, setGlobalError }: { row: AdminU
     } catch (error) { setGlobalError(errorMessage(error)); }
     finally { setBusy(false); }
   }
-  return <Modal title={`Editar administrador · ${row.username}`} onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="edit-admin-form" type="submit" disabled={busy}>{busy ? 'Guardando…' : 'Guardar'}</button></>}><form id="edit-admin-form" onSubmit={submit}><div className="form-grid"><Field label="Nombre"><input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={120} /></Field><Field label="Correo"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={180} /></Field><Field label="Rol" className="span-2"><select className="select" value={role} onChange={(e) => setRole(e.target.value as AdminRole)}><option value="admin">Administrador</option><option value="owner">Propietario</option></select></Field></div></form></Modal>;
+  return <Modal title={`Editar administrador · ${row.username}`} error={error} onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="edit-admin-form" type="submit" disabled={busy}>{busy ? 'Guardando…' : 'Guardar'}</button></>}><form id="edit-admin-form" onSubmit={submit}><div className="form-grid"><Field label="Nombre"><input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={120} /></Field><Field label="Correo"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={180} /></Field><Field label="Rol" className="span-2"><select className="select" value={role} onChange={(e) => setRole(e.target.value as AdminRole)}><option value="admin">Administrador</option><option value="owner">Propietario</option></select></Field></div></form></Modal>;
 }
 
-function PasswordModal({ row, onClose, onSaved, setGlobalError }: { row: AdminUser; onClose: () => void; onSaved: () => void; setGlobalError: (value: string | null) => void }) {
+function PasswordModal({ error, row, onClose, onSaved, setGlobalError }: { error: string | null; row: AdminUser; onClose: () => void; onSaved: () => void; setGlobalError: (value: string | null) => void }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -202,5 +202,5 @@ function PasswordModal({ row, onClose, onSaved, setGlobalError }: { row: AdminUs
     catch (error) { setGlobalError(errorMessage(error)); }
     finally { setBusy(false); }
   }
-  return <Modal title={`Cambiar contraseña · ${row.username}`} onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="password-admin-form" type="submit" disabled={busy}>{busy ? 'Actualizando…' : 'Cambiar contraseña'}</button></>}><form id="password-admin-form" onSubmit={submit}><div className="grid"><Field label="Nueva contraseña" help="Mínimo 6 caracteres. Las demás sesiones de esta cuenta se cerrarán."><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field><Field label="Confirmar contraseña"><input className="input" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field></div></form></Modal>;
+  return <Modal title={`Cambiar contraseña · ${row.username}`} error={error} onClose={onClose} actions={<><button className="button secondary" type="button" onClick={onClose}>Cancelar</button><button className="button primary" form="password-admin-form" type="submit" disabled={busy}>{busy ? 'Actualizando…' : 'Cambiar contraseña'}</button></>}><form id="password-admin-form" onSubmit={submit}><div className="grid"><Field label="Nueva contraseña" help="Mínimo 6 caracteres. Las demás sesiones de esta cuenta se cerrarán."><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field><Field label="Confirmar contraseña"><input className="input" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} maxLength={256} autoComplete="new-password" /></Field></div></form></Modal>;
 }

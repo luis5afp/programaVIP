@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, History, KeyRound, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Client, Plan } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 function dateInput(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -27,6 +27,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
   const [credentialsClient, setCredentialsClient] = useState<Client | null>(null);
   const [subscriptionClient, setSubscriptionClient] = useState<Client | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const defaultStart = useMemo(() => dateInput(new Date()), []);
 
@@ -49,6 +50,8 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.create({
         name: String(form.get('name') || '').trim(),
         email: String(form.get('email') || '').trim(),
@@ -61,6 +64,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
         password: String(form.get('password') || ''),
       });
       setCreateOpen(false);
+      setSuccess('Cliente creado correctamente.');
       await load();
     } catch (createError: any) {
       setError(createError.message);
@@ -72,6 +76,8 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
     if (!editClient) return;
     const form = new FormData(event.currentTarget);
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.update(editClient.id, {
         name: String(form.get('name') || '').trim(),
         email: String(form.get('email') || '').trim(),
@@ -81,6 +87,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
         allow_external_browsing: form.get('allowExternalBrowsing') === 'on',
       });
       setEditClient(null);
+      setSuccess('Cliente actualizado correctamente.');
       await load();
     } catch (saveError: any) {
       setError(saveError.message);
@@ -92,12 +99,15 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
     if (!credentialsClient) return;
     const form = new FormData(event.currentTarget);
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.credentials(
         credentialsClient.id,
         String(form.get('username') || '').trim(),
         String(form.get('password') || ''),
       );
       setCredentialsClient(null);
+      setSuccess('Credenciales actualizadas correctamente.');
       await load();
     } catch (credentialsError: any) {
       setError(credentialsError.message);
@@ -109,12 +119,15 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
     if (!subscriptionClient) return;
     const form = new FormData(event.currentTarget);
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.subscription(subscriptionClient.id, {
         planId: String(form.get('planId')),
         startsAt: new Date(`${String(form.get('startsAt'))}T00:00:00Z`).toISOString(),
         expiresAt: new Date(`${String(form.get('expiresAt'))}T23:59:59Z`).toISOString(),
       });
       setSubscriptionClient(null);
+      setSuccess('Plan del cliente actualizado correctamente.');
       await load();
     } catch (renewError: any) {
       setError(renewError.message);
@@ -123,9 +136,12 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
 
   async function toggle(client: Client) {
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.update(client.id, {
         status: client.status === 'active' ? 'suspended' : 'active',
       });
+      setSuccess(client.status === 'active' ? 'Cliente suspendido correctamente.' : 'Cliente activado correctamente.');
       await load();
     } catch (toggleError: any) {
       setError(toggleError.message);
@@ -135,7 +151,10 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
   async function remove(client: Client) {
     if (!confirm(`¿Eliminar definitivamente a ${client.name}?`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.clients.remove(client.id);
+      setSuccess('Cliente eliminado correctamente.');
       await load();
     } catch (removeError: any) {
       setError(removeError.message);
@@ -178,7 +197,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
                 style={{ width: 270, paddingLeft: 34 }}
               />
             </label>
-            <button className="button primary" onClick={() => setCreateOpen(true)} disabled={plans.length === 0}>
+            <button className="button primary" onClick={() => { setError(null); setSuccess(null); setCreateOpen(true); }} disabled={plans.length === 0}>
               <Plus size={14} />
               Nuevo cliente
             </button>
@@ -186,6 +205,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
       {plans.length === 0 && (
         <div className="error-banner">
           Primero crea al menos un plan. Un cliente sin suscripción no puede autenticarse en userFLEX Client.
@@ -252,15 +272,15 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
                       </td>
                       <td>
                         <div className="toolbar" style={{ margin: 0 }}>
-                          <button className="button secondary small" onClick={() => setEditClient(client)}>
+                          <button className="button secondary small" onClick={() => { setError(null); setSuccess(null); setEditClient(client); }}>
                             <Pencil size={12} />
                             Editar
                           </button>
-                          <button className="button secondary small" onClick={() => setCredentialsClient(client)}>
+                          <button className="button secondary small" onClick={() => { setError(null); setSuccess(null); setCredentialsClient(client); }}>
                             <KeyRound size={12} />
                             Credenciales
                           </button>
-                          <button className="button secondary small" onClick={() => setSubscriptionClient(client)}>
+                          <button className="button secondary small" onClick={() => { setError(null); setSuccess(null); setSubscriptionClient(client); }}>
                             <CalendarClock size={12} />
                             Plan
                           </button>
@@ -288,6 +308,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       {createOpen && (
         <Modal
           title="Nuevo cliente"
+          error={error}
           onClose={() => setCreateOpen(false)}
           actions={
             <>
@@ -317,6 +338,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       {editClient && (
         <Modal
           title={`Editar cliente · ${editClient.name}`}
+          error={error}
           onClose={() => setEditClient(null)}
           actions={
             <>
@@ -351,6 +373,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       {credentialsClient && (
         <Modal
           title={`Cambiar credenciales · ${credentialsClient.name}`}
+          error={error}
           onClose={() => setCredentialsClient(null)}
           actions={
             <>
@@ -369,6 +392,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       {subscriptionClient && (
         <Modal
           title={`Renovar plan · ${subscriptionClient.name}`}
+          error={error}
           onClose={() => setSubscriptionClient(null)}
           actions={
             <>

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Assignment, Client, Plan, Profile, ProfileProxyDefault, ProxyRecord } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = Assignment | 'new' | null;
 
@@ -20,6 +20,7 @@ export function AssignmentsView() {
   const [editor, setEditor] = useState<Editor>(null);
   const [draftClientId, setDraftClientId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -57,6 +58,8 @@ export function AssignmentsView() {
   }
 
   function startCreate() {
+    setError(null);
+    setSuccess(null);
     const firstEligible = clients.find((client) => profilesAllowedForClient(client.id).length > 0);
     setDraftClientId(firstEligible?.id || clients[0]?.id || '');
     setEditor('new');
@@ -69,6 +72,9 @@ export function AssignmentsView() {
     const enabled = String(form.get('enabled')) === 'true';
 
     try {
+      setError(null);
+      setSuccess(null);
+      const editing = Boolean(editor && editor !== 'new');
       if (editor && editor !== 'new') {
         await api.assignments.update(editor.id, { proxyId, enabled });
       } else {
@@ -81,6 +87,7 @@ export function AssignmentsView() {
       }
       setEditor(null);
       setDraftClientId('');
+      setSuccess(editing ? 'Asignación actualizada correctamente.' : 'Asignación creada correctamente.');
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -90,7 +97,10 @@ export function AssignmentsView() {
   async function remove(item: Assignment) {
     if (!confirm('¿Quitar esta asignación?')) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.assignments.remove(item.id);
+      setSuccess('Asignación eliminada correctamente.');
       await load();
     } catch (removeError: any) {
       setError(removeError.message);
@@ -125,6 +135,7 @@ export function AssignmentsView() {
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
       <Card>
         {items.length === 0 ? (
           <Empty title="No hay asignaciones" description="Crea un cliente y un perfil permitido por su plan para empezar a entregar accesos." />
@@ -173,7 +184,7 @@ export function AssignmentsView() {
                       <td><Badge tone={item.enabled ? 'ok' : 'bad'}>{item.enabled ? 'Activa' : 'Inactiva'}</Badge></td>
                       <td>
                         <div className="toolbar" style={{ margin: 0 }}>
-                          <button className="button secondary small" onClick={() => setEditor(item)}>
+                          <button className="button secondary small" onClick={() => { setError(null); setSuccess(null); setEditor(item); }}>
                             <Pencil size={12} />
                             Editar
                           </button>
@@ -195,6 +206,7 @@ export function AssignmentsView() {
       {editor && (
         <Modal
           title={current ? 'Editar asignación' : 'Nueva asignación'}
+          error={error}
           onClose={() => {
             setEditor(null);
             setDraftClientId('');

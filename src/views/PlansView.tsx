@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { Plan, Profile } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = Plan | 'new' | null;
 type PeriodValue = '30' | '60' | '90' | '180' | '365' | 'permanent' | 'custom';
@@ -37,6 +37,7 @@ export function PlansView() {
   const [period, setPeriod] = useState<PeriodValue>('30');
   const [durationDays, setDurationDays] = useState('30');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -57,6 +58,8 @@ export function PlansView() {
   }, []);
 
   function openEditor(next: Exclude<Editor, null>) {
+    setError(null);
+    setSuccess(null);
     setEditor(next);
     setSelectedProfileIds(next === 'new' ? [] : [...(next.profile_ids || [])]);
     const days = next === 'new' ? 30 : next.duration_days;
@@ -79,6 +82,8 @@ export function PlansView() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError(null);
+    setSuccess(null);
     if (selectedProfileIds.length === 0) {
       setError('Selecciona al menos un perfil incluido en este plan.');
       return;
@@ -98,9 +103,11 @@ export function PlansView() {
     };
 
     try {
+      const editing = Boolean(editor && editor !== 'new');
       if (editor && editor !== 'new') await api.plans.update(editor.id, input);
       else await api.plans.create(input);
       closeEditor();
+      setSuccess(editing ? 'Plan actualizado correctamente.' : 'Plan creado correctamente.');
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -110,7 +117,10 @@ export function PlansView() {
   async function remove(plan: Plan) {
     if (!confirm(`¿Eliminar el plan ${plan.name}?`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.plans.remove(plan.id);
+      setSuccess('Plan eliminado correctamente.');
       await load();
     } catch (removeError: any) {
       setError(removeError.message);
@@ -139,6 +149,7 @@ export function PlansView() {
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
       <Card>
         {plans.length === 0 ? (
           <Empty title="No hay planes" description="Crea el primer plan para poder habilitar clientes." />
@@ -196,6 +207,7 @@ export function PlansView() {
       {editor && (
         <Modal
           title={current ? `Editar plan · ${current.name}` : 'Nuevo plan'}
+          error={error}
           onClose={closeEditor}
           actions={
             <>
