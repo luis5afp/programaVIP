@@ -7,6 +7,7 @@ import {
   selectNetworkPolicy,
   snapshotAuthentication,
 } from './profile-runtime';
+import { validateProxy } from './proxy-validation';
 import {
   MIN_SESSION_MANAGER_VERSION,
   MIN_USERFLOW_VERSION,
@@ -90,6 +91,57 @@ async function captureProxyForProfile(env: Env, profile: any) {
     throw new HttpError(409, 'PROFILE_PROXY_REQUIRED', 'Este perfil exige un proxy fijo antes de capturar la sesión.');
   }
   return proxy;
+}
+
+
+async function liveValidateCaptureProxy(env: Env, proxy: any) {
+  if (!proxy) return null;
+  const password = proxy.password_ciphertext
+    ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv)
+    : null;
+  const validation = await validateProxy({
+    host: proxy.host,
+    port: Number(proxy.port),
+    username: proxy.username || null,
+    password,
+  });
+
+  await sb(env, `userflex_proxies?id=eq.${proxy.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      proxy_type: validation.proxyType,
+      validation_status: validation.status,
+      last_checked_at: validation.checkedAt,
+      ...(validation.status === 'valid' ? { last_success_at: validation.checkedAt } : {}),
+      last_latency_ms: validation.latencyMs,
+      public_ip: validation.publicIp,
+      country_code: validation.countryCode,
+      country: validation.country,
+      region: validation.region,
+      city: validation.city,
+      timezone: validation.timezone,
+      validation_error: validation.error,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!validation.browserCompatible) {
+    throw new HttpError(
+      409,
+      'PROFILE_PROXY_UNAVAILABLE',
+      validation.error
+        ? `El proxy ${proxy.name || 'del perfil'} no está disponible: ${validation.error}`
+        : `El proxy ${proxy.name || 'del perfil'} no está disponible para abrir Chromium.`,
+    );
+  }
+
+  return {
+    ...proxy,
+    proxy_type: validation.proxyType,
+    validation_status: validation.status,
+    public_ip: validation.publicIp,
+  };
 }
 
 async function credentialRow(env: Env, profileId: string) {
@@ -578,7 +630,8 @@ export async function adminProfileSessionRoutes(
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'El modo híbrido necesita credenciales además de la sesión capturada.');
     }
-    const proxy = await captureProxyForProfile(env, profile);
+    const storedProxy = await captureProxyForProfile(env, profile);
+    const proxy = storedProxy ? await liveValidateCaptureProxy(env, storedProxy) : null;
     if (proxy && !proxyRuntimeUsable(proxy)) {
       throw new HttpError(
         409,
