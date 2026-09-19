@@ -303,7 +303,13 @@ export async function installCaptureAutomation({
   };
 
   const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
-    if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(location.origin)) return;
+    const currentHost = String(location.hostname || '').toLowerCase();
+    const googleAuthAllowed = Array.isArray(allowedOrigins)
+      && allowedOrigins.includes('https://accounts.google.com')
+      && location.protocol === 'https:'
+      && (currentHost === 'accounts.google.com'
+        || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost));
+    if (!Array.isArray(allowedOrigins) || (!allowedOrigins.includes(location.origin) && !googleAuthAllowed)) return;
 
     const GLOBAL_KEY = '__userflexCaptureAutomationV312';
     const existing = globalThis[GLOBAL_KEY];
