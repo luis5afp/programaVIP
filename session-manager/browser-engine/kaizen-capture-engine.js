@@ -350,8 +350,11 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
-        const publicIp = proxy ? await browserPublicIp(debugPort) : await browserPublicIp(debugPort);
+        const publicIp = await browserPublicIp(debugPort);
         if (proxy && !publicIp) throw new Error('No se pudo validar la IP de salida mediante el proxy.');
+        if (proxy?.publicIp && publicIp !== proxy.publicIp) {
+          throw new Error(`La IP de captura no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp || 'sin IP'}.`);
+        }
         const completed = await onComplete({
           material: captured.material,
           publicIp,
@@ -428,6 +431,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (proxy) {
         const publicIp = await browserPublicIp(debugPort);
         if (!publicIp) throw new Error('El navegador no pudo salir a Internet mediante el proxy asignado.');
+        if (proxy.publicIp && publicIp !== proxy.publicIp) {
+          throw new Error(`La IP del navegador no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp}.`);
+        }
         entry.publicIp = publicIp;
       }
 
