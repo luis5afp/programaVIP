@@ -173,20 +173,26 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   const visible=(el)=>{try{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}catch{return false;}};
   const setNativeValue=(el,value)=>{
     try{
+      try{el.focus({preventScroll:true});}catch{try{el.focus();}catch{}}
       const proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
       const d=Object.getOwnPropertyDescriptor(proto,'value'); d?.set?.call(el,value);
       try{el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));}
       catch{el.dispatchEvent(new Event('input',{bubbles:true}));}
       el.dispatchEvent(new Event('change',{bubbles:true}));
+      el.dispatchEvent(new Event('blur',{bubbles:true}));
+      try{el.blur();}catch{}
     }catch{}
   };
   const autofill=()=>{
     if(!credentials) return;
     const inputs=Array.from(document.querySelectorAll('input')).filter((el)=>visible(el)&&!el.disabled&&!el.readOnly);
-    const pass=inputs.find((el)=>el.type==='password');
+    const pass=inputs.find((el)=>{
+      const hint=[el.type,el.name,el.id,el.autocomplete,el.placeholder,el.getAttribute('aria-label')||''].join(' ').toLowerCase();
+      return el.type==='password'||/password|passwd|passcode|contrase/.test(hint);
+    });
     const user=inputs.find((el)=>{
       const hint=[el.type,el.name,el.id,el.autocomplete,el.placeholder,el.getAttribute('aria-label')||''].join(' ').toLowerCase();
-      return el.type==='email'||/email|e-mail|user|usuario|login|account|identifier/.test(hint);
+      return el.type==='email'||/email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint);
     });
     if(user&&!user.value) setNativeValue(user,credentials.username||'');
     if(pass&&!pass.value) setNativeValue(pass,credentials.password||'');
@@ -217,8 +223,9 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const result=await call('credentials');
     if(result.ok){credentials={username:result.username||'',password:result.password||''};autofill();}
     const observer=new MutationObserver(()=>{install();autofill();});
-    observer.observe(document.documentElement||document,{childList:true,subtree:true,attributes:true,attributeFilter:['type','name','id','autocomplete','placeholder','style','class']});
-    setTimeout(()=>observer.disconnect(),30000);
+    observer.observe(document.documentElement||document,{childList:true,subtree:true,attributes:true,attributeFilter:['type','name','id','autocomplete','placeholder','aria-label','style','class']});
+    const retryTimer=setInterval(autofill,1000);
+    setTimeout(()=>{try{clearInterval(retryTimer);}catch{} try{observer.disconnect();}catch{}},600000);
     setTimeout(autofill,100); setTimeout(autofill,350); setTimeout(autofill,800); setTimeout(autofill,1500); setTimeout(autofill,3000); setTimeout(autofill,7000);
   };
   if(document.documentElement) void start(); else addEventListener('DOMContentLoaded',()=>void start(),{once:true});
