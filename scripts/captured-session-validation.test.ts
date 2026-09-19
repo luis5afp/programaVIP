@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { validateCapturedMaterial } from '../cloudflare/lib/profile-sessions.ts';
+import { validateCapturedMaterialData } from '../cloudflare/lib/session-material.ts';
 
 const profile = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -18,11 +18,11 @@ const valid = {
   storage: { origin: 'https://www.netflix.com' },
 };
 
-assert.doesNotThrow(() => validateCapturedMaterial(profile, valid));
+assert.doesNotThrow(() => validateCapturedMaterialData(profile, valid));
 
 function codeFor(material: any) {
   try {
-    validateCapturedMaterial(profile, material);
+    validateCapturedMaterialData(profile, material);
     return null;
   } catch (error: any) {
     return error?.code || error?.message;
@@ -45,7 +45,7 @@ assert.equal(
   'NETFLIX_AUTH_COOKIES_INVALID',
 );
 
-assert.doesNotThrow(() => validateCapturedMaterial(
+assert.doesNotThrow(() => validateCapturedMaterialData(
   { id: profile.id, url: 'https://chatgpt.com/' },
   {
     format: 'userflex-browser-session-v2',
