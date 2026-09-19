@@ -63,7 +63,7 @@ export function validateCapturedMaterialData(profile: any, material: any) {
   }
 
   const hostname = target.hostname.toLowerCase();
-  const unrelatedCookies = cookies.filter((cookie) => !cookieMatchesHost(cookie, hostname));
+  const unrelatedCookies = cookies.filter((cookie: any) => !cookieMatchesHost(cookie, hostname));
   if (unrelatedCookies.length) {
     fail(409, 'SESSION_COOKIE_DOMAIN_MISMATCH', 'La sesión contiene cookies que no pertenecen a la web del perfil.');
   }
