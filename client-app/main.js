@@ -604,16 +604,24 @@ function enterWorkspace(sender) {
 
 async function returnToLogin(message = null, code = null) {
   const clientId = authMeta?.client?.id || null;
+
+  // Keep at least one Electron window alive during the transition back to
+  // login. On Windows, closing the workspace while it is the only window emits
+  // window-all-closed and can terminate the whole app before login is recreated.
   await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
-  closePrivateBrowser();
   await flushUsageCloseRequests();
   if (clientId) {
     await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
   }
   await clearAuth();
+
   const loginWindow = createMainWindow();
   loginWindow.show();
   loginWindow.focus();
+
+  // Close the private workspace only after the login window exists.
+  closePrivateBrowser();
+
   if (message) {
     sendClient('userflex:auth-invalidated', {
       message: String(message),
