@@ -23,7 +23,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -89,9 +89,11 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
 
   if (path.startsWith('/api/client/')) {
-    if (path === '/api/client/catalog' && method === 'GET') assertMinimumUserflowVersion(request);
     const identity = await requireClient(request, env);
-    if (path === '/api/client/catalog' && method === 'GET') return clientCatalog(env, identity);
+    if (path === '/api/client/catalog' && method === 'GET') {
+      assertMinimumUserflowVersion(request);
+      return clientCatalog(env, identity);
+    }
     if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(request, env, identity);
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
