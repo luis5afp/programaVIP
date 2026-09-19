@@ -658,6 +658,10 @@ export async function clientExtensionPackage(request: Request, env: Env, identit
   if (!extension.enabled || extension.validation_status !== 'runtime_valid') {
     throw new HttpError(404, 'EXTENSION_NOT_AVAILABLE');
   }
+  const requestedSha = new URL(request.url).searchParams.get('sha');
+  if (requestedSha && requestedSha !== extension.package_sha256) {
+    throw new HttpError(409, 'EXTENSION_VERSION_CHANGED', 'La extensión cambió de versión. Actualiza la configuración antes de descargarla.');
+  }
 
   const memberships = await sb(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${identity.plan.id}`);
   const profileIds = (memberships || []).map((row: any) => row.profile_id);
