@@ -13,6 +13,7 @@ import { profilePlanAccessRoutes } from './lib/profile-plan-access';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProxyRoutes } from './lib/proxy-admin';
 import { adminProfileSessionRoutes, publicSessionManagerRoutes } from './lib/profile-sessions';
+import { adminExtensionRoutes, clientExtensionPackage, publicExtensionTestRoutes } from './lib/extensions';
 import {
   Env,
   HttpError,
@@ -69,6 +70,12 @@ async function api(request: Request, env: Env): Promise<Response> {
     throw new HttpError(404, 'NOT_FOUND');
   }
 
+  if (path.startsWith('/api/extension-test/')) {
+    const response = await publicExtensionTestRoutes(request, env);
+    if (response) return response;
+    throw new HttpError(404, 'NOT_FOUND');
+  }
+
   if (path.startsWith('/api/client/')) {
     const identity = await requireClient(request, env);
     if (path === '/api/client/catalog' && method === 'GET') return clientCatalog(env, identity);
@@ -76,6 +83,8 @@ async function api(request: Request, env: Env): Promise<Response> {
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
     if (launch && method === 'POST') return clientLaunch(request, env, identity, launch[1]);
+    const extensionPackage = path.match(/^\/api\/client\/extensions\/([0-9a-f-]{36})\/package$/i);
+    if (extensionPackage && method === 'GET') return clientExtensionPackage(request, env, identity, extensionPackage[1]);
     const usageClose = path.match(/^\/api\/client\/profile-usage\/([0-9a-f-]{36})\/close$/i);
     if (usageClose && method === 'POST') return clientCloseProfileUsage(request, env, identity, usageClose[1]);
     throw new HttpError(404, 'NOT_FOUND');
@@ -103,6 +112,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (releaseResponse) return releaseResponse;
   const adminUserResponse = await adminUserRoutes(request, env, admin);
   if (adminUserResponse) return adminUserResponse;
+  const extensionResponse = await adminExtensionRoutes(request, env, admin);
+  if (extensionResponse) return extensionResponse;
   const profileUsageResponse = await adminProfileUsageRoutes(request, env, admin);
   if (profileUsageResponse) return profileUsageResponse;
   const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
