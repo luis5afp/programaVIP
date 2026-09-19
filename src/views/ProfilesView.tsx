@@ -1,4 +1,4 @@
-import { ClipboardEvent, DragEvent, FormEvent, useEffect, useState } from 'react';
+import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
 import { Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
@@ -6,6 +6,7 @@ import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../comp
 
 type Editor = Profile | 'new' | null;
 type CaptureLaunch = {
+  profileId: string;
   profileName: string;
   launchUrl: string;
   expiresAt: string | null;
@@ -59,6 +60,8 @@ export function ProfilesView() {
   const [validationBusy, setValidationBusy] = useState(false);
   const [editor, setEditor] = useState<Editor>(null);
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
+  const [captureRetryReady, setCaptureRetryReady] = useState(false);
+  const captureRetryInFlight = useRef(false);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
   const [authStrategy, setAuthStrategy] = useState<AuthStrategy>('manual');
   const [storageStrategy, setStorageStrategy] = useState<StorageStrategy>('local-persistent');
@@ -289,15 +292,43 @@ export function ProfilesView() {
       setError(null);
       const result = await api.profileSessions.capture(profile.id);
       setCaptureLaunch({
+        profileId: profile.id,
         profileName: profileLabel(profile),
         launchUrl: result.launch_url,
         expiresAt: result.expires_at || null,
       });
+      setCaptureRetryReady(false);
       launchCustomProtocol(result.launch_url);
+      window.setTimeout(() => setCaptureRetryReady(true), 6000);
       window.setTimeout(() => void load(), 2500);
     } catch (captureError: any) {
       setError(captureError.message);
     } finally {
+      setSessionAction(null);
+    }
+  }
+
+  async function retryCapture() {
+    if (!captureLaunch || captureRetryInFlight.current) return;
+    captureRetryInFlight.current = true;
+    try {
+      setSessionAction(captureLaunch.profileId);
+      setError(null);
+      setCaptureRetryReady(false);
+      const result = await api.profileSessions.capture(captureLaunch.profileId);
+      setCaptureLaunch((current) => current ? {
+        ...current,
+        launchUrl: result.launch_url,
+        expiresAt: result.expires_at || null,
+      } : current);
+      launchCustomProtocol(result.launch_url);
+      window.setTimeout(() => setCaptureRetryReady(true), 6000);
+      window.setTimeout(() => void load(), 2500);
+    } catch (captureError: any) {
+      setError(captureError.message);
+      setCaptureRetryReady(true);
+    } finally {
+      captureRetryInFlight.current = false;
       setSessionAction(null);
     }
   }
@@ -996,11 +1027,18 @@ export function ProfilesView() {
           <div style={{ display: 'grid', gap: 14 }}>
             <div style={{ padding: 14, border: '1px solid #dbeafe', background: '#eff6ff', borderRadius: 12 }}>
               <strong>userFLEX intentó abrir el Chromium automáticamente.</strong>
-              <div className="help" style={{ marginTop: 6 }}>Si Windows o el navegador no mostró nada, usa el botón siguiente. Este segundo clic conserva el permiso del navegador para abrir la aplicación local.</div>
+              <div className="help" style={{ marginTop: 6 }}>
+                El ticket de captura es de un solo uso. Espera unos segundos mientras Session Manager abre Chromium.
+                Si no se abre, usa el botón de reintento: generará un ticket nuevo en el servidor antes de volver a abrir la aplicación.
+              </div>
             </div>
-            <button className="button primary" onClick={() => launchCustomProtocol(captureLaunch.launchUrl)}>
+            <button
+              className="button primary"
+              disabled={!captureRetryReady || sessionAction === captureLaunch.profileId}
+              onClick={() => void retryCapture()}
+            >
               <Globe2 size={14} />
-              Abrir Chromium ahora
+              {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
               Instalar / actualizar Session Manager v0.3.8 · userFLOW v0.3.8

@@ -652,14 +652,14 @@ async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'comp
   }
 
   if (phase === 'bootstrap') {
-    if (job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    if (job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED', 'Este enlace de captura ya fue aceptado por Session Manager. Si Chromium no se abrió, vuelve al panel y genera un enlace nuevo.');
     const claimedAt = new Date().toISOString();
     const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({ used_at: claimedAt }),
     });
-    if (!claimed?.[0]) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    if (!claimed?.[0]) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED', 'Este enlace de captura ya fue aceptado por Session Manager. Si Chromium no se abrió, vuelve al panel y genera un enlace nuevo.');
     return { ...job, used_at: claimedAt };
   }
 
