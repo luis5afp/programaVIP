@@ -19,7 +19,7 @@ const sharedRelay = readFileSync(
 );
 
 assert.equal(relay, sharedRelay, 'client and Session Manager must share the exact proxy relay implementation');
-assert.match(relay, /connectUpstreamWithRetry\(proxy, request\.destination, 3\)/, 'browser proxy connections must retry transient upstream failures');
+assert.match(relay, /connectUpstreamWithRetry\(proxy, request\.destination, attempts\)/, 'browser proxy connections must retry transient upstream failures');
 assert.match(relay, /tls\.connect\(/, 'proxy preflight must verify a real TLS handshake');
 assert.match(relay, /api\.ipify\.org/, 'proxy IP verification must run outside the browser tab');
 assert.match(captureEngine, /probeKaizenProxyHttps\(proxy,[\s\S]{0,500}accounts\.google\.com/, 'capture must verify Google Accounts HTTPS before opening Chrome');

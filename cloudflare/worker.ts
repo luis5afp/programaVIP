@@ -22,7 +22,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.3.10';
+const APP_VERSION = '1.3.11';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);

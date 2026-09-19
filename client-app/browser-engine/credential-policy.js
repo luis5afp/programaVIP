@@ -4,6 +4,12 @@ function normalizeHost(value) {
   return String(value || '').trim().toLowerCase().replace(/^www\./, '');
 }
 
+export function isTrustedGoogleAccountsHost(host) {
+  const normalized = normalizeHost(host);
+  if (normalized === 'accounts.google.com') return true;
+  return /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(normalized);
+}
+
 function isGoogleServiceHost(host) {
   const normalized = normalizeHost(host);
   return normalized === 'google.com' || normalized.endsWith('.google.com');
@@ -24,8 +30,12 @@ export function credentialAutofillOrigins(profileUrl, extensionStrategy = 'custo
 
 export function credentialAutofillAllowsUrl(value, allowedOrigins) {
   try {
-    const origin = new URL(String(value || '')).origin;
-    return Array.isArray(allowedOrigins) && allowedOrigins.includes(origin);
+    const target = new URL(String(value || ''));
+    if (!Array.isArray(allowedOrigins)) return false;
+    if (allowedOrigins.includes(target.origin)) return true;
+    return target.protocol === 'https:'
+      && allowedOrigins.includes(GOOGLE_AUTH_ORIGIN)
+      && isTrustedGoogleAccountsHost(target.hostname);
   } catch {
     return false;
   }

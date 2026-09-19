@@ -20,7 +20,7 @@ type ProfilePlanMembership = {
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.12/userFLEX-Session-Manager-0.3.12-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.13/userFLEX-Session-Manager-0.3.13-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 function profileLabel(profile: Profile) {
@@ -748,7 +748,7 @@ export function ProfilesView() {
                       <>
                         <div><b>URL final:</b> {String(validationJob.result.inspection.currentUrl || '')}</div>
                         <div>
-                          <b>Autofill 0.3.12:</b>{' '}
+                          <b>Autofill 0.3.13:</b>{' '}
                           {validationJob.result.inspection.helperVisible ? 'helper visible' : 'helper NO visible'}
                           {' · '}
                           {validationJob.result.inspection.usernameFilled ? 'email completado' : 'email NO completado'}
@@ -1041,7 +1041,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.12 · userFLOW v0.3.12
+              Instalar / actualizar Session Manager v0.3.13 · userFLOW v0.3.13
             </a>
             <div className="help">Al abrirse Chromium, completa el primer inicio de sesión, 2FA o CAPTCHA si aparece y pulsa <b>Guardar sesión</b> en el panel flotante de userFLEX. El enlace de captura es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.</div>
           </div>

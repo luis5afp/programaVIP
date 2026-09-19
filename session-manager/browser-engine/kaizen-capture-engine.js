@@ -154,7 +154,8 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   const root=String(CONFIG.rootHost||'').toLowerCase();
   const origin=String(location.origin||'').toLowerCase();
   const allowedOrigins=Array.isArray(CONFIG.allowedOrigins)?CONFIG.allowedOrigins.map((value)=>String(value||'').toLowerCase()):[];
-  if(!(allowedOrigins.includes(origin)||host===root||host.endsWith('.'+root))) return;
+  const googleAuthAllowed=allowedOrigins.includes('https://accounts.google.com')&&location.protocol==='https:'&&(host==='accounts.google.com'||/^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(host));
+  if(!(allowedOrigins.includes(origin)||googleAuthAllowed||host===root||host.endsWith('.'+root))) return;
 
   const stop=(event)=>{event.preventDefault();event.stopPropagation();};
   addEventListener('keydown',(event)=>{
@@ -397,15 +398,21 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         || target.hostname === 'google.com'
         || target.hostname.endsWith('.google.com');
       if (googleProfile) {
-        try {
-          await probeKaizenProxyHttps(proxy, {
-            host: 'accounts.google.com',
-            port: 443,
-            path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F',
-          });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
-          throw new Error(`El proxy del perfil permite la salida general, pero no puede completar HTTPS con accounts.google.com. ${detail}`);
+        const googleAuthTargets = [
+          { host: 'accounts.google.com', path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F' },
+          { host: 'accounts.google.com.co', path: '/accounts/SetSID' },
+        ];
+        for (const authTarget of googleAuthTargets) {
+          try {
+            await probeKaizenProxyHttps(proxy, {
+              host: authTarget.host,
+              port: 443,
+              path: authTarget.path,
+            });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+            throw new Error(`El proxy del perfil no puede completar HTTPS con ${authTarget.host}. ${detail}`);
+          }
         }
       }
 

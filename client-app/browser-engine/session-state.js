@@ -313,7 +313,13 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   const browser = await connectKaizenBrowser(debugPort);
   try {
     const bootstrap = ({ allowedOrigins, username, password }) => {
-      if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(location.origin)) return;
+      const currentHost = String(location.hostname || '').toLowerCase();
+      const googleAuthAllowed = Array.isArray(allowedOrigins)
+        && allowedOrigins.includes('https://accounts.google.com')
+        && location.protocol === 'https:'
+        && (currentHost === 'accounts.google.com'
+          || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost));
+      if (!Array.isArray(allowedOrigins) || (!allowedOrigins.includes(location.origin) && !googleAuthAllowed)) return;
 
       const HELPER_ID = '__userflex-credential-helper';
       let dismissed = false;

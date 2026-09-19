@@ -390,15 +390,21 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         || target.hostname === 'google.com'
         || target.hostname.endsWith('.google.com');
       if (googleProfile) {
-        try {
-          await probeKaizenProxyHttps(connection.proxy, {
-            host: 'accounts.google.com',
-            port: 443,
-            path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F',
-          });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
-          throw new Error(`El proxy del perfil no puede completar HTTPS con accounts.google.com. ${detail}`);
+        const googleAuthTargets = [
+          { host: 'accounts.google.com', path: '/ServiceLogin?continue=https%3A%2F%2Fflow.google.com%2F' },
+          { host: 'accounts.google.com.co', path: '/accounts/SetSID' },
+        ];
+        for (const authTarget of googleAuthTargets) {
+          try {
+            await probeKaizenProxyHttps(connection.proxy, {
+              host: authTarget.host,
+              port: 443,
+              path: authTarget.path,
+            });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+            throw new Error(`El proxy del perfil no puede completar HTTPS con ${authTarget.host}. ${detail}`);
+          }
         }
       }
 
