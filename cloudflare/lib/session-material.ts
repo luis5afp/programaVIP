@@ -212,7 +212,7 @@ function importedCookie(raw: any): { cookie: ImportedCookie | null; expired: boo
     ? raw.hostOnly
     : typeof raw.host_only === 'boolean'
       ? raw.host_only
-      : !parsedDomain.leadingDot;
+      : false;
 
   const cookie: ImportedCookie = {
     name,
