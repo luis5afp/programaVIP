@@ -94,6 +94,19 @@
 .extension-profile-picker b { font-size:10.5px; color:#334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .extension-profile-picker small { font-size:9px; color:#8491a7; }
 .extension-current-validation { display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; color:#64748b; font-size:10px; }
+.cookie-import-box { display:grid; gap:10px; padding:12px; border:1px solid #dbe2ea; border-radius:12px; background:#fbfcfe; }
+.cookie-import-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.cookie-import-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.cookie-import-file { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:9px; background:#fff; font-size:10px; color:#526079; overflow:hidden; }
+.cookie-import-file span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cookie-import-inspection { display:grid; gap:8px; padding-top:2px; }
+.cookie-import-stats { display:flex; flex-wrap:wrap; gap:6px; }
+.cookie-import-stats span { padding:5px 7px; border:1px solid #e2e8f0; border-radius:7px; background:#fff; color:#64748b; font-size:9px; }
+.cookie-import-stats span.ok { color:#047857; border-color:#a7f3d0; background:#ecfdf5; }
+.cookie-import-stats span.bad { color:#b91c1c; border-color:#fecaca; background:#fef2f2; }
+.cookie-domain-list { display:flex; flex-wrap:wrap; gap:5px; max-height:90px; overflow:auto; }
+.cookie-domain-list span { padding:4px 6px; border-radius:6px; background:#f1f5f9; color:#64748b; font-size:8.5px; border:1px solid #e2e8f0; }
+.cookie-domain-list span.match { background:#ecfdf5; color:#047857; border-color:#a7f3d0; }
 
 @media (max-width: 1180px) {
   .grid.stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -112,6 +125,8 @@
   .extension-admin-card { grid-template-columns:auto minmax(0,1fr); }
   .extension-admin-actions { grid-column:1 / -1; justify-content:flex-start; max-width:none; }
   .extension-scope-options, .extension-profile-picker { grid-template-columns:1fr; }
+  .cookie-import-head { display:grid; }
+  .cookie-import-actions { justify-content:flex-start; }
   .app-shell { grid-template-columns:1fr; }
   .sidebar { position:static; height:auto; overflow:visible; padding:16px 14px; }
   .sidebar > div:nth-child(2) { overflow:visible; }
