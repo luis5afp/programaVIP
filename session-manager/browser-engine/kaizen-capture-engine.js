@@ -5,7 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { startKaizenProxyRelay } from './proxy-relay.js';
+import { probeKaizenProxyDestination, startKaizenProxyRelay } from './proxy-relay.js';
 import { credentialAutofillOrigins } from './credential-policy.js';
 import {
   browserPublicIp,
@@ -71,6 +71,21 @@ async function killStrayProfileProcesses(userDataDir) {
   const escaped = userDataDir.replace(/'/g, "''");
   const script = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
   await runPowerShell(script);
+}
+
+
+async function markProfileExitedCleanly(userDataDir) {
+  const preferencesPath = path.join(userDataDir, 'Default', 'Preferences');
+  try {
+    const raw = await fsp.readFile(preferencesPath, 'utf8');
+    const preferences = JSON.parse(raw);
+    preferences.profile = preferences.profile && typeof preferences.profile === 'object'
+      ? preferences.profile
+      : {};
+    preferences.profile.exit_type = 'Normal';
+    preferences.profile.exited_cleanly = true;
+    await fsp.writeFile(preferencesPath, JSON.stringify(preferences), 'utf8');
+  } catch {}
 }
 
 async function killProcessTree(proc) {
@@ -272,7 +287,7 @@ async function startControlServer({ secret, credentials, onSave }) {
   };
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, profileUrl }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -283,6 +298,8 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, profileU
     '--disable-features=SignInProfileCreation,SigninConsistency',
     '--disable-password-saving',
     '--disable-save-password-bubble',
+    '--disable-session-crashed-bubble',
+    '--disable-background-mode',
     '--disable-sync',
     '--allow-browser-signin=false',
     '--lang=es-ES',
@@ -290,7 +307,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, profileU
     `--load-extension=${extensionDir}`,
   ];
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>');
-  args.push(profileUrl);
+  args.push('about:blank');
   return args;
 }
 
@@ -333,11 +350,26 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const extensionDir = path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
     await fsp.mkdir(userDataDir, { recursive: true });
     await killStrayProfileProcesses(userDataDir);
+    await markProfileExitedCleanly(userDataDir);
 
     let relay = null;
     let proxyRules = null;
     if (proxy?.host && proxy?.port) {
       if (String(proxy.type || '').toLowerCase() === 'ssh') throw new Error('El proxy SSH todavía no está soportado por el motor KAIZEN.');
+      const target = new URL(profile.url);
+      const destinationPort = target.protocol === 'http:' ? 80 : 443;
+      await probeKaizenProxyDestination(proxy, { host: target.hostname, port: destinationPort });
+      const googleProfile = String(profile.extensionStrategy || '').toLowerCase() === 'google'
+        || target.hostname === 'google.com'
+        || target.hostname.endsWith('.google.com');
+      if (googleProfile && target.hostname !== 'accounts.google.com') {
+        try {
+          await probeKaizenProxyDestination(proxy, { host: 'accounts.google.com', port: 443 });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+          throw new Error(`El proxy del perfil puede abrir ${target.hostname}, pero no permite el inicio de sesión de Google en accounts.google.com. ${detail}`);
+        }
+      }
       relay = await startKaizenProxyRelay(proxy);
       proxyRules = relay.proxyRules;
     }
@@ -389,7 +421,6 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       debugPort,
       proxyRules,
       extensionDir,
-      profileUrl: profile.url,
     }), {
       detached: false,
       windowsHide: false,
