@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Database, Download, KeyRound, PackageCheck, RefreshCw, ServerCog, XCircle } from 'lucide-react';
 import { api } from '../api';
 import type { AdminSession, ClientReleaseStatus, HealthInfo } from '../types';
-import { Badge, Card, ErrorBanner, PageHead } from '../components/ui';
+import { Badge, Card, ErrorBanner, PageHead, SuccessBanner } from '../components/ui';
 
 function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return '—';
@@ -17,6 +17,7 @@ export function SystemView({ session }: { session: AdminSession }) {
   const [loadingRelease, setLoadingRelease] = useState(false);
   const [savingRelease, setSavingRelease] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   async function loadRelease() {
     try {
@@ -41,9 +42,11 @@ export function SystemView({ session }: { session: AdminSession }) {
     try {
       setSavingRelease(true);
       setError(null);
+      setSuccess(null);
       const result = await api.clientRelease.activate(selectedVersion);
       setRelease(result);
       setSelectedVersion(result.active.version);
+      setSuccess(`Versión v${result.active.version} activada correctamente.`);
     } catch (saveError: any) {
       setError(saveError.message);
     } finally {
@@ -58,6 +61,7 @@ export function SystemView({ session }: { session: AdminSession }) {
     <>
       <PageHead title="Servidor & Sistema" description="Diagnóstico del Worker y control de la versión de userFLOW publicada para los clientes." />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
 
       <div className="grid two">
         <Card className="card-pad">
