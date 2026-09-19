@@ -16,7 +16,8 @@
     "lucide-react": "^0.546.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "scrypt-js": "3.0.1"
+    "scrypt-js": "3.0.1",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@types/react": "^19.0.12",

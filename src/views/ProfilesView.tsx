@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
+import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, ManagedExtension, NetworkStrategy, Plan, Profile, ProfileExtensionMembership, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -22,7 +22,7 @@ type ProfilePlanMembership = {
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.15/userFLEX-Session-Manager-0.3.15-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.16/userFLEX-Session-Manager-0.3.16-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -116,6 +116,9 @@ export function ProfilesView() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [profilePlanMemberships, setProfilePlanMemberships] = useState<ProfilePlanMembership[]>([]);
   const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
+  const [extensions, setExtensions] = useState<ManagedExtension[]>([]);
+  const [profileExtensionMemberships, setProfileExtensionMemberships] = useState<ProfileExtensionMembership[]>([]);
+  const [selectedExtensionIds, setSelectedExtensionIds] = useState<string[]>([]);
   const [proxies, setProxies] = useState<ProxyRecord[]>([]);
   const [proxyDefaults, setProxyDefaults] = useState<ProfileProxyDefault[]>([]);
   const [sessionStates, setSessionStates] = useState<ProfileSessionState[]>([]);
@@ -151,7 +154,7 @@ export function ProfilesView() {
 
   async function load() {
     try {
-      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows] = await Promise.all([
+      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows, extensionRows, extensionMembershipRows] = await Promise.all([
         api.profiles.list(),
         api.proxies.list(),
         api.profileProxyDefaults.list(),
@@ -160,6 +163,8 @@ export function ProfilesView() {
         api.profilePlans.list(),
         api.clients.list(),
         api.assignments.list(),
+        api.extensions.list(),
+        api.profileExtensions.list(),
       ]);
       setProfiles(profileRows);
       setProxies(proxyRows);
@@ -169,6 +174,8 @@ export function ProfilesView() {
       setProfilePlanMemberships(membershipRows);
       setClients(clientRows);
       setAssignments(assignmentRows);
+      setExtensions(extensionRows);
+      setProfileExtensionMemberships(extensionMembershipRows);
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
@@ -202,6 +209,18 @@ export function ProfilesView() {
       .map((item) => item.plan_id);
   }
 
+  function extensionIdsFor(profileId: string) {
+    return profileExtensionMemberships
+      .filter((item) => item.profile_id === profileId)
+      .map((item) => item.extension_id);
+  }
+
+  function toggleExtension(extensionId: string) {
+    setSelectedExtensionIds((current) => current.includes(extensionId)
+      ? current.filter((id) => id !== extensionId)
+      : [...current, extensionId]);
+  }
+
   function validationClientsFor(profileId: string) {
     const ids = new Set(
       assignments
@@ -226,6 +245,7 @@ export function ProfilesView() {
     setNetworkStrategy(current?.network_strategy || 'auto');
     setExtensionStrategy(current?.extension_strategy || (initialAuth === 'manual' ? 'guard-only' : 'custom'));
     setSelectedPlanIds(current ? planIdsFor(current.id) : []);
+    setSelectedExtensionIds(current ? extensionIdsFor(current.id) : []);
     setShowLoginUsername(false);
     setShowLoginPassword(false);
     setEditor(value);
@@ -243,6 +263,7 @@ export function ProfilesView() {
     setNetworkStrategy('client-direct');
     setExtensionStrategy('guard-only');
     setSelectedPlanIds([]);
+    setSelectedExtensionIds([]);
     setShowLoginUsername(false);
     setShowLoginPassword(false);
     setEditor(null);
@@ -348,6 +369,7 @@ export function ProfilesView() {
 
       if (editor === 'new') setEditor(savedProfile);
       await api.profilePlans.set(savedProfile.id, selectedPlanIds);
+      await api.profileExtensions.set(savedProfile.id, selectedExtensionIds);
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
       await api.profileProxyDefaults.set(savedProfile.id, profileProxyId);
       const shouldSaveCredentials = authStrategy === 'credential-autofill'
@@ -1162,6 +1184,71 @@ export function ProfilesView() {
                 <option value="google" title={EXTENSION_STRATEGY_HELP.google}>GOOGLE</option>
                 <option value="custom" title={EXTENSION_STRATEGY_HELP.custom}>CUSTOM</option>
               </select>
+            </Field>
+
+            <Field
+              label={`Extensiones del perfil (${extensions.filter((item) => item.scope === 'global' && item.enabled && item.validation_status === 'runtime_valid').length + selectedExtensionIds.length})`}
+              className="span-2"
+              tooltip="Browser Guard siempre se carga aparte. Las extensiones globales vienen del panel Extensiones; aquí eliges las extensiones verificadas que solo deben aplicarse a este perfil."
+              help="Solo aparecen seleccionables las extensiones que ya pasaron la prueba real en userFLOW. Las globales están marcadas y no se pueden quitar desde este perfil."
+            >
+              <div className="managed-extension-picker">
+                <div className="managed-extension-system-row">
+                  <div>
+                    <div className="table-primary"><ShieldCheck size={13} /> Browser Guard</div>
+                    <div className="table-secondary">Sistema · obligatorio · estrategia {EXTENSION_STRATEGY_LABEL[extensionStrategy]}</div>
+                  </div>
+                  <Badge tone="ok">Siempre activo</Badge>
+                </div>
+
+                {extensions.filter((item) => item.scope === 'global').map((item) => {
+                  const ready = item.enabled && item.validation_status === 'runtime_valid';
+                  return (
+                    <label className={`managed-extension-option global ${ready ? '' : 'disabled'}`} key={item.id}>
+                      <input type="checkbox" checked={ready} disabled />
+                      <span className="managed-extension-option-body">
+                        <span className="table-primary"><Puzzle size={13} /> {item.name} <small>v{item.version}</small></span>
+                        <span className="table-secondary">
+                          Global · {item.validation_status === 'runtime_valid' ? (item.enabled ? 'activa' : 'desactivada') : item.validation_status}
+                        </span>
+                      </span>
+                      <Badge tone={ready ? 'ok' : item.validation_status === 'error' || item.validation_status === 'incompatible' ? 'bad' : 'warn'}>
+                        {ready ? 'Global' : 'No disponible'}
+                      </Badge>
+                    </label>
+                  );
+                })}
+
+                {extensions.filter((item) => item.scope === 'selective').map((item) => {
+                  const selectable = item.validation_status === 'runtime_valid';
+                  const selected = selectedExtensionIds.includes(item.id);
+                  return (
+                    <label className={`managed-extension-option ${selectable ? '' : 'disabled'}`} key={item.id}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={!selectable}
+                        onChange={() => toggleExtension(item.id)}
+                      />
+                      <span className="managed-extension-option-body">
+                        <span className="table-primary"><Puzzle size={13} /> {item.name} <small>v{item.version}</small></span>
+                        <span className="table-secondary">
+                          {selectable
+                            ? (item.enabled ? 'Verificada · disponible' : 'Verificada · se activará al habilitarla en Extensiones')
+                            : item.validation_message || 'Primero valida esta extensión en userFLOW.'}
+                        </span>
+                      </span>
+                      <Badge tone={selectable ? 'ok' : item.validation_status === 'error' || item.validation_status === 'incompatible' ? 'bad' : 'warn'}>
+                        {selectable ? 'Verificada' : item.validation_status}
+                      </Badge>
+                    </label>
+                  );
+                })}
+
+                {extensions.length === 0 && (
+                  <div className="help">Todavía no hay extensiones cargadas. Agrégalas y valídalas desde Administración → Extensiones.</div>
+                )}
+              </div>
             </Field>
 
             <Field

@@ -7,6 +7,9 @@ import type {
   DashboardStats,
   Device,
   HealthInfo,
+  ManagedExtension,
+  ExtensionValidationJob,
+  ProfileExtensionMembership,
   Plan,
   Profile,
   ProfileUsage,
@@ -114,6 +117,46 @@ export const api = {
     update: (id: string, input: Partial<Omit<Plan, 'id' | 'created_at' | 'updated_at'>>) =>
       request<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     remove: (id: string) => request<{ ok: true }>(`/api/plans/${id}`, { method: 'DELETE' }),
+  },
+
+  extensions: {
+    list: () => request<ManagedExtension[]>('/api/extensions'),
+    create: (input: { name: string; description?: string; scope: 'global' | 'selective'; package: File }) => {
+      const body = new FormData();
+      body.append('name', input.name);
+      body.append('description', input.description || '');
+      body.append('scope', input.scope);
+      body.append('package', input.package, input.package.name || 'extension.zip');
+      return request<ManagedExtension>('/api/extensions', { method: 'POST', body });
+    },
+    update: (id: string, input: Partial<Pick<ManagedExtension, 'name' | 'description' | 'scope' | 'enabled'>>) =>
+      request<ManagedExtension>(`/api/extensions/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    uploadPackage: (id: string, file: File) => {
+      const body = new FormData();
+      body.append('package', file, file.name || 'extension.zip');
+      return request<ManagedExtension>(`/api/extensions/${id}/package`, { method: 'POST', body });
+    },
+    setProfiles: (id: string, profileIds: string[]) =>
+      request<{ ok: true; extension_id: string; profile_ids: string[] }>(`/api/extensions/${id}/profiles`, {
+        method: 'POST',
+        body: JSON.stringify({ profileIds }),
+      }),
+    runtimeTest: (id: string) =>
+      request<{ ok: true; job_id: string; launch_url: string; expires_at: string }>(`/api/extensions/${id}/runtime-test`, {
+        method: 'POST',
+      }),
+    testStatus: (jobId: string) =>
+      request<{ ok: true; job: ExtensionValidationJob }>(`/api/extension-tests/${jobId}`),
+    remove: (id: string) => request<{ ok: true }>(`/api/extensions/${id}`, { method: 'DELETE' }),
+  },
+
+  profileExtensions: {
+    list: () => request<ProfileExtensionMembership[]>('/api/profile-extension-memberships'),
+    set: (profileId: string, extensionIds: string[]) =>
+      request<{ ok: true; profile_id: string; extension_ids: string[] }>(`/api/profiles/${profileId}/extensions`, {
+        method: 'POST',
+        body: JSON.stringify({ extensionIds }),
+      }),
   },
 
   profiles: {

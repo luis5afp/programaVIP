@@ -7,6 +7,7 @@ import { DashboardView } from './views/DashboardView';
 import { ClientsView } from './views/ClientsView';
 import { PlansView } from './views/PlansView';
 import { ProfilesView } from './views/ProfilesView';
+import { ExtensionsView } from './views/ExtensionsView';
 import { ProxiesView } from './views/ProxiesView';
 import { AssignmentsView } from './views/AssignmentsView';
 import { DevicesView } from './views/DevicesView';
@@ -43,6 +44,7 @@ export default function App() {
     case 'clients': content = <ClientsView onHistory={(client) => { setHistorySearch(client.name); setActivityTab('history'); setView('activity'); }} />; break;
     case 'plans': content = <PlansView />; break;
     case 'profiles': content = <ProfilesView />; break;
+    case 'extensions': content = <ExtensionsView />; break;
     case 'proxies': content = <ProxiesView />; break;
     case 'assignments': content = <AssignmentsView />; break;
     case 'devices': content = <DevicesView />; break;
