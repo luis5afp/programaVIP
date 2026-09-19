@@ -526,6 +526,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
       extension: {
         id: extension.id,
         name: extension.name,
+        manifestName: typeof extension.manifest?.name === 'string' ? extension.manifest.name : extension.name,
         version: extension.version,
         sha256: extension.package_sha256,
         size: Number(extension.package_size),
