@@ -2,7 +2,7 @@ import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } fro
 import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, NetworkStrategy, Plan, Profile, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
 type CaptureLaunch = {
@@ -138,6 +138,7 @@ export function ProfilesView() {
   const [networkStrategy, setNetworkStrategy] = useState<NetworkStrategy>('client-direct');
   const [extensionStrategy, setExtensionStrategy] = useState<ExtensionStrategy>('guard-only');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState('');
   const [imageObjectUrl, setImageObjectUrl] = useState<string | null>(null);
@@ -229,6 +230,7 @@ export function ProfilesView() {
     setShowLoginPassword(false);
     setEditor(value);
     setError(null);
+    setSuccess(null);
   }
 
   function closeEditor() {
@@ -354,7 +356,9 @@ export function ProfilesView() {
       if (shouldSaveCredentials) {
         await api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined);
       }
+      const wasEditing = Boolean(editor && editor !== 'new');
       closeEditor();
+      setSuccess(wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -367,6 +371,7 @@ export function ProfilesView() {
     try {
       setSessionAction(profile.id);
       setError(null);
+      setSuccess(null);
       const result = await api.profileSessions.capture(profile.id);
       setCaptureLaunch({
         profileId: profile.id,
@@ -434,6 +439,7 @@ export function ProfilesView() {
           setCaptureSaveMessage(
             `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
           );
+          setSuccess('Sesión guardada y snapshot actualizado correctamente.');
           return;
         }
       }
@@ -451,7 +457,10 @@ export function ProfilesView() {
     if (!confirm(`¿Borrar la sesión guardada de ${profileLabel(profile)}?`)) return;
     try {
       setSessionAction(profile.id);
+      setError(null);
+      setSuccess(null);
       await api.profileSessions.clear(profile.id);
+      setSuccess('Snapshot eliminado correctamente.');
       await load();
     } catch (clearError: any) {
       setError(clearError.message);
@@ -465,7 +474,9 @@ export function ProfilesView() {
     try {
       setSessionAction(profile.id);
       setError(null);
+      setSuccess(null);
       await api.profileSessions.clearCredentials(profile.id);
+      setSuccess('Credenciales de autofill eliminadas correctamente.');
       await load();
     } catch (clearError: any) {
       setError(clearError.message);
@@ -555,7 +566,10 @@ export function ProfilesView() {
   async function remove(profile: Profile) {
     if (!confirm(`¿Eliminar el perfil ${profileLabel(profile)}?`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.profiles.remove(profile.id);
+      setSuccess('Perfil eliminado correctamente.');
       await load();
     } catch (removeError: any) {
       setError(removeError.message);
@@ -610,6 +624,7 @@ export function ProfilesView() {
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
 
       {profiles.length === 0 ? (
         <Card>
@@ -842,6 +857,7 @@ export function ProfilesView() {
       {validationProfile && (
         <Modal
           title={`Validación · ${profileLabel(validationProfile)}`}
+          error={error}
           onClose={() => {
             setValidationProfile(null);
             setValidationResult(null);
@@ -1004,6 +1020,7 @@ export function ProfilesView() {
       {editor && (
         <Modal
           title={current ? `Editar perfil · ${profileLabel(current)}` : 'Nuevo perfil / web'}
+          error={error}
           onClose={closeEditor}
           actions={
             <>
@@ -1320,6 +1337,7 @@ export function ProfilesView() {
       {captureLaunch && (
         <Modal
           title={`Abrir Chromium · ${captureLaunch.profileName}`}
+          error={error}
           onClose={() => setCaptureLaunch(null)}
           actions={<button className="button secondary" onClick={() => setCaptureLaunch(null)}>Cerrar</button>}
         >
