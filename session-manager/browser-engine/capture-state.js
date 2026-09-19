@@ -445,7 +445,7 @@ export async function installCaptureAutomation({
         'font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
       ].join(';');
       const shadow = host.attachShadow({ mode: 'open' });
-      shadow.innerHTML = \`
+      shadow.innerHTML = `
         <style>
           :host { all: initial; }
           .wrap {
@@ -474,7 +474,7 @@ export async function installCaptureAutomation({
           </div>
           <div class="msg">El autofill está activo. Completa cualquier 2FA/CAPTCHA manualmente.</div>
         </div>
-      \`;
+      `;
       document.documentElement.appendChild(host);
       const message = shadow.querySelector('.msg');
       shadow.querySelector('[data-kind="username"]')?.addEventListener('click', (event) => {
