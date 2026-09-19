@@ -9,7 +9,7 @@ Aplicación local de Windows que abre el Chromium aislado usado para preparar y 
 3. No necesitas dejar la aplicación abierta.
 4. Desde **Perfiles** en el panel userFLEX pulsa **Cargar sesión** o **Renovar sesión**.
 5. El navegador puede pedir confirmación para abrir **userFLEX Session Manager**. Acepta esa apertura.
-6. Se abrirá un Chromium aislado para ese perfil. Completa el acceso/2FA/CAPTCHA y pulsa **Guardar sesión** en el panel flotante de userFLEX.
+6. Se abrirá un Chromium aislado para ese perfil. Cuando existan credenciales administradas, Session Manager puede completar los campos de acceso en el dominio del perfil o en un proveedor autorizado como `accounts.google.com`. Completa 2FA/CAPTCHA si aparece y pulsa **Guardar sesión** en el panel flotante de userFLEX.
 
 ## Red
 
