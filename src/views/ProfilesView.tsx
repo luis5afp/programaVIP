@@ -215,13 +215,6 @@ export function ProfilesView() {
       .map((item) => item.extension_id);
   }
 
-  function selectableExtensions() {
-    return extensions.filter((item) =>
-      item.scope === 'selective'
-      && item.validation_status === 'runtime_valid',
-    );
-  }
-
   function toggleExtension(extensionId: string) {
     setSelectedExtensionIds((current) => current.includes(extensionId)
       ? current.filter((id) => id !== extensionId)
