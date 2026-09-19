@@ -289,6 +289,7 @@ export async function installCaptureAutomation({
   extensionStrategy = 'custom',
   controlPort,
   controlSecret,
+  onSave = null,
 }) {
   if (!browser) throw new Error('El navegador de captura no está conectado.');
   const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
@@ -298,9 +299,10 @@ export async function installCaptureAutomation({
     password: String(credentials?.password || ''),
     controlUrl: 'http://127.0.0.1:' + Number(controlPort || 0),
     controlSecret: String(controlSecret || ''),
+    saveBinding: '__userflexCaptureSave_' + String(controlSecret || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 18),
   };
 
-  const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret }) => {
+  const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
     if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(location.origin)) return;
 
     const GLOBAL_KEY = '__userflexCaptureAutomationV312';
@@ -384,31 +386,39 @@ export async function installCaptureAutomation({
     };
 
     const save = async (button, message) => {
-      if (!controlUrl || !controlSecret) return;
       try {
         if (button) {
           button.disabled = true;
           button.textContent = 'Guardando...';
         }
         if (message) message.textContent = 'Capturando sesión completa...';
-        const response = await fetch(controlUrl + '/save', {
-          method: 'POST',
-          mode: 'cors',
-          cache: 'no-store',
-          headers: {
-            'content-type': 'application/json',
-            'x-userflex-secret': controlSecret,
-          },
-          body: JSON.stringify({ href: location.href }),
-        });
-        const responseText = await response.text();
-        let result = {};
-        try { result = responseText ? JSON.parse(responseText) : {}; } catch { result = { error: responseText }; }
-        if (!response.ok || result?.error) throw new Error(result?.error || ('HTTP ' + response.status));
-        if (button) button.textContent = 'Guardada · v' + (result.version || '?');
+
+        let result = null;
+        if (saveBinding && typeof globalThis[saveBinding] === 'function') {
+          result = await globalThis[saveBinding]({ href: location.href });
+        } else if (controlUrl && controlSecret) {
+          const response = await fetch(controlUrl + '/save', {
+            method: 'POST',
+            mode: 'cors',
+            cache: 'no-store',
+            headers: {
+              'content-type': 'application/json',
+              'x-userflex-secret': controlSecret,
+            },
+            body: JSON.stringify({ href: location.href }),
+          });
+          const responseText = await response.text();
+          try { result = responseText ? JSON.parse(responseText) : {}; } catch { result = { error: responseText }; }
+          if (!response.ok) throw new Error(result?.error || ('HTTP ' + response.status));
+        } else {
+          throw new Error('El control de captura no está disponible.');
+        }
+
+        if (result?.error) throw new Error(result.error);
+        if (button) button.textContent = 'Guardada · v' + (result?.version || '?');
         if (message) {
-          const cookies = Number(result.cookieCount || 0);
-          const idb = Number(result.indexedDbCount || 0);
+          const cookies = Number(result?.cookieCount || 0);
+          const idb = Number(result?.indexedDbCount || 0);
           message.textContent = 'Perfil guardado: ' + cookies + ' cookies, ' + idb + ' bases IndexedDB.';
         }
       } catch (error) {
@@ -520,6 +530,9 @@ export async function installCaptureAutomation({
     try {
       if (!prepared.has(page)) {
         prepared.add(page);
+        if (typeof onSave === 'function' && payload.saveBinding) {
+          await page.exposeFunction(payload.saveBinding, async (request) => onSave(request || {})).catch(() => null);
+        }
         await page.evaluateOnNewDocument(bootstrap, payload);
       }
       if (credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
