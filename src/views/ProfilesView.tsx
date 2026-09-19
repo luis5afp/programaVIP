@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
-import type { Assignment, AuthStrategy, BrowserEngine, Client, ExtensionStrategy, ManagedExtension, NetworkStrategy, Plan, Profile, ProfileExtensionMembership, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
+import type { Assignment, AuthStrategy, BrowserEngine, Client, CookieImportInspection, ExtensionStrategy, ManagedExtension, NetworkStrategy, Plan, Profile, ProfileExtensionMembership, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = Profile | 'new' | null;
@@ -22,6 +22,7 @@ type ProfilePlanMembership = {
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
 const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.16/userFLEX-Session-Manager-0.3.16-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
@@ -151,6 +152,10 @@ export function ProfilesView() {
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [showLoginUsername, setShowLoginUsername] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [profileUrl, setProfileUrl] = useState('');
+  const [cookieFile, setCookieFile] = useState<File | null>(null);
+  const [cookieInspection, setCookieInspection] = useState<CookieImportInspection | null>(null);
+  const [cookieInspecting, setCookieInspecting] = useState(false);
 
   async function load() {
     try {
@@ -236,6 +241,9 @@ export function ProfilesView() {
     replaceObjectUrl(null);
     setImageFile(null);
     setImageUrl(current?.image_url || '');
+    setProfileUrl(current?.url || '');
+    setCookieFile(null);
+    setCookieInspection(null);
     const initialAuth = current?.auth_strategy
       || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
     setBrowserEngine(current?.browser_engine || 'chrome-native');
@@ -257,6 +265,10 @@ export function ProfilesView() {
     replaceObjectUrl(null);
     setImageFile(null);
     setImageUrl('');
+    setProfileUrl('');
+    setCookieFile(null);
+    setCookieInspection(null);
+    setCookieInspecting(false);
     setBrowserEngine('chrome-native');
     setAuthStrategy('manual');
     setStorageStrategy('local-persistent');
@@ -311,6 +323,64 @@ export function ProfilesView() {
     }
   }
 
+  async function inspectCookieFile(file: File | null = cookieFile, url = profileUrl) {
+    if (!file) return null;
+    const targetUrl = url.trim();
+    if (!targetUrl) {
+      setCookieInspection(null);
+      setError('Ingresa primero la URL del perfil para saber qué cookies corresponden a esa web.');
+      return null;
+    }
+    try {
+      setCookieInspecting(true);
+      setError(null);
+      const result = await api.profileSessions.inspectCookies(file, targetUrl);
+      setCookieInspection(result.inspection);
+      if (result.inspection.matching_cookies < 1) {
+        const domains = result.inspection.domains.slice(0, 6).map((item) => item.domain).join(', ');
+        setError(
+          domains
+            ? `El JSON no tiene cookies aplicables a ${result.inspection.target_host}. Contiene: ${domains}.`
+            : `El JSON no tiene cookies válidas aplicables a ${result.inspection.target_host}.`,
+        );
+      }
+      return result.inspection;
+    } catch (inspectError: any) {
+      setCookieInspection(null);
+      setError(inspectError.message);
+      return null;
+    } finally {
+      setCookieInspecting(false);
+    }
+  }
+
+  async function chooseCookieFile(file: File | null) {
+    if (!file) return;
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.json') && !['application/json', 'text/json', ''].includes(file.type.toLowerCase())) {
+      setError('Selecciona un archivo JSON de cookies.');
+      return;
+    }
+    if (file.size < 1 || file.size > MAX_COOKIE_JSON_BYTES) {
+      setError('El archivo JSON de cookies no puede superar 8 MB.');
+      return;
+    }
+
+    setCookieFile(file);
+    setCookieInspection(null);
+    if (authStrategy === 'manual') setAuthStrategy('cookie-snapshot');
+    else if (authStrategy === 'credential-autofill') setAuthStrategy('hybrid');
+    setStorageStrategy('cookies-only');
+    if (extensionStrategy === 'guard-only') setExtensionStrategy('custom');
+    await inspectCookieFile(file, profileUrl);
+  }
+
+  function clearCookieFile() {
+    setCookieFile(null);
+    setCookieInspection(null);
+    setError(null);
+  }
+
   function defaultProxyId(profileId: string) {
     return proxyDefaults.find((item) => item.profile_id === profileId)?.proxy_id || null;
   }
@@ -341,6 +411,25 @@ export function ProfilesView() {
       if (networkStrategy === 'profile-proxy' && !proxyId) {
         throw new Error('La estrategia Proxy fijo del perfil requiere seleccionar un proxy.');
       }
+      if (cookieFile && !['cookie-snapshot', 'hybrid'].includes(authStrategy)) {
+        throw new Error('Para importar cookies JSON usa autenticación Snapshot de sesión o Híbrido.');
+      }
+
+      const profileUrlValue = String(form.get('url') || '').trim();
+      let checkedCookieInspection: CookieImportInspection | null = null;
+      if (cookieFile) {
+        const checked = await api.profileSessions.inspectCookies(cookieFile, profileUrlValue);
+        checkedCookieInspection = checked.inspection;
+        setCookieInspection(checked.inspection);
+        if (checked.inspection.matching_cookies < 1) {
+          const domains = checked.inspection.domains.slice(0, 6).map((item) => item.domain).join(', ');
+          throw new Error(
+            domains
+              ? `Ninguna cookie del archivo corresponde a ${checked.inspection.target_host}. Dominios encontrados: ${domains}.`
+              : `Ninguna cookie válida del archivo corresponde a ${checked.inspection.target_host}.`,
+          );
+        }
+      }
 
       let finalImageUrl = imageUrl.trim() || null;
       if (imageFile) {
@@ -350,7 +439,7 @@ export function ProfilesView() {
 
       const input = {
         name: label,
-        url: String(form.get('url') || '').trim(),
+        url: profileUrlValue,
         platform: String(form.get('category') || '').trim() || null,
         image_url: finalImageUrl,
         tags: [label],
@@ -378,9 +467,26 @@ export function ProfilesView() {
       if (shouldSaveCredentials) {
         await api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined);
       }
+      let importedCookies: { version: number; inspection: CookieImportInspection } | null = null;
+      if (cookieFile) {
+        const imported = await api.profileSessions.importCookies(savedProfile.id, cookieFile);
+        importedCookies = {
+          version: imported.version,
+          inspection: imported.inspection,
+        };
+      }
       const wasEditing = Boolean(editor && editor !== 'new');
       closeEditor();
-      setSuccess(wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
+      if (importedCookies) {
+        const ignored = importedCookies.inspection.ignored_cookies
+          + importedCookies.inspection.expired_cookies
+          + importedCookies.inspection.invalid_cookies;
+        setSuccess(
+          `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} · snapshot v${importedCookies.version} · ${importedCookies.inspection.matching_cookies} cookies de ${importedCookies.inspection.target_host} importadas${ignored ? ` · ${ignored} cookies de otras webs/expiradas/invalidas ignoradas` : ''}.`,
+        );
+      } else {
+        setSuccess(wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
+      }
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -1058,7 +1164,21 @@ export function ProfilesView() {
               <input className="input" name="label" defaultValue={current ? profileLabel(current) : ''} required maxLength={100} placeholder="chatgpt #1" />
             </Field>
             <Field label="URL HTTPS" className="span-2">
-              <input className="input" name="url" type="url" defaultValue={current?.url || ''} required placeholder="https://..." />
+              <input
+                className="input"
+                name="url"
+                type="url"
+                value={profileUrl}
+                onChange={(event) => {
+                  setProfileUrl(event.target.value);
+                  setCookieInspection(null);
+                }}
+                onBlur={() => {
+                  if (cookieFile && !cookieInspecting) void inspectCookieFile(cookieFile, profileUrl);
+                }}
+                required
+                placeholder="https://..."
+              />
             </Field>
             <Field
               label="Categoría"
@@ -1286,6 +1406,83 @@ export function ProfilesView() {
                 <option value="portable-first-party" title={STORAGE_STRATEGY_HELP['portable-first-party']}>Cookies + Local/Session Storage + IndexedDB</option>
                 <option value="netflix-local-device" title={STORAGE_STRATEGY_HELP['netflix-local-device']}>Netflix: cookies + storage local del dispositivo</option>
               </select>
+            </Field>
+
+            <Field
+              label="Cookies desde archivo JSON (opcional)"
+              className="span-2"
+              tooltip="Puedes usar un archivo que contenga cookies de una o varias páginas. userFLEX nunca mezcla todas las páginas: filtra por el dominio de la URL del perfil."
+              help="Formatos compatibles: arreglo JSON de cookies, { cookies: [...] }, Playwright storageState y exportaciones comunes de Cookie-Editor/Chrome. Al elegir un archivo se configura Snapshot + Solo cookies."
+            >
+              <div className="cookie-import-box">
+                <div className="cookie-import-head">
+                  <div>
+                    <div className="table-primary">Importar cookies existentes</div>
+                    <div className="table-secondary">
+                      Si el JSON contiene varias webs, solo se guardan las cookies que realmente aplican a {profileUrl ? (() => { try { return new URL(profileUrl).hostname; } catch { return 'la URL del perfil'; } })() : 'la URL del perfil'}.
+                    </div>
+                  </div>
+                  <div className="cookie-import-actions">
+                    <label className="button secondary small" style={{ cursor: 'pointer' }}>
+                      <Upload size={12} /> {cookieFile ? 'Cambiar JSON' : 'Elegir JSON'}
+                      <input
+                        type="file"
+                        accept=".json,application/json,text/json"
+                        hidden
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0] || null;
+                          event.currentTarget.value = '';
+                          if (file) void chooseCookieFile(file);
+                        }}
+                      />
+                    </label>
+                    {cookieFile && (
+                      <button type="button" className="button secondary small" onClick={clearCookieFile}>
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {cookieFile && (
+                  <div className="cookie-import-file">
+                    <span><strong>{cookieFile.name}</strong> · {(cookieFile.size / 1024).toFixed(cookieFile.size >= 1024 * 1024 ? 0 : 1)} KB</span>
+                    {cookieInspecting && <Badge tone="warn">Analizando...</Badge>}
+                  </div>
+                )}
+
+                {cookieInspection && (
+                  <div className="cookie-import-inspection">
+                    <div className="cookie-import-stats">
+                      <span><b>{cookieInspection.total_cookies}</b> en el archivo</span>
+                      <span className={cookieInspection.matching_cookies > 0 ? 'ok' : 'bad'}>
+                        <b>{cookieInspection.matching_cookies}</b> se usarán para {cookieInspection.target_host}
+                      </span>
+                      <span><b>{cookieInspection.ignored_cookies}</b> de otras webs</span>
+                      <span><b>{cookieInspection.expired_cookies}</b> expiradas</span>
+                      <span><b>{cookieInspection.invalid_cookies}</b> inválidas</span>
+                    </div>
+                    <div className="cookie-domain-list">
+                      {cookieInspection.domains.slice(0, 12).map((domain) => (
+                        <span className={domain.matchesProfile ? 'match' : ''} key={domain.domain}>
+                          {domain.domain} · {domain.count}
+                          {domain.matchesProfile ? ' ✓' : ''}
+                        </span>
+                      ))}
+                      {cookieInspection.domains.length > 12 && <span>+{cookieInspection.domains.length - 12} dominios</span>}
+                    </div>
+                    <div className="help">
+                      {cookieInspection.matching_cookies > 0
+                        ? `Al guardar se creará/reemplazará el snapshot usando únicamente las ${cookieInspection.matching_cookies} cookies compatibles con ${cookieInspection.target_host}. No se guardarán cookies de los demás dominios.`
+                        : 'Este archivo no sirve para la URL actual del perfil. Cambia la URL o usa otro JSON.'}
+                    </div>
+                  </div>
+                )}
+
+                {current && currentState?.status === 'active' && cookieFile && (
+                  <div className="help">Este archivo reemplazará el snapshot de cookies actual cuando guardes el perfil.</div>
+                )}
+              </div>
             </Field>
 
             <Field
