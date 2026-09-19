@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Clock3, KeyRound, MapPin, Network, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import type { ProxyRecord, ProxyValidationStatus } from '../types';
-import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead } from '../components/ui';
+import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
 
 type Editor = ProxyRecord | 'new' | null;
 
@@ -46,6 +46,7 @@ export function ProxiesView() {
   const [items, setItems] = useState<ProxyRecord[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
@@ -79,6 +80,8 @@ export function ProxiesView() {
     try {
       setSaving(true);
       setError(null);
+      setSuccess(null);
+      const editing = Boolean(editor && editor !== 'new');
       if (editor && editor !== 'new') await api.proxies.update(editor.id, input);
       else {
         await api.proxies.create({
@@ -91,6 +94,7 @@ export function ProxiesView() {
         });
       }
       setEditor(null);
+      setSuccess(editing ? 'Proxy actualizado y comprobado correctamente.' : 'Proxy creado y comprobado correctamente.');
       await load();
     } catch (submitError: any) {
       setError(submitError.message);
@@ -103,8 +107,10 @@ export function ProxiesView() {
     try {
       setCheckingId(item.id);
       setError(null);
+      setSuccess(null);
       const updated = await api.proxies.validate(item.id);
       setItems((current) => current.map((row) => row.id === item.id ? updated : row));
+      setSuccess(`Proxy ${item.name} comprobado correctamente.`);
     } catch (validationError: any) {
       setError(validationError.message);
     } finally {
@@ -115,7 +121,10 @@ export function ProxiesView() {
   async function remove(item: ProxyRecord) {
     if (!confirm(`¿Eliminar el proxy ${item.name}? Las asignaciones quedarán sin proxy.`)) return;
     try {
+      setError(null);
+      setSuccess(null);
       await api.proxies.remove(item.id);
+      setSuccess('Proxy eliminado correctamente.');
       await load();
     } catch (removeError: any) {
       setError(removeError.message);
@@ -130,13 +139,14 @@ export function ProxiesView() {
         title="Proxies"
         description="Cada proxy se comprueba desde el Worker. El protocolo, IP de salida, país, ciudad y zona horaria se detectan automáticamente; las contraseñas permanecen cifradas."
         actions={
-          <button className="button primary" onClick={() => setEditor('new')}>
+          <button className="button primary" onClick={() => { setError(null); setSuccess(null); setEditor('new'); }}>
             <Plus size={14} />
             Nuevo proxy
           </button>
         }
       />
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
       <Card>
         {items.length === 0 ? (
           <Empty title="No hay proxies" description="Agrega un proxy; userFLEX comprobará la conexión y detectará su tipo automáticamente." />
@@ -213,7 +223,7 @@ export function ProxiesView() {
                           <RefreshCw size={12} className={checkingId === item.id ? 'spin' : ''} />
                           {checkingId === item.id ? 'Comprobando…' : 'Comprobar'}
                         </button>
-                        <button className="button secondary small" onClick={() => setEditor(item)}>
+                        <button className="button secondary small" onClick={() => { setError(null); setSuccess(null); setEditor(item); }}>
                           <Pencil size={12} />
                           Editar
                         </button>
@@ -234,6 +244,7 @@ export function ProxiesView() {
       {editor && (
         <Modal
           title={current ? `Editar proxy · ${current.name}` : 'Nuevo proxy'}
+          error={error}
           onClose={() => !saving && setEditor(null)}
           actions={
             <>
