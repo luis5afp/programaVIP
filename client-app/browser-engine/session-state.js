@@ -365,7 +365,15 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
           if (descriptor?.set) descriptor.set.call(element, value);
           else element.value = value;
-          element.dispatchEvent(new Event('input', { bubbles: true }));
+          try {
+            element.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              inputType: 'insertText',
+              data: String(value),
+            }));
+          } catch {
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+          }
           element.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         } catch {
@@ -734,11 +742,10 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
     await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await verifyFirstPartyAuthCookies(page, target, cookies);
 
-    for (const extra of pages) {
+    const finalPages = await browser.pages();
+    for (const extra of finalPages) {
       if (extra === page) continue;
-      try {
-        if (/^(about:blank|chrome:\/\/newtab\/?)/i.test(extra.url())) await extra.close();
-      } catch {}
+      try { await extra.close(); } catch {}
     }
 
     return {
@@ -754,12 +761,19 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
   }
 }
 
-export async function navigateBrowserHome(debugPort, profileUrl) {
+export async function navigateBrowserHome(debugPort, profileUrl, { closeExtraPages = false } = {}) {
   const browser = await connectKaizenBrowser(debugPort);
   try {
     const pages = await browser.pages();
     const page = pages.find((item) => /^https?:/i.test(item.url())) || pages[0] || await browser.newPage();
     await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    if (closeExtraPages) {
+      const finalPages = await browser.pages();
+      for (const extra of finalPages) {
+        if (extra === page) continue;
+        try { await extra.close(); } catch {}
+      }
+    }
     return true;
   } finally {
     await browser.disconnect().catch(() => null);
