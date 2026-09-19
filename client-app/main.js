@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
 const execFileAsync = promisify(execFile);
@@ -214,6 +215,157 @@ async function apiRequest(pathName, options = {}) {
     throw new UserflexError(payload?.error || `HTTP ${response.status}`, payload?.code || 'HTTP_ERROR', response.status);
   }
   return payload;
+}
+
+async function apiBinaryRequest(pathName, options = {}) {
+  const headers = {
+    Accept: 'application/zip,application/octet-stream',
+    'X-Userflow-Client-Version': app.getVersion(),
+    ...(options.headers || {}),
+  };
+  if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  let response;
+  try {
+    response = await fetch(`${API_ORIGIN}${pathName}`, {
+      method: options.method || 'GET',
+      headers,
+      signal: AbortSignal.timeout(options.timeout || 30_000),
+    });
+  } catch (error) {
+    throw new UserflexError(`No se pudo descargar la extensión: ${error?.message || 'error de red'}`, 'EXTENSION_DOWNLOAD_FAILED');
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new UserflexError(detail || `HTTP ${response.status}`, 'EXTENSION_DOWNLOAD_FAILED', response.status);
+  }
+  const maxBytes = Number(options.maxBytes || 20 * 1024 * 1024);
+  const advertised = Number(response.headers.get('content-length') || 0);
+  if (advertised > maxBytes) throw new UserflexError('El paquete de extensión supera el tamaño permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length < 1 || buffer.length > maxBytes) {
+    throw new UserflexError('El paquete de extensión tiene un tamaño no permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
+  }
+  return buffer;
+}
+
+function safeManagedExtensionSegment(value, fallback = 'extension') {
+  const clean = String(value || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 100);
+  return clean || fallback;
+}
+
+function managedExtensionsRoot() {
+  return path.join(app.getPath('userData'), 'managedExtensionsData');
+}
+
+function validZipEntryName(value) {
+  const name = String(value || '').replace(/\\/g, '/');
+  if (!name || name.startsWith('/') || /^[A-Za-z]:\//.test(name) || name.includes('\0')) return null;
+  const parts = name.split('/');
+  if (parts.some((part) => part === '..')) return null;
+  return name.replace(/^\.\//, '');
+}
+
+async function fileExists(file) {
+  try { await fs.access(file); return true; } catch { return false; }
+}
+
+async function prepareManagedExtensions(extensionList = [], options = {}) {
+  const prepared = [];
+  const items = Array.isArray(extensionList) ? extensionList : [];
+  for (const item of items) {
+    const id = String(item?.id || '');
+    const sha256 = String(item?.sha256 || '').toLowerCase();
+    const version = String(item?.version || '');
+    const packageUrl = String(item?.packageUrl || '');
+    const size = Number(item?.size || 0);
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !/^[a-f0-9]{64}$/.test(sha256) || !packageUrl.startsWith('/api/')) {
+      throw new UserflexError('El servidor entregó metadatos de extensión inválidos.', 'EXTENSION_METADATA_INVALID');
+    }
+    if (!Number.isSafeInteger(size) || size < 1 || size > 20 * 1024 * 1024) {
+      throw new UserflexError('El tamaño declarado de la extensión no es válido.', 'EXTENSION_METADATA_INVALID');
+    }
+
+    const extensionRoot = path.join(managedExtensionsRoot(), safeManagedExtensionSegment(id));
+    const target = path.join(extensionRoot, sha256);
+    const markerPath = path.join(target, '.userflex-extension.json');
+    const manifestPath = path.join(target, 'manifest.json');
+    let cached = false;
+    try {
+      const marker = JSON.parse(await fs.readFile(markerPath, 'utf8'));
+      cached = marker?.sha256 === sha256
+        && marker?.version === version
+        && await fileExists(manifestPath);
+    } catch {}
+
+    if (!cached) {
+      const zipBytes = await apiBinaryRequest(packageUrl, {
+        token: options.token !== false,
+        timeout: 45_000,
+        maxBytes: 20 * 1024 * 1024,
+      });
+      if (zipBytes.length !== size) {
+        throw new UserflexError(`El paquete de ${item?.name || 'la extensión'} no coincide con el tamaño autorizado.`, 'EXTENSION_SIZE_MISMATCH');
+      }
+      const actualSha = crypto.createHash('sha256').update(zipBytes).digest('hex');
+      if (actualSha !== sha256) {
+        throw new UserflexError(`El paquete de ${item?.name || 'la extensión'} no coincide con el SHA-256 autorizado.`, 'EXTENSION_HASH_MISMATCH');
+      }
+
+      let archive;
+      try { archive = new AdmZip(zipBytes); } catch {
+        throw new UserflexError('No se pudo abrir el ZIP de la extensión.', 'EXTENSION_ZIP_INVALID');
+      }
+      const entries = archive.getEntries();
+      if (!entries.length || entries.length > 1500) {
+        throw new UserflexError('El ZIP de la extensión contiene una cantidad de archivos no válida.', 'EXTENSION_ZIP_INVALID');
+      }
+
+      await fs.rm(extensionRoot, { recursive: true, force: true });
+      await fs.mkdir(target, { recursive: true });
+      let extractedBytes = 0;
+      for (const entry of entries) {
+        const relative = validZipEntryName(entry.entryName);
+        if (!relative) throw new UserflexError('El ZIP contiene una ruta insegura.', 'EXTENSION_ZIP_PATH_INVALID');
+        const destination = path.resolve(target, relative);
+        const targetRoot = path.resolve(target) + path.sep;
+        if (destination !== path.resolve(target) && !destination.startsWith(targetRoot)) {
+          throw new UserflexError('El ZIP contiene una ruta insegura.', 'EXTENSION_ZIP_PATH_INVALID');
+        }
+        if (entry.isDirectory) {
+          await fs.mkdir(destination, { recursive: true });
+          continue;
+        }
+        const data = entry.getData();
+        extractedBytes += data.length;
+        if (extractedBytes > 80 * 1024 * 1024) {
+          throw new UserflexError('La extensión descomprimida supera el límite permitido.', 'EXTENSION_UNPACKED_TOO_LARGE');
+        }
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.writeFile(destination, data);
+      }
+
+      if (!await fileExists(manifestPath)) {
+        throw new UserflexError('La extensión descargada no contiene manifest.json en la raíz.', 'EXTENSION_MANIFEST_MISSING');
+      }
+      let manifest;
+      try { manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')); } catch {
+        throw new UserflexError('manifest.json no es válido después de descargar la extensión.', 'EXTENSION_MANIFEST_INVALID');
+      }
+      if (String(manifest?.version || '') !== version) {
+        throw new UserflexError('La versión descargada de la extensión no coincide con la autorizada.', 'EXTENSION_VERSION_MISMATCH');
+      }
+      await fs.writeFile(markerPath, JSON.stringify({ id, sha256, version, preparedAt: new Date().toISOString() }), 'utf8');
+    }
+
+    prepared.push({
+      id,
+      name: String(item?.name || ''),
+      version,
+      sha256,
+      dir: target,
+    });
+  }
+  return prepared;
 }
 
 function closeWorkspaceUsage(workspace, reason = 'profile_closed') {
@@ -1235,6 +1387,7 @@ async function openProfile(profileId) {
   const delivery = launch?.sessionDelivery || null;
   const credentials = launch?.credentialDelivery || null;
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
+  const managedExtensions = await prepareManagedExtensions(profile.extensions || []);
 
   const usage = {
     usageId: launch?.usage?.id || null,
@@ -1249,6 +1402,7 @@ async function openProfile(profileId) {
       connection,
       delivery,
       credentials,
+      managedExtensions,
       usageId: usage.usageId,
     });
     return {
@@ -1375,9 +1529,122 @@ async function handleClientTestProtocol(rawUrl) {
   }
 }
 
-globalThis.__userflowHandleProtocolUrl = handleClientTestProtocol;
+
+async function handleExtensionTestProtocol(rawUrl) {
+  let rawToken = '';
+  let testClientId = null;
+  let testProfileId = null;
+  try {
+    const parsed = new URL(String(rawUrl || ''));
+    if (parsed.protocol !== 'userflow-client:' || parsed.hostname !== 'extension-test') {
+      throw new UserflexError('Enlace de prueba de extensión no compatible.', 'EXTENSION_TEST_URL_INVALID');
+    }
+    const endpoint = String(parsed.searchParams.get('endpoint') || '').replace(/\/$/, '');
+    if (endpoint !== API_ORIGIN) {
+      throw new UserflexError('El enlace de prueba no pertenece al servidor autorizado.', 'EXTENSION_TEST_ORIGIN_INVALID');
+    }
+    rawToken = String(parsed.searchParams.get('token') || '');
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) {
+      throw new UserflexError('El ticket de prueba de extensión no es válido.', 'EXTENSION_TEST_TOKEN_INVALID');
+    }
+
+    const bootstrap = await apiRequest('/api/extension-test/bootstrap', {
+      method: 'POST',
+      token: false,
+      body: { token: rawToken },
+      timeout: 25_000,
+    });
+    const extension = bootstrap?.extension;
+    if (!bootstrap?.job?.id || !extension?.id || !extension?.packageUrl) {
+      throw new UserflexError('El servidor devolvió una prueba de extensión incompleta.', 'EXTENSION_TEST_INVALID');
+    }
+
+    const managedExtensions = await prepareManagedExtensions([extension], { token: false });
+    testClientId = `extension_validation_${bootstrap.job.id}`;
+    testProfileId = bootstrap.job.id;
+    const profile = {
+      id: testProfileId,
+      name: `Validación · ${extension.name || 'Extensión'}`,
+      url: 'https://example.com/',
+      sessionMode: 'manual-login',
+      runtime: {
+        browserEngine: 'chrome-native',
+        authStrategy: 'manual',
+        storageStrategy: 'local-persistent',
+        networkStrategy: 'client-direct',
+        extensionStrategy: 'guard-only',
+      },
+      extensions: [extension],
+    };
+
+    const launchResult = await getKaizenBrowserEngine().launch({
+      clientId: testClientId,
+      profile,
+      connection: { mode: 'direct', locked: false },
+      delivery: null,
+      credentials: null,
+      managedExtensions,
+      usageId: null,
+      ephemeral: true,
+    });
+    const inspection = await getKaizenBrowserEngine().inspectExtensions(testClientId, testProfileId);
+    const expectedName = String(extension.manifestName || extension.name || '').replace(/^__MSG_.+__$/, '').trim().toLowerCase();
+    const loadedByName = expectedName
+      ? inspection.items.some((item) => String(item?.name || '').trim().toLowerCase() === expectedName)
+      : false;
+    const loaded = loadedByName || inspection.count >= 2;
+    const result = {
+      ok: loaded,
+      loaded,
+      browser: launchResult?.browser || null,
+      extensionCount: inspection.count,
+      extensions: inspection.items,
+      stderr: inspection.stderr,
+    };
+    await apiRequest('/api/extension-test/report', {
+      method: 'POST',
+      token: false,
+      body: {
+        token: rawToken,
+        result,
+        error: loaded ? null : 'Chrome abrió, pero no confirmó la extensión administrada en chrome://extensions.',
+      },
+      timeout: 20_000,
+    });
+    await getKaizenBrowserEngine().close(testClientId, testProfileId, 'extension_test_complete').catch(() => null);
+    return result;
+  } catch (error) {
+    if (testClientId && testProfileId) {
+      await getKaizenBrowserEngine().close(testClientId, testProfileId, 'extension_test_failed').catch(() => null);
+    }
+    if (rawToken) {
+      await apiRequest('/api/extension-test/report', {
+        method: 'POST',
+        token: false,
+        body: {
+          token: rawToken,
+          result: { ok: false, loaded: false },
+          error: error?.message || String(error || 'La prueba de extensión falló.'),
+        },
+        timeout: 12_000,
+      }).catch(() => null);
+    }
+    console.error('userFLOW extension-test failed:', error?.message || error);
+    return { ok: false, error: serializeError(error) };
+  }
+}
+
+async function handleUserflowProtocolUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ''));
+    if (parsed.hostname === 'extension-test') return handleExtensionTestProtocol(rawUrl);
+  } catch {}
+  return handleClientTestProtocol(rawUrl);
+}
+
+globalThis.__userflowHandleProtocolUrl = handleUserflowProtocolUrl;
 for (const pendingUrl of Array.from(globalThis.__userflowPendingProtocolUrls || [])) {
-  void handleClientTestProtocol(pendingUrl);
+  void handleUserflowProtocolUrl(pendingUrl);
 }
 globalThis.__userflowPendingProtocolUrls = [];
 
