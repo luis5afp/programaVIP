@@ -143,7 +143,8 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgen
     '--remote-debugging-address=127.0.0.1',
     '--no-first-run',
     '--no-default-browser-check',
-    '--restore-last-session=false',
+    '--disable-session-crashed-bubble',
+    '--hide-crash-restore-bubble',
     '--start-maximized',
     '--disable-features=SignInProfileCreation,SigninConsistency',
     '--disable-password-saving',
@@ -186,6 +187,23 @@ async function killStrayProfileProcesses(userDataDir) {
   const escaped = userDataDir.replace(/'/g, "''");
   const script = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
   await runPowerShell(script);
+}
+
+async function clearStartupSessionArtifacts(userDataDir) {
+  // The browser profile itself must stay persistent, but tab/session restore is
+  // not part of a managed profile. Chrome can otherwise reopen the previous
+  // Netflix tab while userFLOW navigates its own bootstrap tab, producing two
+  // identical tabs and leaving the credential helper attached to the wrong one.
+  const profileDir = path.join(userDataDir, 'Default');
+  const artifacts = [
+    path.join(profileDir, 'Sessions'),
+    path.join(profileDir, 'Current Session'),
+    path.join(profileDir, 'Current Tabs'),
+    path.join(profileDir, 'Last Session'),
+    path.join(profileDir, 'Last Tabs'),
+  ];
+  await Promise.all(artifacts.map((artifact) =>
+    fsp.rm(artifact, { recursive: true, force: true }).catch(() => null)));
 }
 
 async function killProcessTree(proc) {
@@ -350,6 +368,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     } else {
       await fsp.mkdir(userDataDir, { recursive: true });
     }
+    await clearStartupSessionArtifacts(userDataDir);
 
     let relay = null;
     let proxyRules = null;
@@ -438,13 +457,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       if (credentialManaged && !credentialHelperEnabled) {
         throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
       }
-      if (credentialHelperEnabled) {
-        autofill = await installCredentialAutofill({
-          debugPort,
-          profileUrl: profile.url,
-          credentials,
-        });
-      }
 
       let restore = null;
       if (snapshotManaged) {
@@ -453,7 +465,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         }
 
         if (sessionVersionMatches) {
-          await navigateBrowserHome(debugPort, profile.url);
+          await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
             version: desiredSessionVersion,
@@ -472,7 +484,18 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           entry.sessionMarker = sessionMarker;
         }
       } else {
-        await navigateBrowserHome(debugPort, profile.url);
+        await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
+      }
+
+      // Install the helper only after the definitive managed tab exists.
+      // Injecting it before Chrome finishes startup can bind it to a restored
+      // stale tab instead of the tab the user actually sees.
+      if (credentialHelperEnabled) {
+        autofill = await installCredentialAutofill({
+          debugPort,
+          profileUrl: profile.url,
+          credentials,
+        });
       }
 
       entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
