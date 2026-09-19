@@ -58,6 +58,39 @@ const NETWORK_STRATEGY_HELP: Record<NetworkStrategy, string> = {
   auto: 'Modo de compatibilidad. userFLEX decide entre el proxy por defecto, la asignación del cliente y el comportamiento permitido por el tipo de perfil.',
 };
 
+const BROWSER_ENGINE_LABEL: Record<BrowserEngine, string> = {
+  'chrome-native': 'Chrome nativo',
+  nstchrome: 'nstchrome',
+};
+
+const AUTH_STRATEGY_LABEL: Record<AuthStrategy, string> = {
+  manual: 'Login manual',
+  'cookie-snapshot': 'Snapshot de sesión',
+  'credential-autofill': 'Autofill de credenciales',
+  hybrid: 'Híbrido',
+};
+
+const STORAGE_STRATEGY_LABEL: Record<StorageStrategy, string> = {
+  'local-persistent': 'Persistencia local',
+  'cookies-only': 'Solo cookies',
+  'portable-first-party': 'Snapshot completo',
+  'netflix-local-device': 'Netflix local',
+};
+
+const NETWORK_STRATEGY_LABEL: Record<NetworkStrategy, string> = {
+  'client-direct': 'IP local / directa',
+  'profile-proxy': 'Proxy fijo',
+  'assigned-proxy': 'Proxy por cliente',
+  auto: 'Automático',
+};
+
+const EXTENSION_STRATEGY_LABEL: Record<ExtensionStrategy, string> = {
+  'guard-only': 'Guard only',
+  main: 'MAIN',
+  google: 'GOOGLE',
+  custom: 'CUSTOM',
+};
+
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
 }
@@ -592,88 +625,141 @@ export function ProfilesView() {
             const credentialHelperSupported = credentialManaged || profileAuth === 'cookie-snapshot';
             const managed = profileAuth !== 'manual';
             const profilePlanIds = planIdsFor(profile.id);
+            const profilePlans = plans.filter((plan) => profilePlanIds.includes(plan.id));
+            const profileBrowser = (profile.browser_engine || 'chrome-native') as BrowserEngine;
+            const profileStorage = (profile.storage_strategy
+              || (profileAuth === 'manual' || profileAuth === 'credential-autofill' ? 'local-persistent' : 'portable-first-party')) as StorageStrategy;
+            const profileNetwork = (profile.network_strategy || 'auto') as NetworkStrategy;
+            const profileExtension = (profile.extension_strategy
+              || (profileAuth === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy;
             return (
               <Card className="profile-card" key={profile.id}>
-                <div className="profile-image">
-                  {profile.image_url ? (
-                    <img src={profile.image_url} alt="" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Globe2 size={28} />
-                  )}
-                </div>
-                <div className="profile-body">
-                  <h3>{profileLabel(profile)}</h3>
-                  <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
-                  <div className="profile-tags">
-                    <Badge tone={profile.platform ? 'neutral' : 'warn'}>{profile.platform || 'Sin categoría'}</Badge>
-                    <Badge tone={profilePlanIds.length > 0 ? 'neutral' : 'warn'}>
-                      {profilePlanIds.length === 0
-                        ? 'Sin plan'
-                        : `${profilePlanIds.length} ${profilePlanIds.length === 1 ? 'plan' : 'planes'}`}
-                    </Badge>
-                    <Badge tone="neutral">Motor: {profile.browser_engine || 'chrome-native'}</Badge>
-                    <Badge tone="neutral">Auth: {profileAuth}</Badge>
-                    <Badge tone="neutral">Red: {profile.network_strategy || 'auto'}</Badge>
-                    {selectedProxy ? (
-                      <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>
-                        Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
-                      </Badge>
-                    ) : (
-                      <Badge tone="neutral">{profile.network_strategy === 'assigned-proxy' ? 'Proxy por cliente' : 'IP local/directa'}</Badge>
-                    )}
-                    {snapshotManaged && (
-                      <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
-                        Snapshot: {session?.status === 'active' ? `activo · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
-                      </Badge>
-                    )}
-                    {credentialHelperSupported && (
-                      <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
-                        {profileAuth === 'cookie-snapshot'
-                          ? `Autofill respaldo: ${credentialHelperConfigured ? 'listo' : 'no configurado'}`
-                          : `Credenciales: ${credentialHelperConfigured ? 'listas' : 'faltan'}`}
-                      </Badge>
-                    )}
-                    {managed && selectedProxy && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
+                <div className="profile-card-header">
+                  <div className="profile-identity">
+                    <div className="profile-image">
+                      {profile.image_url ? (
+                        <img src={profile.image_url} alt={`Logo de ${profileLabel(profile)}`} referrerPolicy="no-referrer" />
+                      ) : (
+                        <Globe2 size={30} />
+                      )}
+                    </div>
+                    <div className="profile-title-block">
+                      <div className="profile-title-row">
+                        <h3>{profileLabel(profile)}</h3>
+                        <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
+                      </div>
+                      <a className="profile-url" href={profile.url} target="_blank" rel="noreferrer">{profile.url}</a>
+                      <div className="profile-summary-badges">
+                        <Badge tone={profile.platform ? 'neutral' : 'warn'}>{profile.platform || 'Sin categoría'}</Badge>
+                        <Badge tone={profilePlanIds.length > 0 ? 'neutral' : 'warn'}>
+                          {profilePlanIds.length === 0
+                            ? 'Sin plan'
+                            : `${profilePlanIds.length} ${profilePlanIds.length === 1 ? 'plan' : 'planes'}`}
+                        </Badge>
+                      </div>
+                    </div>
                   </div>
-                  {snapshotManaged && (
-                    <div className="toolbar" style={{ margin: '10px 0 0' }}>
-                      <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
-                        {session?.status === 'active' ? <RefreshCw size={12} /> : <KeyRound size={12} />}
-                        {session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
-                      </button>
-                      {session?.status === 'active' && (
-                        <button className="button danger small" disabled={sessionAction === profile.id} onClick={() => void clearSession(profile)}>
-                          Borrar snapshot
-                        </button>
+                  <div className="profile-plan-summary">
+                    <span className="profile-plan-label">Planes</span>
+                    <span className="profile-plan-value">
+                      {profilePlans.length > 0 ? profilePlans.map((plan) => plan.name).join(' · ') : 'Sin planes asignados'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="profile-config-grid">
+                  <section className="profile-config-section">
+                    <div className="profile-config-title">Acceso</div>
+                    <div className="profile-config-items">
+                      <Badge tone="neutral">Auth: {AUTH_STRATEGY_LABEL[profileAuth]}</Badge>
+                      {snapshotManaged && (
+                        <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
+                          Snapshot: {session?.status === 'active' ? `activo · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
+                        </Badge>
                       )}
-                    </div>
-                  )}
-                  <div className="profile-actions">
-                    <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
-                    <div className="toolbar" style={{ margin: 0 }}>
-                      <button className="button secondary small" onClick={() => void openValidation(profile)}>
-                        <ShieldCheck size={12} />
-                        Validar
-                      </button>
                       {credentialHelperSupported && (
-                        <button
-                          className="button secondary small"
-                          onClick={() => void openValidation(profile)}
-                          title={credentialHelperConfigured ? 'Comprueba el helper Email/Password con userFLOW' : 'Guarda credenciales primero para probar autofill'}
-                        >
-                          <KeyRound size={12} />
-                          Probar autofill
-                        </button>
+                        <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
+                          {profileAuth === 'cookie-snapshot'
+                            ? `Autofill: ${credentialHelperConfigured ? 'respaldo listo' : 'sin configurar'}`
+                            : `Credenciales: ${credentialHelperConfigured ? 'listas' : 'faltan'}`}
+                        </Badge>
                       )}
-                      <button className="button secondary small" onClick={() => openEditor(profile)}>
-                        <Pencil size={12} />
-                        Editar
-                      </button>
-                      <button className="button danger small" onClick={() => void remove(profile)}>
-                        <Trash2 size={12} />
-                        Eliminar
-                      </button>
                     </div>
+                  </section>
+
+                  <section className="profile-config-section">
+                    <div className="profile-config-title">Red</div>
+                    <div className="profile-config-items">
+                      <Badge tone="neutral">Red: {NETWORK_STRATEGY_LABEL[profileNetwork]}</Badge>
+                      {selectedProxy ? (
+                        <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>
+                          Proxy: {selectedProxy.name}{selectedProxy.enabled ? '' : ' · inactivo'}
+                        </Badge>
+                      ) : (
+                        <Badge tone={profileNetwork === 'profile-proxy' ? 'bad' : 'neutral'}>
+                          {profileNetwork === 'assigned-proxy'
+                            ? 'Proxy: asignado por cliente'
+                            : profileNetwork === 'client-direct'
+                              ? 'Proxy: no usado'
+                              : profileNetwork === 'profile-proxy'
+                                ? 'Proxy: falta configurar'
+                                : 'Proxy: sin valor por defecto'}
+                        </Badge>
+                      )}
+                      {managed && session?.public_ip && <Badge>IP: {session.public_ip}</Badge>}
+                    </div>
+                  </section>
+
+                  <section className="profile-config-section">
+                    <div className="profile-config-title">Entorno</div>
+                    <div className="profile-config-items">
+                      <Badge tone="neutral">Motor: {BROWSER_ENGINE_LABEL[profileBrowser]}</Badge>
+                      <Badge tone="neutral">Storage: {STORAGE_STRATEGY_LABEL[profileStorage]}</Badge>
+                      <Badge tone="neutral">Extensión: {EXTENSION_STRATEGY_LABEL[profileExtension]}</Badge>
+                    </div>
+                  </section>
+                </div>
+
+                <div className="profile-card-footer">
+                  <div className="profile-session-actions">
+                    {snapshotManaged && (
+                      <>
+                        <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
+                          {session?.status === 'active' ? <RefreshCw size={12} /> : <KeyRound size={12} />}
+                          {session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
+                        </button>
+                        {session?.status === 'active' && (
+                          <button className="button danger small" disabled={sessionAction === profile.id} onClick={() => void clearSession(profile)}>
+                            Borrar snapshot
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="profile-actions">
+                    <button className="button secondary small" onClick={() => void openValidation(profile)}>
+                      <ShieldCheck size={12} />
+                      Validar
+                    </button>
+                    {credentialHelperSupported && (
+                      <button
+                        className="button secondary small"
+                        onClick={() => void openValidation(profile)}
+                        title={credentialHelperConfigured ? 'Comprueba el helper Email/Password con userFLOW' : 'Guarda credenciales primero para probar autofill'}
+                      >
+                        <KeyRound size={12} />
+                        Probar autofill
+                      </button>
+                    )}
+                    <button className="button secondary small" onClick={() => openEditor(profile)}>
+                      <Pencil size={12} />
+                      Editar
+                    </button>
+                    <button className="button danger small" onClick={() => void remove(profile)}>
+                      <Trash2 size={12} />
+                      Eliminar
+                    </button>
                   </div>
                 </div>
               </Card>
