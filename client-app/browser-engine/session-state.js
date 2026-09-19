@@ -345,8 +345,8 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           element.placeholder,
           element.getAttribute('aria-label') || '',
         ].join(' ').toLowerCase();
-        if (type === 'password' || /password|passcode|contrase/.test(hint)) return 'password';
-        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier/.test(hint)) return 'username';
+        if (type === 'password' || /password|passwd|passcode|contrase/.test(hint)) return 'password';
+        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
         return null;
       };
 
@@ -362,6 +362,9 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       const setNativeValue = (element, value) => {
         if (!element) return false;
         try {
+          try { element.focus({ preventScroll: true }); } catch {
+            try { element.focus(); } catch {}
+          }
           const proto = HTMLInputElement.prototype;
           const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
           if (descriptor?.set) descriptor.set.call(element, value);
@@ -376,6 +379,8 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
             element.dispatchEvent(new Event('input', { bubbles: true }));
           }
           element.dispatchEvent(new Event('change', { bubbles: true }));
+          element.dispatchEvent(new Event('blur', { bubbles: true }));
+          try { element.blur(); } catch {}
           return true;
         } catch {
           return false;
@@ -519,8 +524,14 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           childList: true,
           subtree: true,
           attributes: true,
-          attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'style', 'class'],
+          attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'aria-label', 'style', 'class'],
         });
+
+        const retryTimer = setInterval(fillAvailable, 1000);
+        setTimeout(() => {
+          try { clearInterval(retryTimer); } catch {}
+          try { observer.disconnect(); } catch {}
+        }, 600000);
 
         addEventListener('focusin', () => {
           fillAvailable();
