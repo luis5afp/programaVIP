@@ -1,6 +1,6 @@
 import { ClientIdentity } from './auth';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
-import { managedProfileCredentials, managedSessionMaterial } from './profile-sessions';
+import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import {
   credentialAuthentication,
@@ -9,6 +9,11 @@ import {
   selectNetworkPolicy,
   snapshotAuthentication,
 } from './profile-runtime';
+import {
+  MIN_USERFLOW_VERSION,
+  clientVersionFrom,
+  versionAtLeast,
+} from './release-compat';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -29,6 +34,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
+      offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
+      minimumClientVersion: MIN_USERFLOW_VERSION,
     });
   }
 
@@ -145,6 +152,8 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
+    offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
+    minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
 
@@ -154,6 +163,15 @@ export async function clientLaunch(
   id: ClientIdentity,
   profileId: string,
 ) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(
+      426,
+      'CLIENT_UPDATE_REQUIRED',
+      `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior antes de abrir perfiles.`,
+    );
+  }
+
   const [memberships, assignments, profiles, defaults] = await Promise.all([
     sb(
       env,
@@ -242,6 +260,7 @@ export async function clientLaunch(
     if (!session || profile.session_ready !== true) {
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'Este perfil necesita una sesión capturada antes de abrirse.');
     }
+    validateCapturedMaterial(profile, session.material);
     const lockedNetwork = connection.mode === 'proxy' && connection.locked === true;
     const currentProxyIp = lockedNetwork ? inetHost(effectiveProxy?.public_ip) : null;
     sessionDelivery = {
@@ -295,6 +314,7 @@ export async function clientLaunch(
     configRevision: id.client.updated_at,
     lease: {
       expiresAt: id.subscription.expires_at,
+      offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
       serverTime: new Date().toISOString(),
     },
     profile: {
@@ -312,10 +332,27 @@ export async function clientLaunch(
     sessionDelivery,
     credentialDelivery,
     usage,
+    minimumClientVersion: MIN_USERFLOW_VERSION,
+    clientVersion,
   });
 }
 
-export async function clientHeartbeat(env: Env, id: ClientIdentity) {
+export async function clientHeartbeat(request: Request, env: Env, id: ClientIdentity) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    return json({
+      ok: false,
+      active: false,
+      revoke: true,
+      updateRequired: true,
+      code: 'CLIENT_UPDATE_REQUIRED',
+      minimumClientVersion: MIN_USERFLOW_VERSION,
+      clientVersion: clientVersion || null,
+      message: `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`,
+      serverTime: new Date().toISOString(),
+    });
+  }
+
   const sessionExpiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
   await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
     method: 'PATCH',
@@ -332,6 +369,7 @@ export async function clientHeartbeat(env: Env, id: ClientIdentity) {
     expiresAt: id.subscription.expires_at,
     sessionExpiresAt,
     serverTime: new Date().toISOString(),
+    minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
 

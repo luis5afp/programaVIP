@@ -1,4 +1,4 @@
-import { AdminIdentity } from './auth';
+import type { AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
 import {
   credentialAuthentication,
@@ -7,6 +7,17 @@ import {
   selectNetworkPolicy,
   snapshotAuthentication,
 } from './profile-runtime';
+import {
+  MIN_SESSION_MANAGER_VERSION,
+  MIN_USERFLOW_VERSION,
+  clientVersionFrom,
+  sessionManagerVersionFrom,
+  versionAtLeast,
+} from './release-compat';
+import {
+  SessionMaterialValidationError,
+  validateCapturedMaterialData,
+} from './session-material';
 import {
   Env,
   HttpError,
@@ -95,6 +106,41 @@ async function sessionRow(env: Env, profileId: string) {
     `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
   return rows?.[0] || null;
+}
+
+function assertUserflowVersion(request: Request) {
+  const version = clientVersionFrom(request);
+  if (!versionAtLeast(version, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(
+      426,
+      'CLIENT_UPDATE_REQUIRED',
+      `Esta prueba requiere userFLOW v${MIN_USERFLOW_VERSION} o superior.`,
+    );
+  }
+  return version;
+}
+
+function assertSessionManagerVersion(request: Request) {
+  const version = sessionManagerVersionFrom(request);
+  if (!versionAtLeast(version, MIN_SESSION_MANAGER_VERSION)) {
+    throw new HttpError(
+      426,
+      'SESSION_MANAGER_UPDATE_REQUIRED',
+      `Actualiza Session Manager a v${MIN_SESSION_MANAGER_VERSION} o superior.`,
+    );
+  }
+  return version;
+}
+
+export function validateCapturedMaterial(profile: any, material: any) {
+  try {
+    return validateCapturedMaterialData(profile, material);
+  } catch (error) {
+    if (error instanceof SessionMaterialValidationError) {
+      throw new HttpError(error.status, error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 async function proxyRecord(env: Env, proxyId: string | null) {
@@ -286,6 +332,26 @@ async function validationJob(env: Env, rawToken: string, allowRunning = true) {
   return job;
 }
 
+function safeDiagnosticUrl(value: unknown) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function safeRuntimeDiagnostic(value: any) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowed = ['browserEngine', 'authStrategy', 'storageStrategy', 'networkStrategy', 'extensionStrategy'];
+  const out: Record<string, string> = {};
+  for (const key of allowed) {
+    if (typeof value[key] === 'string') out[key] = value[key].slice(0, 64);
+  }
+  return out;
+}
+
 function safeValidationResult(value: any) {
   const restore = value?.restore && typeof value.restore === 'object' ? {
     cookiesInstalled: Number(value.restore.cookiesInstalled || 0),
@@ -293,7 +359,7 @@ function safeValidationResult(value: any) {
     indexedDbRestored: Number(value.restore.indexedDbRestored || 0),
     indexedDbTotal: Number(value.restore.indexedDbTotal || 0),
     storagePolicy: value.restore.storagePolicy || null,
-    pageUrl: value.restore.pageUrl || null,
+    pageUrl: safeDiagnosticUrl(value.restore.pageUrl),
   } : null;
   const autofill = value?.autofill && typeof value.autofill === 'object' ? {
     installed: value.autofill.installed === true,
@@ -301,7 +367,7 @@ function safeValidationResult(value: any) {
     origin: value.autofill.origin || null,
   } : null;
   const inspection = value?.inspection && typeof value.inspection === 'object' ? {
-    currentUrl: value.inspection.currentUrl || null,
+    currentUrl: safeDiagnosticUrl(value.inspection.currentUrl),
     loginLikeUrl: value.inspection.loginLikeUrl === true,
     usernameFieldVisible: value.inspection.usernameFieldVisible === true,
     passwordFieldVisible: value.inspection.passwordFieldVisible === true,
@@ -312,12 +378,12 @@ function safeValidationResult(value: any) {
   return {
     ok: value?.ok === true,
     outcome: typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null,
-    browser: value?.browser || null,
-    profileState: value?.profileState || null,
-    network: value?.network || null,
-    publicIp: value?.publicIp || null,
+    browser: typeof value?.browser === 'string' ? value.browser.slice(0, 160) : null,
+    profileState: typeof value?.profileState === 'string' ? value.profileState.slice(0, 80) : null,
+    network: typeof value?.network === 'string' ? value.network.slice(0, 80) : null,
+    publicIp: typeof value?.publicIp === 'string' ? value.publicIp.slice(0, 64) : null,
     sessionVersion: Number(value?.sessionVersion || 0),
-    runtime: value?.runtime || null,
+    runtime: safeRuntimeDiagnostic(value?.runtime),
     restore,
     autofill,
     inspection,
@@ -389,6 +455,31 @@ export async function adminProfileSessionRoutes(
       passwordChanged: Boolean(password),
     });
     return json({ ok: true, profile_id: profileId, login_username: loginUsername, has_credentials: true });
+  }
+
+  if (credentialsMatch && method === 'DELETE') {
+    const profileId = uuid(credentialsMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const runtime = runtimeForProfile(profile);
+    if (credentialAuthentication(runtime)) {
+      throw new HttpError(
+        409,
+        'CREDENTIALS_REQUIRED_BY_STRATEGY',
+        'La estrategia actual exige credenciales. Cambia primero la autenticación a snapshot o manual.',
+      );
+    }
+    await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    });
+    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ updated_at: new Date().toISOString() }),
+    });
+    await touchProfileClients(env, profileId);
+    await audit(env, request, 'admin', admin.userId, 'profile.credentials.clear', 'profile', profileId);
+    return json({ ok: true, profile_id: profileId, has_credentials: false });
   }
 
   const validationMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/validation$/i);
@@ -542,7 +633,7 @@ export async function adminProfileSessionRoutes(
   return null;
 }
 
-async function captureJob(env: Env, rawToken: string) {
+async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'complete') {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_CAPTURE_TOKEN');
   const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
   const rows = await sb(
@@ -550,7 +641,7 @@ async function captureJob(env: Env, rawToken: string) {
     `userflex_profile_session_jobs?select=id,profile_id,status,expires_at,used_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const job = rows?.[0];
-  if (!job || job.status !== 'pending' || job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_INVALID');
+  if (!job || job.status !== 'pending') throw new HttpError(401, 'CAPTURE_TOKEN_INVALID');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
@@ -559,6 +650,20 @@ async function captureJob(env: Env, rawToken: string) {
     });
     throw new HttpError(401, 'CAPTURE_TOKEN_EXPIRED');
   }
+
+  if (phase === 'bootstrap') {
+    if (job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    const claimedAt = new Date().toISOString();
+    const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ used_at: claimedAt }),
+    });
+    if (!claimed?.[0]) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED');
+    return { ...job, used_at: claimedAt };
+  }
+
+  if (!job.used_at) throw new HttpError(409, 'CAPTURE_NOT_STARTED', 'Abre primero el enlace de captura en Session Manager.');
   return job;
 }
 
@@ -567,6 +672,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   const method = request.method.toUpperCase();
 
   if (path === '/api/client-test/bootstrap' && method === 'POST') {
+    assertUserflowVersion(request);
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const job = await validationJob(env, rawToken, false);
@@ -614,6 +720,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     if (snapshotAuthentication(runtime)) {
       const session = await managedSessionMaterial(env, profile.id);
       if (!session) throw new HttpError(409, 'MANAGED_SESSION_NOT_READY');
+      validateCapturedMaterial(profile, session.material);
       sessionDelivery = {
         ready: true,
         mode: profile.session_mode,
@@ -662,6 +769,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/client-test/report' && method === 'POST') {
+    assertUserflowVersion(request);
     const body = await bodyJson(request, 150_000);
     const rawToken = text(body.token, 'token', 128);
     const job = await validationJob(env, rawToken);
@@ -686,9 +794,10 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
 
 
   if (path === '/api/session-manager/bootstrap' && method === 'POST') {
+    const sessionManagerVersion = assertSessionManagerVersion(request);
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
-    const job = await captureJob(env, rawToken);
+    const job = await captureJob(env, rawToken, 'bootstrap');
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await captureProxyForProfile(env, profile);
@@ -696,14 +805,17 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil híbrido ya no tiene credenciales guardadas.');
     }
-    if (proxy && proxy.enabled !== true) {
-      throw new HttpError(409, 'PROFILE_PROXY_DISABLED', 'El proxy del perfil está inactivo.');
-    }
-    if (proxy?.proxy_type === 'ssh') {
-      throw new HttpError(409, 'PROFILE_PROXY_PROTOCOL_UNSUPPORTED', 'El proxy SSH necesita un túnel local y todavía no puede usarse para capturar la sesión.');
+    if (proxy && !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'PROFILE_PROXY_UNAVAILABLE',
+        'El proxy del perfil está inactivo, usa un protocolo no compatible o falló validación.',
+      );
     }
     return json({
       ok: true,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
+      sessionManagerVersion,
       job: { id: job.id, expiresAt: job.expires_at },
       profile: {
         id: profile.id,
@@ -734,13 +846,13 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/session-manager/complete' && method === 'POST') {
+    assertSessionManagerVersion(request);
     const body = await bodyJson(request, 10_000_000);
     const rawToken = text(body.token, 'token', 128);
-    const job = await captureJob(env, rawToken);
+    const job = await captureJob(env, rawToken, 'complete');
+    const profile = await profileRow(env, job.profile_id);
     const material = body.material;
-    if (!material || typeof material !== 'object' || Array.isArray(material)) {
-      throw new HttpError(400, 'INVALID_SESSION_MATERIAL');
-    }
+    validateCapturedMaterial(profile, material);
     const serialized = JSON.stringify(material);
     if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
       throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE');
@@ -774,7 +886,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'completed', used_at: now }),
+      body: JSON.stringify({ status: 'completed' }),
     });
     await touchProfileClients(env, job.profile_id);
     return json({ ok: true, profile_id: job.profile_id, version, public_ip: publicIp });

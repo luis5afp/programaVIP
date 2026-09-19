@@ -1,5 +1,6 @@
 import type { AdminIdentity } from './auth';
 import { Env, HttpError, audit, bodyJson, json } from './core';
+import { MIN_USERFLOW_VERSION, versionAtLeast } from './release-compat';
 
 const RELEASE_BUCKET = 'userflex-client-releases';
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -129,10 +130,13 @@ async function releaseStatus(env: Env) {
     if (version === active.version) return active;
     return fetchJsonObject(env, `versions/${version}/manifest.json`, version).catch(() => null);
   }));
-  const available = manifests.filter(Boolean) as ReleaseManifest[];
+  const available = (manifests.filter(Boolean) as ReleaseManifest[])
+    .filter((manifest) => versionAtLeast(manifest.version, MIN_USERFLOW_VERSION));
 
   return {
     active,
+    minimumCompatibleVersion: MIN_USERFLOW_VERSION,
+    activeCompatible: versionAtLeast(active.version, MIN_USERFLOW_VERSION),
     available: available.map((manifest) => ({
       ...manifest,
       downloadUrl: `https://github.com/luis5afp/programaVIP/releases/download/client-v${manifest.version}/userFLOW-${manifest.version}-Setup.exe`,
@@ -192,6 +196,13 @@ export async function adminClientReleaseRoutes(
     const body = await bodyJson(request);
     const version = typeof body.version === 'string' ? body.version.trim() : '';
     if (!VERSION_RE.test(version)) throw new HttpError(400, 'INVALID_VERSION', 'La versión no es válida.');
+    if (!versionAtLeast(version, MIN_USERFLOW_VERSION)) {
+      throw new HttpError(
+        409,
+        'CLIENT_RELEASE_INCOMPATIBLE',
+        `El servidor requiere userFLOW v${MIN_USERFLOW_VERSION} o superior.`,
+      );
+    }
 
     const current = await fetchJsonObject(env, 'latest.json');
     if (current?.version === version) {

@@ -34,6 +34,26 @@ jobs:
         with:
           node-version: 22
 
+      - name: Require version bump for desktop code changes
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          git fetch origin $env:GITHUB_BASE_REF --depth=1
+          $changed = @(git diff --name-only ("origin/" + $env:GITHUB_BASE_REF) HEAD -- . ../session-manager)
+          $meaningful = @($changed | Where-Object {
+            $_ -notmatch '^client-app/package\.json$' -and
+            $_ -notmatch '^session-manager/package\.json$'
+          })
+          if ($meaningful.Count -gt 0) {
+            $basePackage = git show ("origin/" + $env:GITHUB_BASE_REF + ":client-app/package.json") | ConvertFrom-Json
+            $currentVersion = node -p "require('./package.json').version"
+            if ($currentVersion -eq $basePackage.version) {
+              Write-Host 'Desktop files changed:'
+              $meaningful | ForEach-Object { Write-Host " - $_" }
+              throw 'Desktop code changed without bumping client-app/package.json version.'
+            }
+          }
+
       - name: Validate userFLOW version parity
         shell: pwsh
         run: |

@@ -4,6 +4,8 @@ import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
+import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION } from './lib/release-compat';
+import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
 import { uploadProfileImage } from './lib/profile-images';
@@ -20,7 +22,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -38,6 +40,8 @@ async function api(request: Request, env: Env): Promise<Response> {
       version: APP_VERSION,
       supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
       proxyEncryptionConfigured: Boolean(env.USERFLEX_PROXY_MASTER_KEY),
+      minimumClientVersion: MIN_USERFLOW_VERSION,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
       timestamp: new Date().toISOString(),
     });
   }
@@ -68,7 +72,7 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (path.startsWith('/api/client/')) {
     const identity = await requireClient(request, env);
     if (path === '/api/client/catalog' && method === 'GET') return clientCatalog(env, identity);
-    if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(env, identity);
+    if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(request, env, identity);
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
     if (launch && method === 'POST') return clientLaunch(request, env, identity, launch[1]);
@@ -129,6 +133,16 @@ export default {
       }
       console.error('Unhandled userFLEX Worker error', error instanceof Error ? error.message : String(error));
       return json({ ok: false, error: 'Error interno del servidor.', code: 'INTERNAL_ERROR' }, 500);
+    }
+  },
+
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
+    try {
+      const result = await cleanupRuntimeState(env);
+      console.log('userFLEX runtime maintenance', JSON.stringify(result));
+    } catch (error) {
+      console.error('userFLEX runtime maintenance failed', error instanceof Error ? error.message : String(error));
+      throw error;
     }
   },
 };

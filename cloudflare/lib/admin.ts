@@ -383,6 +383,8 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         || previousRuntime.networkStrategy !== nextRuntime.networkStrategy
       ));
     const invalidateSnapshot = originChanged || snapshotPolicyChanged;
+    const clearCredentials = originChanged
+      || (previousRuntime.authStrategy !== 'manual' && nextRuntime.authStrategy === 'manual');
     if (invalidateSnapshot) patch.session_ready = false;
 
     const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, {
@@ -398,9 +400,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         headers: { Prefer: 'return=minimal' },
       });
     }
-    if (originChanged) {
-      // Never carry credentials from one site into a different origin. Otherwise
-      // an old password could be injected into a newly configured domain.
+    if (clearCredentials) {
+      // Never carry credentials into a different origin, and do not retain
+      // managed secrets after the profile returns to fully manual auth.
       await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
@@ -411,7 +413,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId, {
       originChanged,
       snapshotInvalidated: invalidateSnapshot,
-      credentialsCleared: originChanged,
+      credentialsCleared: clearCredentials,
     });
     return json(rows[0]);
   }

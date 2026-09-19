@@ -421,6 +421,9 @@ export async function clientLogin(request: Request, env: Env) {
       allowExternalBrowsing: client.allow_external_browsing === true,
     },
     plan: { id: plan.id, name: plan.name },
-    subscription: { expiresAt: subscription.expires_at },
+    subscription: {
+      expiresAt: subscription.expires_at,
+      offlineGraceMinutes: Number(subscription.offline_grace_minutes || 0),
+    },
   });
 }

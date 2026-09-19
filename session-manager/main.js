@@ -2,6 +2,8 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
 
+const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
+
 let readyWindow = null;
 let pendingProtocolUrl = null;
 let protocolRegistered = false;
@@ -88,7 +90,10 @@ function showReadyWindow(message = null) {
 async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
   const response = await fetch(`${endpoint}${pathName}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'X-Userflex-Session-Manager-Version': app.getVersion(),
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -109,9 +114,11 @@ function assertCaptureUrl(rawUrl) {
   const endpoint = url.searchParams.get('endpoint') || '';
   const token = url.searchParams.get('token') || '';
   const endpointUrl = new URL(endpoint);
-  if (endpointUrl.protocol !== 'https:') throw new Error('El endpoint de userFLEX debe usar HTTPS.');
+  if (endpointUrl.origin !== API_ORIGIN) {
+    throw new Error('El enlace de captura no pertenece al servidor oficial de userFLEX.');
+  }
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new Error('Token de captura inválido.');
-  return { endpoint: endpointUrl.origin, token };
+  return { endpoint: API_ORIGIN, token };
 }
 
 async function startCapture(rawUrl) {

@@ -300,6 +300,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     try { await entry.control?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
     await killProcessTree(entry.process);
+    if (entry.extensionDir) {
+      try { await fsp.rm(entry.extensionDir, { recursive: true, force: true }); } catch {}
+    }
     log.log?.(`Session Manager KAIZEN closed: ${reason}`);
   }
 
@@ -347,8 +350,11 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
-        const publicIp = proxy ? await browserPublicIp(debugPort) : await browserPublicIp(debugPort);
+        const publicIp = await browserPublicIp(debugPort);
         if (proxy && !publicIp) throw new Error('No se pudo validar la IP de salida mediante el proxy.');
+        if (proxy?.publicIp && publicIp !== proxy.publicIp) {
+          throw new Error(`La IP de captura no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp || 'sin IP'}.`);
+        }
         const completed = await onComplete({
           material: captured.material,
           publicIp,
@@ -412,6 +418,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
         void entry.control?.close().catch(() => null);
         void entry.relay?.close().catch(() => null);
+        if (entry.extensionDir) {
+          void fsp.rm(entry.extensionDir, { recursive: true, force: true }).catch(() => null);
+        }
       }
     });
 
@@ -422,6 +431,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (proxy) {
         const publicIp = await browserPublicIp(debugPort);
         if (!publicIp) throw new Error('El navegador no pudo salir a Internet mediante el proxy asignado.');
+        if (proxy.publicIp && publicIp !== proxy.publicIp) {
+          throw new Error(`La IP del navegador no coincide con el proxy validado. Esperada: ${proxy.publicIp}. Detectada: ${publicIp}.`);
+        }
         entry.publicIp = publicIp;
       }
 
