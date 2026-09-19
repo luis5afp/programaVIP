@@ -113,6 +113,7 @@ export function ExtensionsView() {
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!editor) return;
     try {
       setSaving(true);
       setError(null);
@@ -236,7 +237,7 @@ export function ExtensionsView() {
       <SuccessBanner message={success} />
 
       {testJob && (
-        <Card style={{ marginBottom: 12 }}>
+        <Card className="extension-test-card">
           <div className="toolbar" style={{ margin: 0 }}>
             <strong>Prueba real en userFLOW</strong>
             <Badge tone={testJob.status === 'pass' ? 'ok' : testJob.status === 'fail' || testJob.status === 'expired' ? 'bad' : 'warn'}>
