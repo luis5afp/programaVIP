@@ -25,6 +25,39 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.15/userFLEX-Session-Manager-0.3.15-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
+const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
+  'chrome-native': 'Usa Chrome instalado o el Chrome nativo autorizado. Es la opción recomendada para perfiles Google y para el uso normal.',
+  nstchrome: 'Usa el runtime nstchrome empaquetado dentro de userFLOW. Si ese runtime no está instalado o autorizado, el perfil no podrá abrirse.',
+};
+
+const EXTENSION_STRATEGY_HELP: Record<ExtensionStrategy, string> = {
+  'guard-only': 'Protección básica del navegador. Bloquea cambios o herramientas que el cliente no debe manipular, sin reglas especiales para un servicio concreto.',
+  main: 'Modo protegido general con Browser Guard endurecido. Se usa como política principal cuando no hace falta un tratamiento específico de Google.',
+  google: 'Modo protegido especializado para Google: contempla accounts.google.com, redirecciones regionales, autofill y validaciones específicas del flujo de acceso.',
+  custom: 'Política protegida genérica para perfiles que no son Google. Permite usar el guard endurecido sin las adaptaciones específicas del modo GOOGLE.',
+};
+
+const AUTH_STRATEGY_HELP: Record<AuthStrategy, string> = {
+  manual: 'El cliente inicia sesión manualmente. userFLEX no entrega snapshot ni credenciales; el estado queda guardado localmente en esa PC.',
+  'cookie-snapshot': 'Restaura la sesión que el administrador guardó previamente. Es útil para reutilizar cookies y estado de sesión sin repetir el login completo.',
+  'credential-autofill': 'Entrega temporalmente el correo y la contraseña al motor autorizado para completar el formulario. El usuario sigue resolviendo 2FA, CAPTCHA o confirmaciones cuando correspondan.',
+  hybrid: 'Combina snapshot y credenciales: primero restaura la sesión guardada y, si la web vuelve a pedir acceso, usa autofill como respaldo.',
+};
+
+const STORAGE_STRATEGY_HELP: Record<StorageStrategy, string> = {
+  'local-persistent': 'Conserva el estado solamente en el perfil local de la PC del cliente. No crea un snapshot portable para otras instalaciones.',
+  'cookies-only': 'Importa únicamente cookies. Puede ser suficiente en sitios simples, pero algunas webs modernas también necesitan Local Storage, Session Storage o IndexedDB.',
+  'portable-first-party': 'Restaura cookies, Local Storage, Session Storage e IndexedDB. Es el snapshot más completo para trasladar el estado de una sesión web.',
+  'netflix-local-device': 'Política especial para Netflix: combina cookies administradas con almacenamiento local propio del dispositivo.',
+};
+
+const NETWORK_STRATEGY_HELP: Record<NetworkStrategy, string> = {
+  'client-direct': 'No usa proxy. La web verá la IP pública real de la conexión del cliente.',
+  'profile-proxy': 'Todo el tráfico del perfil usa el proxy fijo seleccionado. Si el proxy no está disponible, el perfil falla cerrado para evitar salir por la IP real.',
+  'assigned-proxy': 'Cada cliente puede usar un proxy diferente asignado específicamente para este perfil.',
+  auto: 'Modo de compatibilidad. userFLEX decide entre el proxy por defecto, la asignación del cliente y el comportamiento permitido por el tipo de perfil.',
+};
+
 function profileLabel(profile: Profile) {
   return profile.tags?.[0] || profile.name;
 }
@@ -925,24 +958,44 @@ export function ProfilesView() {
               </div>
             </Field>
 
-            <Field label="Motor de navegador">
-              <select className="select" value={browserEngine} onChange={(event) => setBrowserEngine(event.target.value as BrowserEngine)}>
-                <option value="chrome-native">Chrome nativo / Chrome instalado</option>
-                <option value="nstchrome">nstchrome · requiere runtime autorizado empaquetado</option>
+            <Field
+              label="Motor de navegador"
+              tooltip="Define qué navegador abrirá este perfil. Pasa el cursor sobre cada opción para ver qué implica."
+            >
+              <select
+                className="select"
+                value={browserEngine}
+                title={BROWSER_ENGINE_HELP[browserEngine]}
+                onChange={(event) => setBrowserEngine(event.target.value as BrowserEngine)}
+              >
+                <option value="chrome-native" title={BROWSER_ENGINE_HELP['chrome-native']}>Chrome nativo / Chrome instalado</option>
+                <option value="nstchrome" title={BROWSER_ENGINE_HELP.nstchrome}>nstchrome · requiere runtime autorizado empaquetado</option>
               </select>
             </Field>
 
-            <Field label="Estrategia de extensión">
-              <select className="select" value={extensionStrategy} onChange={(event) => setExtensionStrategy(event.target.value as ExtensionStrategy)}>
-                <option value="guard-only">Guard only</option>
-                <option value="main">MAIN</option>
-                <option value="google">GOOGLE</option>
-                <option value="custom">CUSTOM</option>
+            <Field
+              label="Estrategia de extensión"
+              tooltip="Define el nivel de protección y las adaptaciones del Browser Guard. GOOGLE añade reglas específicas para el flujo de acceso de Google."
+            >
+              <select
+                className="select"
+                value={extensionStrategy}
+                title={EXTENSION_STRATEGY_HELP[extensionStrategy]}
+                onChange={(event) => setExtensionStrategy(event.target.value as ExtensionStrategy)}
+              >
+                <option value="guard-only" title={EXTENSION_STRATEGY_HELP['guard-only']}>Guard only</option>
+                <option value="main" title={EXTENSION_STRATEGY_HELP.main}>MAIN</option>
+                <option value="google" title={EXTENSION_STRATEGY_HELP.google}>GOOGLE</option>
+                <option value="custom" title={EXTENSION_STRATEGY_HELP.custom}>CUSTOM</option>
               </select>
             </Field>
 
-            <Field label="Autenticación" className="span-2">
-              <select className="select" value={authStrategy} onChange={(event) => {
+            <Field
+              label="Autenticación"
+              className="span-2"
+              tooltip="Define cómo entra el perfil a la cuenta: manualmente, restaurando una sesión, usando autofill o combinando snapshot + credenciales."
+            >
+              <select className="select" value={authStrategy} title={AUTH_STRATEGY_HELP[authStrategy]} onChange={(event) => {
                 const value = event.target.value as AuthStrategy;
                 setAuthStrategy(value);
                 if (value === 'manual' || value === 'credential-autofill') setStorageStrategy('local-persistent');
@@ -950,28 +1003,44 @@ export function ProfilesView() {
                 if (value === 'manual') setExtensionStrategy('guard-only');
                 else if (extensionStrategy === 'guard-only') setExtensionStrategy('custom');
               }}>
-                <option value="manual">Login manual / estado local persistente</option>
-                <option value="cookie-snapshot">Snapshot de cookies/sesión</option>
-                <option value="credential-autofill">Autocompletado de credenciales</option>
-                <option value="hybrid">Híbrido: snapshot + credenciales</option>
+                <option value="manual" title={AUTH_STRATEGY_HELP.manual}>Login manual / estado local persistente</option>
+                <option value="cookie-snapshot" title={AUTH_STRATEGY_HELP['cookie-snapshot']}>Snapshot de cookies/sesión</option>
+                <option value="credential-autofill" title={AUTH_STRATEGY_HELP['credential-autofill']}>Autocompletado de credenciales</option>
+                <option value="hybrid" title={AUTH_STRATEGY_HELP.hybrid}>Híbrido: snapshot + credenciales</option>
               </select>
             </Field>
 
-            <Field label="Persistencia / storage">
-              <select className="select" value={storageStrategy} onChange={(event) => setStorageStrategy(event.target.value as StorageStrategy)}>
-                <option value="local-persistent">Solo estado persistente del cliente</option>
-                <option value="cookies-only">Importar solo cookies</option>
-                <option value="portable-first-party">Cookies + Local/Session Storage + IndexedDB</option>
-                <option value="netflix-local-device">Netflix: cookies + storage local del dispositivo</option>
+            <Field
+              label="Persistencia / storage"
+              tooltip="Define qué datos de la sesión se conservan o restauran. Un snapshot completo incluye más que las cookies."
+            >
+              <select
+                className="select"
+                value={storageStrategy}
+                title={STORAGE_STRATEGY_HELP[storageStrategy]}
+                onChange={(event) => setStorageStrategy(event.target.value as StorageStrategy)}
+              >
+                <option value="local-persistent" title={STORAGE_STRATEGY_HELP['local-persistent']}>Solo estado persistente del cliente</option>
+                <option value="cookies-only" title={STORAGE_STRATEGY_HELP['cookies-only']}>Importar solo cookies</option>
+                <option value="portable-first-party" title={STORAGE_STRATEGY_HELP['portable-first-party']}>Cookies + Local/Session Storage + IndexedDB</option>
+                <option value="netflix-local-device" title={STORAGE_STRATEGY_HELP['netflix-local-device']}>Netflix: cookies + storage local del dispositivo</option>
               </select>
             </Field>
 
-            <Field label="Estrategia de red">
-              <select className="select" value={networkStrategy} onChange={(event) => setNetworkStrategy(event.target.value as NetworkStrategy)}>
-                <option value="client-direct">IP local/pública del cliente</option>
-                <option value="profile-proxy">Proxy fijo del perfil</option>
-                <option value="assigned-proxy">Proxy asignado por cliente</option>
-                <option value="auto">Automático / compatibilidad</option>
+            <Field
+              label="Estrategia de red"
+              tooltip="Define por qué conexión e IP saldrá este perfil. Si eliges un proxy fijo, userFLEX puede bloquear la navegación cuando el proxy falla para evitar fugas de IP."
+            >
+              <select
+                className="select"
+                value={networkStrategy}
+                title={NETWORK_STRATEGY_HELP[networkStrategy]}
+                onChange={(event) => setNetworkStrategy(event.target.value as NetworkStrategy)}
+              >
+                <option value="client-direct" title={NETWORK_STRATEGY_HELP['client-direct']}>IP local/pública del cliente</option>
+                <option value="profile-proxy" title={NETWORK_STRATEGY_HELP['profile-proxy']}>Proxy fijo del perfil</option>
+                <option value="assigned-proxy" title={NETWORK_STRATEGY_HELP['assigned-proxy']}>Proxy asignado por cliente</option>
+                <option value="auto" title={NETWORK_STRATEGY_HELP.auto}>Automático / compatibilidad</option>
               </select>
             </Field>
 
@@ -979,14 +1048,23 @@ export function ProfilesView() {
               <Field
                 label={networkStrategy === 'profile-proxy' ? 'Proxy fijo del perfil' : 'Proxy por defecto (opcional)'}
                 className="span-2"
+                tooltip={networkStrategy === 'profile-proxy'
+                  ? 'Selecciona el proxy concreto que utilizará siempre este perfil. Si deja de responder, el perfil no debe salir directamente por la IP del cliente.'
+                  : 'Selecciona el proxy que userFLEX puede usar como valor por defecto cuando el modo Automático lo requiera.'}
                 help={networkStrategy === 'profile-proxy'
                   ? 'Obligatorio. El perfil falla cerrado si este proxy no está disponible.'
                   : 'Compatibilidad: perfiles administrados usan este proxy; perfiles manuales pueden usar asignación o este valor.'}
               >
-                <select className="select" name="proxyId" defaultValue={currentProxyId || ''}>
-                  <option value="">Sin proxy configurado</option>
+                <select className="select" name="proxyId" defaultValue={currentProxyId || ''} title="Selecciona el proxy concreto que se usará como salida de red para este perfil.">
+                  <option value="" title="No se configura un proxy por defecto para este perfil.">Sin proxy configurado</option>
                   {proxies.map((proxy) => (
-                    <option value={proxy.id} key={proxy.id}>{proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}</option>
+                    <option
+                      value={proxy.id}
+                      key={proxy.id}
+                      title={`Usar ${proxy.name} (${proxy.host}:${proxy.port}) como proxy de este perfil${proxy.enabled ? '.' : '. Actualmente está inactivo.'}`}
+                    >
+                      {proxy.name} · {proxy.host}:{proxy.port}{proxy.enabled ? '' : ' · inactivo'}
+                    </option>
                   ))}
                 </select>
               </Field>
@@ -1049,10 +1127,10 @@ export function ProfilesView() {
               </>
             )}
 
-            <Field label="Estado">
-              <select className="select" name="enabled" defaultValue={current?.enabled === false ? 'false' : 'true'}>
-                <option value="true">Activo</option>
-                <option value="false">Inactivo</option>
+            <Field label="Estado" tooltip="Activo permite usar y asignar el perfil. Inactivo lo conserva configurado, pero evita su uso normal hasta volver a activarlo.">
+              <select className="select" name="enabled" defaultValue={current?.enabled === false ? 'false' : 'true'} title="Define si este perfil está disponible para uso normal.">
+                <option value="true" title="El perfil queda disponible para los planes y clientes que lo tengan asignado.">Activo</option>
+                <option value="false" title="El perfil se conserva, pero queda deshabilitado hasta que lo vuelvas a activar.">Inactivo</option>
               </select>
             </Field>
           </form>
