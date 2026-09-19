@@ -489,6 +489,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       executable,
       browser: null,
       automation: null,
+      saveCapture,
       devtoolsTimer: null,
       closed: false,
     };
@@ -551,9 +552,17 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     }
   }
 
+  async function saveActive() {
+    if (!active || active.closed || typeof active.saveCapture !== 'function') {
+      throw new Error('No hay una captura activa para guardar.');
+    }
+    return active.saveCapture();
+  }
+
   return {
     launch,
     close,
+    saveActive,
     get active() { return active; },
   };
 }

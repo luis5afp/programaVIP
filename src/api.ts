@@ -164,7 +164,7 @@ export const api = {
         { method: 'DELETE' },
       ),
     capture: (profileId: string) =>
-      request<{ ok: true; launch_url: string; expires_at: string }>(`/api/profiles/${profileId}/session-capture`, {
+      request<{ ok: true; launch_url: string; save_url: string; expires_at: string }>(`/api/profiles/${profileId}/session-capture`, {
         method: 'POST',
       }),
     validate: (profileId: string, clientId?: string | null) =>

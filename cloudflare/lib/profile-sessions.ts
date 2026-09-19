@@ -688,6 +688,7 @@ export async function adminProfileSessionRoutes(
     });
     const endpoint = url.origin;
     const launchUrl = `userflex-session://capture?endpoint=${encodeURIComponent(endpoint)}&token=${encodeURIComponent(rawToken)}`;
+    const saveUrl = `userflex-session://save?endpoint=${encodeURIComponent(endpoint)}&token=${encodeURIComponent(rawToken)}`;
     await audit(env, request, 'admin', admin.userId, 'profile.session.capture.request', 'profile', profileId, {
       jobId: jobs?.[0]?.id || null,
       expiresAt,
@@ -695,7 +696,7 @@ export async function adminProfileSessionRoutes(
       proxyType: proxy?.proxy_type || null,
       networkMode: proxy ? 'proxy' : 'direct',
     });
-    return json({ ok: true, launch_url: launchUrl, expires_at: expiresAt });
+    return json({ ok: true, launch_url: launchUrl, save_url: saveUrl, expires_at: expiresAt });
   }
 
   const clearMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session$/i);
