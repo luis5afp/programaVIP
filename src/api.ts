@@ -4,6 +4,7 @@ import type {
   AuditLog,
   Client,
   ClientReleaseStatus,
+  CookieImportInspection,
   DashboardStats,
   Device,
   HealthInfo,
@@ -196,6 +197,29 @@ export const api = {
 
   profileSessions: {
     list: () => request<ProfileSessionState[]>('/api/profile-session-states'),
+    inspectCookies: (file: File, url: string) => {
+      const body = new FormData();
+      body.append('cookies', file, file.name || 'cookies.json');
+      body.append('url', url);
+      return request<{ ok: true; inspection: CookieImportInspection }>('/api/cookie-import/inspect', {
+        method: 'POST',
+        body,
+      });
+    },
+    importCookies: (profileId: string, file: File) => {
+      const body = new FormData();
+      body.append('cookies', file, file.name || 'cookies.json');
+      return request<{
+        ok: true;
+        profile_id: string;
+        version: number;
+        imported_at: string;
+        inspection: CookieImportInspection;
+      }>(`/api/profiles/${profileId}/session-import`, {
+        method: 'POST',
+        body,
+      });
+    },
     credentials: (profileId: string, loginUsername: string, password?: string) =>
       request<{ ok: true; profile_id: string; login_username: string; has_credentials: true }>(
         `/api/profiles/${profileId}/managed-credentials`,
