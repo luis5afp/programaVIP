@@ -2,6 +2,7 @@ import { ClientIdentity } from './auth';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
+import { managedExtensionsForProfiles } from './extensions';
 import {
   credentialAuthentication,
   proxyRuntimeUsable,
@@ -41,7 +42,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
 
   const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults, sessions, assignments, credentials] = await Promise.all([
+  const [profiles, defaults, sessions, assignments, credentials, extensionMap] = await Promise.all([
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=in.(${ids})&enabled=eq.true`,
@@ -62,6 +63,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       env,
       `userflex_profile_credentials?select=profile_id,updated_at&profile_id=in.(${ids})`,
     ),
+    managedExtensionsForProfiles(env, profileIds),
   ]);
 
   const proxyIds = [...new Set([
@@ -132,6 +134,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         sessionVersion: Number(session?.session_version || 0),
         credentialVersion: credentialMap.get(String(profile.id))?.updated_at || null,
         runtime,
+        extensions: extensionMap.get(profile.id) || [],
         networkIdentity: {
           locked: networkPolicy.locked,
           publicIp: currentPublicIp,
@@ -197,6 +200,8 @@ export async function clientLaunch(
   const assignment = assignments?.[0] || null;
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+  const extensionMap = await managedExtensionsForProfiles(env, [profileId]);
+  const managedExtensions = extensionMap.get(profileId) || [];
 
   const runtime = runtimeForProfile(profile);
   const snapshotRequired = snapshotAuthentication(runtime);
@@ -306,6 +311,7 @@ export async function clientLaunch(
     networkStrategy: runtime.networkStrategy,
     networkLocked: connection.locked === true,
     sessionVersion: sessionDelivery.version || 0,
+    extensionCount: managedExtensions.length,
   });
 
   return json({
@@ -327,6 +333,7 @@ export async function clientLaunch(
       sessionMode: profile.session_mode,
       sessionReady: (!snapshotRequired || profile.session_ready === true),
       runtime,
+      extensions: managedExtensions,
     },
     connection,
     sessionDelivery,
