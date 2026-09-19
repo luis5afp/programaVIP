@@ -1,4 +1,5 @@
 import net from 'node:net';
+import dns from 'node:dns/promises';
 import tls from 'node:tls';
 import { SocksClient } from 'socks';
 
@@ -174,6 +175,38 @@ async function connectUpstreamWithRetry(proxy, destination, attempts = 3) {
       }
     }
   }
+
+  const host = String(destination?.host || '').trim();
+  const shouldResolveLocally = proxy.type === 'socks5'
+    && isGoogleAccountsHost(host)
+    && net.isIP(host) === 0;
+
+  if (shouldResolveLocally) {
+    try {
+      const resolved = await dns.lookup(host, { all: true, verbatim: true });
+      const unique = [];
+      for (const item of resolved) {
+        const address = String(item?.address || '').trim();
+        if (!address || unique.includes(address)) continue;
+        unique.push(address);
+      }
+      unique.sort((a, b) => Number(net.isIPv6?.(a) || 0) - Number(net.isIPv6?.(b) || 0));
+
+      for (const address of unique.slice(0, 6)) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            return await connectUpstream(proxy, { ...destination, host: address });
+          } catch (error) {
+            lastError = error;
+            if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        }
+      }
+    } catch (error) {
+      lastError = lastError || error;
+    }
+  }
+
   throw lastError instanceof Error ? lastError : new Error(String(lastError || 'conexión rechazada'));
 }
 
@@ -205,7 +238,7 @@ async function httpsProbe(proxy, { host, path = '/', port = 443, method = 'HEAD'
         socket.once('error', fail);
         socket.once('secureConnect', () => {
           socket.write(
-            `${method} ${path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: userFLEX-proxy-check/0.3.13\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
+            `${method} ${path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: userFLEX-proxy-check/0.3.14\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
           );
         });
         socket.on('data', (chunk) => {

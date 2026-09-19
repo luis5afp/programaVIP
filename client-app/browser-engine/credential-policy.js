@@ -28,6 +28,20 @@ export function credentialAutofillOrigins(profileUrl, extensionStrategy = 'custo
   return [...origins];
 }
 
+export function canonicalGoogleAccountsUrl(value) {
+  try {
+    const target = new URL(String(value || ''));
+    const host = normalizeHost(target.hostname);
+    if (target.protocol !== 'https:' || host === 'accounts.google.com') return null;
+    if (!isTrustedGoogleAccountsHost(host)) return null;
+    if (!/^\/accounts\/SetSID(?:\/|$)/i.test(target.pathname)) return null;
+    target.hostname = 'accounts.google.com';
+    return target.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function credentialAutofillAllowsUrl(value, allowedOrigins) {
   try {
     const target = new URL(String(value || ''));
