@@ -31,6 +31,8 @@ jobs:
         run: node --experimental-strip-types scripts/browser-launch-regression.test.ts
       - name: Test Google auth redirect autofill
         run: node --experimental-strip-types scripts/google-autofill-policy.test.ts
+      - name: Test Google profile configuration safeguards
+        run: node --experimental-strip-types scripts/google-profile-configuration.test.ts
       - name: Test capture retry token lifecycle
         run: node --experimental-strip-types scripts/capture-retry-regression.test.ts
       - name: Test live proxy validation before capture

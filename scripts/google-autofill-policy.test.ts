@@ -73,4 +73,25 @@ assert.match(
   'Session Manager must emit a native input event for controlled fields',
 );
 
+assert.match(
+  clientState,
+  /password\|passwd\|passcode/,
+  'client autofill must recognize Google Passwd/password variants',
+);
+assert.match(
+  captureEngine,
+  /password\|passwd\|passcode/,
+  'Session Manager capture must recognize Google Passwd/password variants',
+);
+assert.match(
+  clientState,
+  /setInterval\(fillAvailable, 1000\)[\s\S]{0,220}600000/,
+  'client autofill must keep retrying across delayed Google login steps',
+);
+assert.match(
+  captureEngine,
+  /setInterval\(autofill,1000\)[\s\S]{0,220}600000/,
+  'Session Manager capture autofill must stay active for long login flows',
+);
+
 console.log('Google/redirect autofill policy: OK');

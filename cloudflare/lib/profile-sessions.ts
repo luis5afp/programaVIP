@@ -257,8 +257,11 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
     checks.push({ key, label, status, detail });
   };
 
+  let googleProfile = runtime.extensionStrategy === 'google';
   try {
     const target = new URL(profile.url);
+    const host = target.hostname.toLowerCase();
+    googleProfile = googleProfile || host === 'google.com' || host.endsWith('.google.com');
     add('url', 'URL del perfil', ['http:', 'https:'].includes(target.protocol) ? 'pass' : 'fail', target.origin);
   } catch {
     add('url', 'URL del perfil', 'fail', 'La URL no es válida.');
@@ -269,15 +272,33 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
     'Motor de navegador',
     runtime.browserEngine === 'nstchrome' ? 'warn' : 'pass',
     runtime.browserEngine === 'nstchrome'
-      ? 'nstchrome requiere que el runtime autorizado esté instalado en el equipo de prueba/cliente.'
+      ? (googleProfile
+        ? 'Para perfiles Google se recomienda Chrome nativo. nstchrome solo debe usarse si el runtime autorizado está realmente instalado.'
+        : 'nstchrome requiere que el runtime autorizado esté instalado en el equipo de prueba/cliente.')
       : 'Chrome nativo se validará en el equipo que ejecute userFLOW.',
   );
 
   const credentials = await credentialRow(env, profile.id);
   if (credentialAuthentication(runtime)) {
-    add('credentials', 'Credenciales', credentials ? 'pass' : 'fail', credentials ? 'Credenciales cifradas disponibles.' : 'Faltan credenciales administradas.');
+    add(
+      'credentials',
+      runtime.authStrategy === 'hybrid' ? 'Autofill + credenciales' : 'Credenciales',
+      credentials ? 'pass' : 'fail',
+      credentials
+        ? (googleProfile ? 'Credenciales cifradas listas para autofill en Google/Google Accounts.' : 'Credenciales cifradas disponibles.')
+        : 'Faltan credenciales administradas.',
+    );
   } else if (runtime.authStrategy === 'cookie-snapshot') {
-    add('credentials', 'Autofill opcional', credentials ? 'pass' : 'warn', credentials ? 'Hay credenciales disponibles como respaldo.' : 'No hay credenciales de respaldo; el snapshot puede funcionar igualmente.');
+    add(
+      'credentials',
+      'Autofill opcional',
+      credentials ? (googleProfile ? 'warn' : 'pass') : 'warn',
+      credentials
+        ? (googleProfile
+          ? 'Hay credenciales guardadas, pero en modo snapshot el autofill es solo respaldo. Usa modo híbrido si quieres exigir snapshot + autofill.'
+          : 'Hay credenciales disponibles como respaldo.')
+        : 'No hay credenciales de respaldo; el snapshot puede funcionar igualmente.',
+    );
   } else {
     add('credentials', 'Credenciales', 'pass', 'Este perfil no necesita credenciales administradas.');
   }
@@ -324,7 +345,18 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
     }
   } catch {}
 
-  const network = await profileValidationNetwork(env, profile, clientId);
+  let network: any = await profileValidationNetwork(env, profile, clientId);
+  let networkLiveError: string | null = null;
+  if (network.proxy) {
+    try {
+      const checkedProxy = await liveValidateCaptureProxy(env, network.proxy);
+      network = { ...network, proxy: checkedProxy, ready: true };
+    } catch (error) {
+      networkLiveError = error instanceof Error ? error.message : String(error || 'El proxy no respondió.');
+      network = { ...network, ready: false };
+    }
+  }
+
   if (network.mode === 'missing-client') {
     add('network', 'Red', 'fail', 'Selecciona un cliente para probar su proxy asignado.');
   } else if (!network.ready) {
@@ -332,9 +364,10 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
       'network',
       'Red',
       'fail',
-      network.required && !network.proxy
-        ? 'La estrategia exige un proxy pero no hay uno disponible.'
-        : 'El proxy seleccionado está deshabilitado, usa un protocolo no compatible o falló validación.',
+      networkLiveError
+        || (network.required && !network.proxy
+          ? 'La estrategia exige un proxy pero no hay uno disponible.'
+          : 'El proxy seleccionado está deshabilitado, usa un protocolo no compatible o falló validación.'),
     );
   } else if (network.proxy) {
     add(
