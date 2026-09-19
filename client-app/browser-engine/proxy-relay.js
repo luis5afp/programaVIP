@@ -154,6 +154,28 @@ async function connectUpstream(proxy, destination) {
   return { socket: result.socket, leftover: null };
 }
 
+
+export async function probeKaizenProxyDestination(input, destination) {
+  const proxy = normalizedProxy(input);
+  const target = {
+    host: cleanHost(destination?.host),
+    port: cleanPort(destination?.port),
+  };
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const tunnel = await connectUpstream(proxy, target);
+      try { tunnel.socket.destroy(); } catch {}
+      return { ok: true, destination: target, upstream: { type: proxy.type, host: proxy.host, port: proxy.port } };
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 200 : 500));
+    }
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError || 'conexión rechazada');
+  throw new Error(`El proxy no pudo conectar con ${target.host}:${target.port}: ${detail}`);
+}
+
 function serveClient(clientSocket, proxy, sockets) {
   sockets.add(clientSocket);
   let stage = 'greeting';
