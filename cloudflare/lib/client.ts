@@ -336,7 +336,22 @@ export async function clientLaunch(
   });
 }
 
-export async function clientHeartbeat(env: Env, id: ClientIdentity) {
+export async function clientHeartbeat(request: Request, env: Env, id: ClientIdentity) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    return json({
+      ok: false,
+      active: false,
+      revoke: true,
+      updateRequired: true,
+      code: 'CLIENT_UPDATE_REQUIRED',
+      minimumClientVersion: MIN_USERFLOW_VERSION,
+      clientVersion: clientVersion || null,
+      message: `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`,
+      serverTime: new Date().toISOString(),
+    });
+  }
+
   const sessionExpiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
   await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
     method: 'PATCH',
