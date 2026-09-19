@@ -17,6 +17,8 @@ import {
 } from './release-compat';
 import {
   SessionMaterialValidationError,
+  buildImportedCookieMaterial,
+  inspectCookieImport,
   validateCapturedMaterialData,
 } from './session-material';
 import {
@@ -38,6 +40,7 @@ import {
 const CAPTURE_TTL_MS = 15 * 60 * 1000;
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 const MAX_SESSION_MATERIAL_BYTES = 8_000_000;
+const MAX_COOKIE_IMPORT_BYTES = 8_000_000;
 const MAX_VALIDATION_RESULT_BYTES = 100_000;
 
 function inetHost(value: unknown): string | null {
@@ -158,6 +161,81 @@ async function sessionRow(env: Env, profileId: string) {
     `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
   return rows?.[0] || null;
+}
+
+async function cookieImportJson(request: Request) {
+  const advertised = Number(request.headers.get('content-length') || 0);
+  if (advertised > MAX_COOKIE_IMPORT_BYTES + 512_000) {
+    throw new HttpError(413, 'COOKIE_IMPORT_TOO_LARGE', 'El archivo JSON no puede superar 8 MB.');
+  }
+  const form = await request.formData();
+  const file = form.get('cookies');
+  if (!(file instanceof File)) {
+    throw new HttpError(400, 'COOKIE_IMPORT_FILE_REQUIRED', 'Selecciona un archivo JSON de cookies.');
+  }
+  if (file.size < 1 || file.size > MAX_COOKIE_IMPORT_BYTES) {
+    throw new HttpError(413, 'COOKIE_IMPORT_TOO_LARGE', 'El archivo JSON debe pesar entre 1 byte y 8 MB.');
+  }
+  let value: any;
+  try {
+    value = JSON.parse(await file.text());
+  } catch {
+    throw new HttpError(400, 'COOKIE_IMPORT_JSON_INVALID', 'El archivo seleccionado no contiene JSON válido.');
+  }
+  return {
+    form,
+    fileName: String(file.name || 'cookies.json').slice(0, 240),
+    value,
+  };
+}
+
+function cookieImportSummary(inspection: any) {
+  return {
+    format: inspection.format,
+    target_host: inspection.target.hostname,
+    target_origin: inspection.target.origin,
+    total_cookies: inspection.totalCookies,
+    valid_cookies: inspection.validCookies,
+    matching_cookies: inspection.matchingCookies,
+    expired_cookies: inspection.expiredCookies,
+    invalid_cookies: inspection.invalidCookies,
+    ignored_cookies: inspection.ignoredCookies,
+    domains: inspection.domains,
+  };
+}
+
+async function storeImportedSession(env: Env, profile: any, material: any) {
+  const serialized = JSON.stringify(material);
+  if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
+    throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE', 'La sesión importada supera el tamaño permitido.');
+  }
+  const encrypted = await encryptProxy(env, serialized);
+  const existing = await sessionRow(env, profile.id);
+  const version = Number(existing?.session_version || 0) + 1;
+  const now = new Date().toISOString();
+  await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({
+      profile_id: profile.id,
+      session_version: version,
+      status: 'ready',
+      material_ciphertext: encrypted.ciphertext,
+      material_iv: encrypted.iv,
+      material_key_version: encrypted.keyVersion,
+      expected_egress_ip: null,
+      last_captured_at: now,
+      last_validated_at: null,
+      updated_at: now,
+    }),
+  });
+  await sb(env, `userflex_profiles?id=eq.${profile.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ session_ready: true, updated_at: now }),
+  });
+  await touchProfileClients(env, profile.id);
+  return { version, importedAt: now };
 }
 
 function assertUserflowVersion(request: Request) {
@@ -512,6 +590,21 @@ export async function adminProfileSessionRoutes(
   const path = url.pathname;
   const method = request.method.toUpperCase();
 
+  if (path === '/api/cookie-import/inspect' && method === 'POST') {
+    const { form, value } = await cookieImportJson(request);
+    const profileUrl = text(form.get('url'), 'url', 2048);
+    let inspection;
+    try {
+      inspection = inspectCookieImport(profileUrl, value);
+    } catch (error) {
+      if (error instanceof SessionMaterialValidationError) {
+        throw new HttpError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
+    return json({ ok: true, inspection: cookieImportSummary(inspection) });
+  }
+
   if (path === '/api/profile-session-states' && method === 'GET') {
     const [credentials, sessions] = await Promise.all([
       sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
@@ -676,6 +769,56 @@ export async function adminProfileSessionRoutes(
       job = { ...job, status: 'expired', completed_at: completedAt };
     }
     return json({ ok: true, job });
+  }
+
+  const cookieImportMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session-import$/i);
+  if (cookieImportMatch && method === 'POST') {
+    const profileId = uuid(cookieImportMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const runtime = runtimeForProfile(profile);
+    if (!snapshotAuthentication(runtime)) {
+      throw new HttpError(
+        409,
+        'COOKIE_IMPORT_NOT_ENABLED',
+        'Configura la autenticación como Snapshot de sesión o Híbrido antes de importar cookies.',
+      );
+    }
+    if (runtime.authStrategy === 'hybrid' && !await credentialRow(env, profileId)) {
+      throw new HttpError(409, 'CREDENTIALS_REQUIRED', 'El modo híbrido necesita credenciales además del archivo de cookies.');
+    }
+
+    const { value, fileName } = await cookieImportJson(request);
+    let built;
+    try {
+      built = buildImportedCookieMaterial(profile, value);
+    } catch (error) {
+      if (error instanceof SessionMaterialValidationError) {
+        throw new HttpError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
+
+    const stored = await storeImportedSession(env, profile, built.material);
+    const summary = cookieImportSummary(built.inspection);
+    await audit(env, request, 'admin', admin.userId, 'profile.session.cookies.import', 'profile', profileId, {
+      fileName,
+      version: stored.version,
+      format: summary.format,
+      targetHost: summary.target_host,
+      totalCookies: summary.total_cookies,
+      matchingCookies: summary.matching_cookies,
+      ignoredCookies: summary.ignored_cookies,
+      expiredCookies: summary.expired_cookies,
+      invalidCookies: summary.invalid_cookies,
+      domains: summary.domains.slice(0, 12).map((item: any) => item.domain),
+    });
+    return json({
+      ok: true,
+      profile_id: profileId,
+      version: stored.version,
+      imported_at: stored.importedAt,
+      inspection: summary,
+    });
   }
 
   const captureMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session-capture$/i);
