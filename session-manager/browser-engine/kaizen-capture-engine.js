@@ -423,31 +423,33 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const secret = crypto.randomBytes(32).toString('base64url');
     let entry = null;
 
+    const saveCapture = async () => {
+      if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
+      const captured = await capturePortableSession({
+        debugPort,
+        profile,
+        networkMode: proxy ? 'proxy' : 'direct',
+      });
+      const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
+      const completed = await onComplete({
+        material: captured.material,
+        publicIp,
+        diagnostics: captured.diagnostics,
+      });
+      return {
+        ok: true,
+        version: completed.version,
+        publicIp: completed.publicIp || publicIp || null,
+        cookieCount: captured.diagnostics.cookieCount,
+        indexedDbCount: captured.diagnostics.indexedDbCount,
+        indexedDbBytes: captured.diagnostics.indexedDbBytes,
+      };
+    };
+
     const control = await startControlServer({
       secret,
       credentials,
-      onSave: async () => {
-        if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
-        const captured = await capturePortableSession({
-          debugPort,
-          profile,
-          networkMode: proxy ? 'proxy' : 'direct',
-        });
-        const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
-        const completed = await onComplete({
-          material: captured.material,
-          publicIp,
-          diagnostics: captured.diagnostics,
-        });
-        return {
-          ok: true,
-          version: completed.version,
-          publicIp: completed.publicIp || publicIp || null,
-          cookieCount: captured.diagnostics.cookieCount,
-          indexedDbCount: captured.diagnostics.indexedDbCount,
-          indexedDbBytes: captured.diagnostics.indexedDbBytes,
-        };
-      },
+      onSave: saveCapture,
     });
 
     await prepareCaptureExtension(extensionDir, {
@@ -517,6 +519,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         extensionStrategy: profile.extensionStrategy || 'custom',
         controlPort: control.port,
         controlSecret: secret,
+        onSave: saveCapture,
       });
 
       if (proxy) {
