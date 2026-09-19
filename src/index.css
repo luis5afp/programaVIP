@@ -63,6 +63,7 @@
 .managed-extension-option.disabled { opacity:.68; cursor:not-allowed; }
 .managed-extension-option-body { min-width:0; flex:1; display:grid; gap:2px; }
 .managed-extension-option-body small { color:#94a3b8; font-size:9px; font-weight:700; }
+.extension-test-card { margin-bottom:12px; }
 .extension-admin-list { display:grid; gap:8px; }
 .extension-admin-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:12px; align-items:start; padding:13px 14px; }
 .extension-admin-icon { width:42px; height:42px; border-radius:11px; display:grid; place-items:center; color:#5b5ee5; background:#eef2ff; border:1px solid #dfe3ff; }
