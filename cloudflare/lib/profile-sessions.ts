@@ -345,7 +345,7 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
     }
   } catch {}
 
-  let network = await profileValidationNetwork(env, profile, clientId);
+  let network: any = await profileValidationNetwork(env, profile, clientId);
   let networkLiveError: string | null = null;
   if (network.proxy) {
     try {
