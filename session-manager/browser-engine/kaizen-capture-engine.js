@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { startKaizenProxyRelay } from './proxy-relay.js';
+import { credentialAutofillOrigins } from './credential-policy.js';
 import {
   browserPublicIp,
   capturePortableSession,
@@ -86,10 +87,11 @@ async function killProcessTree(proc) {
   try { proc.kill('SIGTERM'); } catch {}
 }
 
-function extensionFiles({ port, secret, profileUrl }) {
+function extensionFiles({ port, secret, profileUrl, extensionStrategy = 'custom' }) {
   const target = new URL(profileUrl);
   const rootHost = target.hostname.replace(/^www\./i, '');
-  const config = JSON.stringify({ port, secret, allowedOrigin: target.origin, rootHost });
+  const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
+  const config = JSON.stringify({ port, secret, allowedOrigin: target.origin, allowedOrigins, rootHost });
 
   const manifest = {
     manifest_version: 3,
@@ -135,7 +137,9 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
 (()=>{
   const host=String(location.hostname||'').toLowerCase();
   const root=String(CONFIG.rootHost||'').toLowerCase();
-  if(!(host===root||host.endsWith('.'+root))) return;
+  const origin=String(location.origin||'').toLowerCase();
+  const allowedOrigins=Array.isArray(CONFIG.allowedOrigins)?CONFIG.allowedOrigins.map((value)=>String(value||'').toLowerCase()):[];
+  if(!(allowedOrigins.includes(origin)||host===root||host.endsWith('.'+root))) return;
 
   const stop=(event)=>{event.preventDefault();event.stopPropagation();};
   addEventListener('keydown',(event)=>{
@@ -156,7 +160,9 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     try{
       const proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
       const d=Object.getOwnPropertyDescriptor(proto,'value'); d?.set?.call(el,value);
-      el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+      try{el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));}
+      catch{el.dispatchEvent(new Event('input',{bubbles:true}));}
+      el.dispatchEvent(new Event('change',{bubbles:true}));
     }catch{}
   };
   const autofill=()=>{
@@ -164,8 +170,8 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const inputs=Array.from(document.querySelectorAll('input')).filter((el)=>visible(el)&&!el.disabled&&!el.readOnly);
     const pass=inputs.find((el)=>el.type==='password');
     const user=inputs.find((el)=>{
-      const hint=[el.type,el.name,el.id,el.autocomplete,el.placeholder].join(' ').toLowerCase();
-      return el.type==='email'||/email|e-mail|user|usuario|login|account/.test(hint);
+      const hint=[el.type,el.name,el.id,el.autocomplete,el.placeholder,el.getAttribute('aria-label')||''].join(' ').toLowerCase();
+      return el.type==='email'||/email|e-mail|user|usuario|login|account|identifier/.test(hint);
     });
     if(user&&!user.value) setNativeValue(user,credentials.username||'');
     if(pass&&!pass.value) setNativeValue(pass,credentials.password||'');
@@ -196,9 +202,9 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const result=await call('credentials');
     if(result.ok){credentials={username:result.username||'',password:result.password||''};autofill();}
     const observer=new MutationObserver(()=>{install();autofill();});
-    observer.observe(document.documentElement||document,{childList:true,subtree:true});
+    observer.observe(document.documentElement||document,{childList:true,subtree:true,attributes:true,attributeFilter:['type','name','id','autocomplete','placeholder','style','class']});
     setTimeout(()=>observer.disconnect(),30000);
-    setTimeout(autofill,500); setTimeout(autofill,1500);
+    setTimeout(autofill,100); setTimeout(autofill,350); setTimeout(autofill,800); setTimeout(autofill,1500); setTimeout(autofill,3000); setTimeout(autofill,7000);
   };
   if(document.documentElement) void start(); else addEventListener('DOMContentLoaded',()=>void start(),{once:true});
 })();`;
@@ -375,6 +381,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       port: control.port,
       secret,
       profileUrl: profile.url,
+      extensionStrategy: profile.extensionStrategy || 'custom',
     });
 
     const proc = spawn(executable, chromeArgs({

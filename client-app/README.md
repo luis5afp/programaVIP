@@ -9,13 +9,13 @@ Aplicación de escritorio para los clientes finales de userFLEX.
 3. El Client obtiene únicamente los perfiles asignados a ese cliente.
 4. Al pulsar **Abrir**, solicita un lease de lanzamiento al Worker.
 5. Si el perfil usa proxy, Electron lo configura antes de navegar. En perfiles con red bloqueada no existe fallback directo.
-6. Si el perfil usa sesión administrada, el Client restaura las cookies y almacenamiento web capturados por Session Manager sin recibir las credenciales administrativas de la cuenta.
+6. Si el perfil usa snapshot, el Client restaura las cookies y el almacenamiento web capturados por Session Manager. Si usa autofill o modo híbrido, las credenciales cifradas se entregan solo temporalmente al motor autorizado y únicamente en los orígenes de autenticación permitidos.
 7. Cada perfil se abre en una partición Chromium persistente y aislada.
 
 ## Seguridad
 
 - El token de acceso se guarda con `safeStorage` cuando Windows ofrece cifrado del sistema.
-- Las credenciales de la web administrada no se entregan al Client.
+- Las credenciales administradas solo se entregan al motor local cuando la estrategia del perfil necesita autofill; no se almacenan en texto plano y el helper limita su uso a los orígenes autorizados.
 - DevTools y Node integration están deshabilitados en las ventanas de contenido.
 - Los perfiles con proxy bloqueado validan la IP pública antes de abrir la web cuando existe una IP esperada registrada.
 - Se fuerza WebRTC a evitar UDP no proxificado.

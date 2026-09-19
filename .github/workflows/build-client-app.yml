@@ -136,6 +136,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/kaizen-engine.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/credential-policy.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/session-state.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/proxy-relay.js

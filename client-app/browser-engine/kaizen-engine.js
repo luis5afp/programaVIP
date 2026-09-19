@@ -325,7 +325,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         && String(existing.credentialRevision || '') === desiredCredentialRevision
         && String(existing.runtimeKey || '') === desiredRuntimeKey;
       if (generationMatches) {
-        await navigateBrowserHome(existing.debugPort, profile.url).catch(() => null);
+        await navigateBrowserHome(existing.debugPort, profile.url, { closeExtraPages: true }).catch(() => null);
         return {
           ok: true,
           reused: true,
@@ -495,6 +495,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           debugPort,
           profileUrl: profile.url,
           credentials,
+          extensionStrategy: runtime.extensionStrategy,
         });
       }
 
@@ -536,6 +537,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return inspectRuntimeProfile({
       debugPort: entry.debugPort,
       profileUrl: entry.profile.url,
+      extensionStrategy: entry.runtime?.extensionStrategy || 'custom',
     });
   }
 
