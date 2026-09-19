@@ -1,6 +1,6 @@
 import { ClientIdentity } from './auth';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
-import { managedProfileCredentials, managedSessionMaterial } from './profile-sessions';
+import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import {
   credentialAuthentication,
@@ -260,6 +260,7 @@ export async function clientLaunch(
     if (!session || profile.session_ready !== true) {
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'Este perfil necesita una sesión capturada antes de abrirse.');
     }
+    validateCapturedMaterial(profile, session.material);
     const lockedNetwork = connection.mode === 'proxy' && connection.locked === true;
     const currentProxyIp = lockedNetwork ? inetHost(effectiveProxy?.public_ip) : null;
     sessionDelivery = {
