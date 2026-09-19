@@ -390,7 +390,18 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
       try {
         const raw = await decryptProxy(env, session.material_ciphertext, session.material_iv);
         material = JSON.parse(raw);
-        add('snapshot', 'Snapshot de sesión', 'pass', `Sesión v${Number(session.session_version || 0)} disponible.`);
+        const importedJson = material?.source?.type === 'json-cookie-import';
+        const runtimeValidated = Boolean(session.last_validated_at);
+        add(
+          'snapshot',
+          'Snapshot de sesión',
+          importedJson && !runtimeValidated ? 'warn' : 'pass',
+          importedJson
+            ? runtimeValidated
+              ? `Cookies JSON v${Number(session.session_version || 0)} verificadas en userFLOW.`
+              : `Cookies JSON v${Number(session.session_version || 0)} cargadas. Falta “Probar en userFLOW” para confirmar que la web reconoce la sesión.`
+            : `Sesión v${Number(session.session_version || 0)} disponible.`,
+        );
       } catch {
         add('snapshot', 'Snapshot de sesión', 'fail', 'El material cifrado de sesión no se pudo leer.');
       }
@@ -1046,6 +1057,13 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         completed_at: now,
       }),
     });
+    if (result.ok && result.outcome === 'snapshot-authenticated') {
+      await sb(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ last_validated_at: now, updated_at: now }),
+      }).catch(() => null);
+    }
     return json({ ok: true, job_id: job.id, status: result.ok ? 'completed' : 'failed' });
   }
 
