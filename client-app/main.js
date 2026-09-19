@@ -345,7 +345,10 @@ async function runHeartbeat(reason = 'scheduled') {
     heartbeatFailureSince = 0;
     heartbeatFailClosed = false;
     if (result?.revoke === true || result?.active === false) {
-      await returnToLogin();
+      const message = result?.updateRequired === true
+        ? (result?.message || `Actualiza userFLOW a v${result?.minimumClientVersion || 'más reciente'} o superior.`)
+        : (result?.message || 'Tu sesión ya no está autorizada.');
+      await returnToLogin(message, result?.code || null);
       return;
     }
     const sync = await syncClientConfiguration(result, reason);
@@ -447,7 +450,7 @@ function enterWorkspace(sender) {
   }, 0);
 }
 
-async function returnToLogin() {
+async function returnToLogin(message = null, code = null) {
   const clientId = authMeta?.client?.id || null;
   await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
   closePrivateBrowser();
@@ -459,6 +462,12 @@ async function returnToLogin() {
   const loginWindow = createMainWindow();
   loginWindow.show();
   loginWindow.focus();
+  if (message) {
+    sendClient('userflex:auth-invalidated', {
+      message: String(message),
+      code: code || null,
+    });
+  }
 }
 
 function proxyRules(proxy) {
