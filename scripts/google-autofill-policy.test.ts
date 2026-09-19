@@ -19,6 +19,10 @@ for (const [originsFor, allows] of [
     'https://accounts.google.com',
   ]);
   assert.equal(allows('https://accounts.google.com/v3/signin/identifier', flowOrigins), true);
+  assert.equal(allows('https://accounts.google.com.co/accounts/SetSID?ssdc=1', flowOrigins), true);
+  assert.equal(allows('https://accounts.google.co.uk/accounts/SetSID', flowOrigins), true);
+  assert.equal(allows('https://accounts.google.de/accounts/SetSID', flowOrigins), true);
+  assert.equal(allows('https://accounts.google.com.evil.example/accounts/SetSID', flowOrigins), false);
   assert.equal(allows('https://flow.google.com/', flowOrigins), true);
   assert.equal(allows('https://evil.example/login', flowOrigins), false);
   assert.equal(allows('https://accounts.google.com.evil.example/login', flowOrigins), false);
