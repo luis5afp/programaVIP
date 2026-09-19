@@ -11,6 +11,7 @@ import {
   capturePortableSession,
   closeDevtoolsTargets,
   connectCaptureBrowser,
+  installCaptureAutomation,
   navigateCaptureHome,
 } from './capture-state.js';
 
@@ -254,9 +255,24 @@ async function startControlServer({ secret, credentials, onSave }) {
         'content-type': 'application/json; charset=utf-8',
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type, x-userflex-secret',
+        'access-control-allow-private-network': 'true',
       });
       res.end(payload);
     };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type, x-userflex-secret',
+        'access-control-allow-private-network': 'true',
+        'cache-control': 'no-store',
+      });
+      res.end();
+      return;
+    }
 
     if (req.headers['x-userflex-secret'] !== secret) return finish(403, { error: 'Control local no autorizado.' });
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -312,7 +328,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
     `--disable-extensions-except=${extensionDir}`,
     `--load-extension=${extensionDir}`,
   ];
-  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>', '--disable-quic');
+  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
   args.push('about:blank');
   return args;
 }
@@ -326,6 +342,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (!entry) return;
     active = null;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    try { entry.automation?.cleanup?.(); } catch {}
+    try { await entry.browser?.disconnect?.(); } catch {}
     try { await entry.control?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
     await killProcessTree(entry.process);
@@ -405,31 +423,33 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const secret = crypto.randomBytes(32).toString('base64url');
     let entry = null;
 
+    const saveCapture = async () => {
+      if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
+      const captured = await capturePortableSession({
+        debugPort,
+        profile,
+        networkMode: proxy ? 'proxy' : 'direct',
+      });
+      const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
+      const completed = await onComplete({
+        material: captured.material,
+        publicIp,
+        diagnostics: captured.diagnostics,
+      });
+      return {
+        ok: true,
+        version: completed.version,
+        publicIp: completed.publicIp || publicIp || null,
+        cookieCount: captured.diagnostics.cookieCount,
+        indexedDbCount: captured.diagnostics.indexedDbCount,
+        indexedDbBytes: captured.diagnostics.indexedDbBytes,
+      };
+    };
+
     const control = await startControlServer({
       secret,
       credentials,
-      onSave: async () => {
-        if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
-        const captured = await capturePortableSession({
-          debugPort,
-          profile,
-          networkMode: proxy ? 'proxy' : 'direct',
-        });
-        const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
-        const completed = await onComplete({
-          material: captured.material,
-          publicIp,
-          diagnostics: captured.diagnostics,
-        });
-        return {
-          ok: true,
-          version: completed.version,
-          publicIp: completed.publicIp || publicIp || null,
-          cookieCount: captured.diagnostics.cookieCount,
-          indexedDbCount: captured.diagnostics.indexedDbCount,
-          indexedDbBytes: captured.diagnostics.indexedDbBytes,
-        };
-      },
+      onSave: saveCapture,
     });
 
     await prepareCaptureExtension(extensionDir, {
@@ -460,6 +480,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       profile,
       proxy,
       executable,
+      browser: null,
+      automation: null,
       devtoolsTimer: null,
       closed: false,
     };
@@ -477,6 +499,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+        try { entry.automation?.cleanup?.(); } catch {}
+        void entry.browser?.disconnect?.().catch(() => null);
         void entry.control?.close().catch(() => null);
         void entry.relay?.close().catch(() => null);
         if (entry.extensionDir) {
@@ -487,7 +511,16 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
     try {
       const browser = await connectCaptureBrowser(debugPort);
-      await browser.disconnect().catch(() => null);
+      entry.browser = browser;
+      entry.automation = await installCaptureAutomation({
+        browser,
+        profileUrl: profile.url,
+        credentials,
+        extensionStrategy: profile.extensionStrategy || 'custom',
+        controlPort: control.port,
+        controlSecret: secret,
+        onSave: saveCapture,
+      });
 
       if (proxy) {
         entry.publicIp = verifiedPublicIp || proxy.publicIp || null;

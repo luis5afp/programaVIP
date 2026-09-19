@@ -1,6 +1,7 @@
 import { gzipSync } from 'node:zlib';
 import { setTimeout as delay } from 'node:timers/promises';
 import puppeteer from 'puppeteer-core';
+import { credentialAutofillAllowsUrl, credentialAutofillOrigins } from './credential-policy.js';
 
 export async function waitForDevtools(debugPort, timeoutMs = 25_000) {
   const started = Date.now();
@@ -278,6 +279,289 @@ export async function browserPublicIp(debugPort) {
   } finally {
     await browser.disconnect().catch(() => null);
   }
+}
+
+
+export async function installCaptureAutomation({
+  browser,
+  profileUrl,
+  credentials = null,
+  extensionStrategy = 'custom',
+  controlPort,
+  controlSecret,
+  onSave = null,
+}) {
+  if (!browser) throw new Error('El navegador de captura no está conectado.');
+  const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
+  const payload = {
+    allowedOrigins,
+    username: String(credentials?.username || ''),
+    password: String(credentials?.password || ''),
+    controlUrl: 'http://127.0.0.1:' + Number(controlPort || 0),
+    controlSecret: String(controlSecret || ''),
+    saveBinding: '__userflexCaptureSave_' + String(controlSecret || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 18),
+  };
+
+  const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
+    if (!Array.isArray(allowedOrigins) || !allowedOrigins.includes(location.origin)) return;
+
+    const GLOBAL_KEY = '__userflexCaptureAutomationV312';
+    const existing = globalThis[GLOBAL_KEY];
+    if (existing?.refresh) {
+      try { existing.refresh(); } catch {}
+      return;
+    }
+
+    const visible = (element) => {
+      try {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity || 1) !== 0
+          && rect.width > 0
+          && rect.height > 0;
+      } catch {
+        return false;
+      }
+    };
+
+    const fieldKind = (element) => {
+      if (!(element instanceof HTMLInputElement)) return null;
+      const type = String(element.type || '').toLowerCase();
+      const hint = [
+        type,
+        element.name,
+        element.id,
+        element.autocomplete,
+        element.placeholder,
+        element.getAttribute('aria-label') || '',
+      ].join(' ').toLowerCase();
+      if (type === 'password' || /password|passwd|passcode|contrase/.test(hint)) return 'password';
+      if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
+      return null;
+    };
+
+    const candidates = () => {
+      const inputs = Array.from(document.querySelectorAll('input'))
+        .filter((element) => visible(element) && !element.disabled && !element.readOnly);
+      return {
+        usernameInput: inputs.find((element) => fieldKind(element) === 'username') || null,
+        passwordInput: inputs.find((element) => fieldKind(element) === 'password') || null,
+      };
+    };
+
+    const setNativeValue = (element, value) => {
+      if (!element || !value) return false;
+      try {
+        try { element.focus({ preventScroll: true }); } catch {
+          try { element.focus(); } catch {}
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+        if (descriptor?.set) descriptor.set.call(element, value);
+        else element.value = value;
+        try {
+          element.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: String(value),
+          }));
+        } catch {
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        element.dispatchEvent(new Event('blur', { bubbles: true }));
+        try { element.blur(); } catch {}
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const fillAvailable = () => {
+      const values = candidates();
+      if (values.usernameInput && !values.usernameInput.value && username) setNativeValue(values.usernameInput, username);
+      if (values.passwordInput && !values.passwordInput.value && password) setNativeValue(values.passwordInput, password);
+      return values;
+    };
+
+    const save = async (button, message) => {
+      try {
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Guardando...';
+        }
+        if (message) message.textContent = 'Capturando sesión completa...';
+
+        let result = null;
+        if (saveBinding && typeof globalThis[saveBinding] === 'function') {
+          result = await globalThis[saveBinding]({ href: location.href });
+        } else if (controlUrl && controlSecret) {
+          const response = await fetch(controlUrl + '/save', {
+            method: 'POST',
+            mode: 'cors',
+            cache: 'no-store',
+            headers: {
+              'content-type': 'application/json',
+              'x-userflex-secret': controlSecret,
+            },
+            body: JSON.stringify({ href: location.href }),
+          });
+          const responseText = await response.text();
+          try { result = responseText ? JSON.parse(responseText) : {}; } catch { result = { error: responseText }; }
+          if (!response.ok) throw new Error(result?.error || ('HTTP ' + response.status));
+        } else {
+          throw new Error('El control de captura no está disponible.');
+        }
+
+        if (result?.error) throw new Error(result.error);
+        if (button) button.textContent = 'Guardada · v' + (result?.version || '?');
+        if (message) {
+          const cookies = Number(result?.cookieCount || 0);
+          const idb = Number(result?.indexedDbCount || 0);
+          message.textContent = 'Perfil guardado: ' + cookies + ' cookies, ' + idb + ' bases IndexedDB.';
+        }
+      } catch (error) {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Guardar sesión';
+        }
+        if (message) message.textContent = error?.message || String(error || 'No se pudo guardar la sesión.');
+      }
+    };
+
+    const ensureOverlay = () => {
+      if (!document.documentElement) return null;
+      const current = document.getElementById('userflex-session-overlay');
+      if (current) return current;
+
+      const host = document.createElement('div');
+      host.id = 'userflex-session-overlay';
+      host.style.cssText = [
+        'position:fixed',
+        'left:18px',
+        'bottom:18px',
+        'z-index:2147483647',
+        'font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      ].join(';');
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.innerHTML = `
+        <style>
+          :host { all: initial; }
+          .wrap {
+            min-width:260px; max-width:340px; padding:10px 12px;
+            border:1px solid rgba(99,102,241,.5); border-radius:12px;
+            background:rgba(15,23,42,.96); color:#fff;
+            box-shadow:0 12px 34px rgba(0,0,0,.35);
+            font:600 12px/1.25 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+          }
+          .title { font-weight:800; color:#c4b5fd; margin-bottom:7px; }
+          .row { display:flex; gap:6px; flex-wrap:wrap; }
+          button {
+            appearance:none; border:0; border-radius:7px; padding:6px 9px;
+            cursor:pointer; background:#312e81; color:white; font:700 11px/1 system-ui;
+          }
+          button.secondary { background:#334155; }
+          button:disabled { opacity:.65; cursor:default; }
+          .msg { margin-top:7px; color:#cbd5e1; font-weight:500; max-width:310px; }
+        </style>
+        <div class="wrap">
+          <div class="title">userFLEX · Captura</div>
+          <div class="row">
+            <button type="button" data-kind="username" class="secondary">Email</button>
+            <button type="button" data-kind="password" class="secondary">Password</button>
+            <button type="button" data-kind="save">Guardar sesión</button>
+          </div>
+          <div class="msg">El autofill está activo. Completa cualquier 2FA/CAPTCHA manualmente.</div>
+        </div>
+      `;
+      document.documentElement.appendChild(host);
+      const message = shadow.querySelector('.msg');
+      shadow.querySelector('[data-kind="username"]')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const values = fillAvailable();
+        if (values.usernameInput && username) setNativeValue(values.usernameInput, username);
+        if (message) message.textContent = values.usernameInput ? 'Email aplicado.' : 'Aún no aparece el campo de email.';
+      });
+      shadow.querySelector('[data-kind="password"]')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const values = fillAvailable();
+        if (values.passwordInput && password) setNativeValue(values.passwordInput, password);
+        if (message) message.textContent = values.passwordInput ? 'Password aplicado.' : 'Aún no aparece el campo de contraseña.';
+      });
+      const saveButton = shadow.querySelector('[data-kind="save"]');
+      saveButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void save(saveButton, message);
+      });
+      return host;
+    };
+
+    const refresh = () => {
+      try { ensureOverlay(); } catch {}
+      try { fillAvailable(); } catch {}
+    };
+    globalThis[GLOBAL_KEY] = { refresh };
+
+    refresh();
+    const observer = new MutationObserver(refresh);
+    observer.observe(document.documentElement || document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'aria-label', 'style', 'class'],
+    });
+    const retryTimer = setInterval(refresh, 750);
+    setTimeout(() => {
+      try { clearInterval(retryTimer); } catch {}
+      try { observer.disconnect(); } catch {}
+    }, 900000);
+    addEventListener('focusin', refresh, true);
+    addEventListener('pageshow', refresh, true);
+    for (const delayMs of [80, 200, 500, 1000, 2000, 4000, 8000]) setTimeout(refresh, delayMs);
+  };
+
+  const prepared = new WeakSet();
+  const instrument = async (page) => {
+    if (!page) return;
+    try {
+      if (!prepared.has(page)) {
+        prepared.add(page);
+        if (typeof onSave === 'function' && payload.saveBinding) {
+          await page.exposeFunction(payload.saveBinding, async (request) => onSave(request || {})).catch(() => null);
+        }
+        await page.evaluateOnNewDocument(bootstrap, payload);
+      }
+      if (credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
+        await page.evaluate(bootstrap, payload);
+      }
+    } catch {}
+  };
+
+  const onTarget = async (target) => {
+    try {
+      if (target.type() !== 'page') return;
+      await instrument(await target.page());
+    } catch {}
+  };
+
+  browser.on('targetcreated', onTarget);
+  browser.on('targetchanged', onTarget);
+
+  const pages = await browser.pages();
+  await Promise.all(pages.map(instrument));
+
+  return {
+    installed: true,
+    allowedOrigins,
+    cleanup() {
+      try { browser.off('targetcreated', onTarget); } catch {}
+      try { browser.off('targetchanged', onTarget); } catch {}
+    },
+  };
 }
 
 export async function capturePortableSession({ debugPort, profile, networkMode = 'direct' }) {

@@ -163,7 +163,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, userAgen
   if (userAgent && typeof userAgent === 'string' && userAgent.length <= 600 && !/[\r\n]/.test(userAgent)) {
     args.push(`--user-agent=${userAgent}`);
   }
-  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=<-loopback>', '--disable-quic');
+  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
   if (extensionDir && fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
     args.push(`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`);
   }
