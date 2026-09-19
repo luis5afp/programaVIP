@@ -416,10 +416,8 @@ export function ProfilesView() {
       }
 
       const profileUrlValue = String(form.get('url') || '').trim();
-      let checkedCookieInspection: CookieImportInspection | null = null;
       if (cookieFile) {
         const checked = await api.profileSessions.inspectCookies(cookieFile, profileUrlValue);
-        checkedCookieInspection = checked.inspection;
         setCookieInspection(checked.inspection);
         if (checked.inspection.matching_cookies < 1) {
           const domains = checked.inspection.domains.slice(0, 6).map((item) => item.domain).join(', ');
@@ -651,7 +649,10 @@ export function ProfilesView() {
       try {
         const response = await api.profileSessions.testStatus(jobId);
         setValidationJob(response.job);
-        if (['completed', 'failed', 'expired'].includes(response.job.status)) return;
+        if (['completed', 'failed', 'expired'].includes(response.job.status)) {
+          if (response.job.status === 'completed') await load();
+          return;
+        }
       } catch {
         return;
       }
@@ -886,7 +887,9 @@ export function ProfilesView() {
                           <Badge tone="neutral">Auth: {AUTH_STRATEGY_LABEL[profileAuth]}</Badge>
                           {snapshotManaged && (
                             <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
-                              Snapshot: {session?.status === 'active' ? `activo · v${session.version}` : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
+                              Snapshot: {session?.status === 'active'
+                                ? `activo · v${session.version}${session.validated_at ? ' · verificado' : ' · pendiente de prueba'}`
+                                : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
                             </Badge>
                           )}
                           {credentialHelperSupported && (
