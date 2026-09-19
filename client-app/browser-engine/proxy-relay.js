@@ -14,6 +14,12 @@ function cleanPort(value) {
   return port;
 }
 
+function isGoogleAccountsHost(value) {
+  const host = String(value || '').trim().toLowerCase();
+  return host === 'accounts.google.com'
+    || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(host);
+}
+
 function proxyType(proxy) {
   const type = String(proxy?.type || 'http').trim().toLowerCase();
   if (type === 'https') return 'http';
@@ -199,7 +205,7 @@ async function httpsProbe(proxy, { host, path = '/', port = 443, method = 'HEAD'
         socket.once('error', fail);
         socket.once('secureConnect', () => {
           socket.write(
-            `${method} ${path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: userFLEX-proxy-check/0.3.11\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
+            `${method} ${path} HTTP/1.1\r\nHost: ${target.host}\r\nUser-Agent: userFLEX-proxy-check/0.3.13\r\nAccept: */*\r\nConnection: close\r\n\r\n`,
           );
         });
         socket.on('data', (chunk) => {
@@ -295,7 +301,8 @@ function serveClient(clientSocket, proxy, sockets) {
     buffered = Buffer.alloc(0);
 
     try {
-      const tunnel = await connectUpstreamWithRetry(proxy, request.destination, 3);
+      const attempts = isGoogleAccountsHost(request.destination.host) ? 7 : 3;
+      const tunnel = await connectUpstreamWithRetry(proxy, request.destination, attempts);
       if (done || clientSocket.destroyed) {
         tunnel.socket.destroy();
         return;
