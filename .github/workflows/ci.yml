@@ -31,8 +31,8 @@ jobs:
         run: node --experimental-strip-types scripts/cookie-import.test.ts
       - name: Test client login lifecycle
         run: node --experimental-strip-types scripts/client-login-lifecycle.test.ts
-      - name: Test manual updater installation
-        run: node --experimental-strip-types scripts/manual-updater-install.test.ts
+      - name: Test automatic updater installation
+        run: node --experimental-strip-types scripts/automatic-updater-install.test.ts
       - name: Test reliable updater flow
         run: node --experimental-strip-types scripts/reliable-updater.test.ts
       - name: Test legacy updater compatibility
