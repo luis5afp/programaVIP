@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.19/userFLEX-Session-Manager-0.3.19-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.20/userFLEX-Session-Manager-0.3.20-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -1658,7 +1658,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.19 · userFLOW v0.3.19
+              Instalar / actualizar Session Manager v0.3.20 · userFLOW v0.3.20
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, vuelve aquí y pulsa <b>Guardar sesión / generar snapshot</b>.

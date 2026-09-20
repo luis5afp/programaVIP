@@ -6,7 +6,10 @@ import { spawn } from 'node:child_process';
 
 const UPDATE_API_URL = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
 const UPDATE_MANIFEST_URL = `${UPDATE_API_URL}/latest`;
-const UPDATE_CHECK_TIMEOUT_MS = 8_000;
+const UPDATE_CHECK_TIMEOUT_MS = 6_000;
+const UPDATE_MANIFEST_ATTEMPTS = 3;
+const UPDATE_CHUNK_ATTEMPTS = 3;
+const UPDATE_CHUNK_TIMEOUT_MS = 45_000;
 const MAX_UPDATE_BYTES = 300 * 1024 * 1024;
 const MAIN_WINDOW_START_TIMEOUT_MS = 10_000;
 
@@ -142,6 +145,21 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function updaterLog(message) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'startup.log');
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.appendFile(logPath, `[${new Date().toISOString()}] UPDATER ${String(message || '')}\n`, 'utf8');
+  } catch {
+    // Diagnostics must never block the updater.
+  }
+}
+
+function updateErrorCode(error) {
+  const raw = error instanceof Error ? error.message : String(error || 'UPDATE_UNKNOWN');
+  return raw.replace(/[^A-Z0-9_.-]/gi, '_').slice(0, 96) || 'UPDATE_UNKNOWN';
+}
+
 async function waitForMainWindow() {
   const deadline = Date.now() + MAIN_WINDOW_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -199,9 +217,9 @@ function validateManifest(value) {
   return { version, sha256, size, chunks: normalizedChunks };
 }
 
-async function fetchManifest() {
+async function fetchManifestOnce() {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(new Error('UPDATE_MANIFEST_TIMEOUT')), UPDATE_CHECK_TIMEOUT_MS);
   try {
     const response = await fetch(`${UPDATE_MANIFEST_URL}?ts=${Date.now()}`, {
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
@@ -210,9 +228,28 @@ async function fetchManifest() {
     });
     if (!response.ok) throw new Error(`UPDATE_MANIFEST_HTTP_${response.status}`);
     return validateManifest(await response.json());
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('UPDATE_MANIFEST_TIMEOUT');
+    throw error;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchManifest() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= UPDATE_MANIFEST_ATTEMPTS; attempt += 1) {
+    try {
+      const manifest = await fetchManifestOnce();
+      await updaterLog(`manifest v${manifest.version} recibido en intento ${attempt}`);
+      return manifest;
+    } catch (error) {
+      lastError = error;
+      await updaterLog(`manifest intento ${attempt} falló: ${updateErrorCode(error)}`);
+      if (attempt < UPDATE_MANIFEST_ATTEMPTS) await wait(300 * attempt);
+    }
+  }
+  throw lastError || new Error('UPDATE_MANIFEST_FAILED');
 }
 
 function updateChunkUrl(chunkName, version) {
@@ -221,10 +258,58 @@ function updateChunkUrl(chunkName, version) {
   return `${UPDATE_API_URL}/chunks/${encodeURIComponent(version)}/${match[2]}`;
 }
 
+async function prepareUpdateDirectory() {
+  const candidates = [
+    path.join(app.getPath('userData'), 'updates'),
+    path.join(app.getPath('temp'), `userFLOW-updates-${process.pid}`),
+  ];
+  let lastError = null;
+  for (const updateDir of candidates) {
+    try {
+      await fs.rm(updateDir, { recursive: true, force: true });
+      await fs.mkdir(updateDir, { recursive: true });
+      const probe = path.join(updateDir, '.write-test');
+      await fs.writeFile(probe, 'ok', 'utf8');
+      await fs.rm(probe, { force: true });
+      await updaterLog(`directorio de actualización: ${updateDir}`);
+      return updateDir;
+    } catch (error) {
+      lastError = error;
+      await updaterLog(`directorio no disponible ${updateDir}: ${updateErrorCode(error)}`);
+    }
+  }
+  throw lastError || new Error('UPDATE_DIRECTORY_UNAVAILABLE');
+}
+
+async function fetchChunkBuffer(chunk, manifest, index) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= UPDATE_CHUNK_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('UPDATE_CHUNK_TIMEOUT')), UPDATE_CHUNK_TIMEOUT_MS);
+    try {
+      const response = await fetch(updateChunkUrl(chunk.name, manifest.version), {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`UPDATE_CHUNK_HTTP_${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length !== chunk.size) throw new Error(`UPDATE_CHUNK_LENGTH_MISMATCH_${index}`);
+      await updaterLog(`chunk ${index + 1}/${manifest.chunks.length} recibido en intento ${attempt}`);
+      return buffer;
+    } catch (error) {
+      lastError = controller.signal.aborted ? new Error(`UPDATE_CHUNK_TIMEOUT_${index}`) : error;
+      await updaterLog(`chunk ${index + 1} intento ${attempt} falló: ${updateErrorCode(lastError)}`);
+      if (attempt < UPDATE_CHUNK_ATTEMPTS) await wait(350 * attempt);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error(`UPDATE_CHUNK_FAILED_${index}`);
+}
+
 async function downloadInstaller(manifest) {
-  const updateDir = path.join(app.getPath('userData'), 'updates');
-  await fs.rm(updateDir, { recursive: true, force: true });
-  await fs.mkdir(updateDir, { recursive: true });
+  const updateDir = await prepareUpdateDirectory();
   const installerPath = path.join(updateDir, `userFLOW-${manifest.version}-Setup.exe`);
   const file = await fs.open(installerPath, 'w');
   const hash = crypto.createHash('sha256');
@@ -233,26 +318,16 @@ async function downloadInstaller(manifest) {
   try {
     for (let index = 0; index < manifest.chunks.length; index += 1) {
       const chunk = manifest.chunks[index];
-      const response = await fetch(updateChunkUrl(chunk.name, manifest.version), {
-        cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache' },
+      const buffer = await fetchChunkBuffer(chunk, manifest, index);
+      await file.write(buffer);
+      hash.update(buffer);
+      totalReceived += buffer.length;
+      const percent = Math.min(99, (totalReceived / manifest.size) * 100);
+      pushStatus({
+        phase: 'downloading',
+        message: `Descargando v${manifest.version} · bloque ${index + 1}/${manifest.chunks.length}…`,
+        percent,
       });
-      if (!response.ok || !response.body) throw new Error(`UPDATE_CHUNK_HTTP_${response.status}`);
-      const reader = response.body.getReader();
-      let chunkReceived = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value?.byteLength) continue;
-        const buffer = Buffer.from(value);
-        await file.write(buffer);
-        hash.update(buffer);
-        totalReceived += buffer.length;
-        chunkReceived += buffer.length;
-        const percent = Math.min(99, (totalReceived / manifest.size) * 100);
-        pushStatus({ phase: 'downloading', message: `Descargando v${manifest.version}…`, percent });
-      }
-      if (chunkReceived !== chunk.size) throw new Error(`UPDATE_CHUNK_LENGTH_MISMATCH_${index}`);
     }
     await file.sync();
   } finally {
@@ -268,6 +343,7 @@ async function downloadInstaller(manifest) {
     await fs.rm(installerPath, { force: true });
     throw new Error('UPDATE_FILE_HASH_MISMATCH');
   }
+  await updaterLog(`instalador v${manifest.version} descargado y SHA-256 verificado`);
   return installerPath;
 }
 
@@ -368,10 +444,12 @@ async function checkUpdatesAndContinue() {
       percent: 100,
     });
   } catch (error) {
+    const code = updateErrorCode(error);
     console.error('userFLOW updater error', error instanceof Error ? error.message : String(error));
+    await updaterLog(`ERROR FINAL ${code}`);
     pushStatus({
       phase: 'error',
-      message: 'No se pudo descargar o verificar la actualización. Revisa tu conexión y reintenta.',
+      message: `Actualización detenida · ${code}. Pulsa “Reintentar verificación”.`,
       percent: null,
     });
   } finally {
