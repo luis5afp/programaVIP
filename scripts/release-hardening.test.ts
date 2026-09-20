@@ -7,14 +7,14 @@ import {
   versionAtLeast,
 } from '../cloudflare/lib/release-compat.ts';
 
-assert.equal(compareVersions('0.3.20', '0.3.20'), 0);
-assert.equal(compareVersions('0.3.21', '0.3.20'), 1);
+assert.equal(compareVersions('0.3.21', '0.3.21'), 0);
+assert.equal(compareVersions('0.3.22', '0.3.21'), 1);
 assert.equal(compareVersions('0.4.0', '0.3.99'), 1);
 assert.equal(compareVersions('1.0.0', '0.99.99'), 1);
-assert.equal(compareVersions('0.3.19', '0.3.20'), -1);
-assert.equal(compareVersions('bad', '0.3.20'), null);
-assert.equal(versionAtLeast('0.3.20', MIN_USERFLOW_VERSION), true);
-assert.equal(versionAtLeast('0.3.19', MIN_USERFLOW_VERSION), false);
+assert.equal(compareVersions('0.3.20', '0.3.21'), -1);
+assert.equal(compareVersions('bad', '0.3.21'), null);
+assert.equal(versionAtLeast('0.3.21', MIN_USERFLOW_VERSION), true);
+assert.equal(versionAtLeast('0.3.20', MIN_USERFLOW_VERSION), false);
 assert.equal(versionAtLeast('', MIN_USERFLOW_VERSION), false);
 
 const clientPackage = JSON.parse(readFileSync(new URL('../client-app/package.json', import.meta.url), 'utf8'));
