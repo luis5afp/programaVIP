@@ -122,12 +122,11 @@ async function cachePut(request: Request, response: Response) {
   try {
     const cache = (globalThis as any).caches?.default;
     if (!cache?.put) return;
+    const headers = new Headers(response.headers);
+    headers.set('Cache-Control', 'public, max-age=30');
     const cached = new Response(response.body, {
       status: response.status,
-      headers: {
-        ...Object.fromEntries(response.headers.entries()),
-        'Cache-Control': 'public, max-age=30',
-      },
+      headers,
     });
     await cache.put(latestCacheKey(request), cached);
   } catch {
