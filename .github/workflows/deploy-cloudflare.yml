@@ -111,6 +111,26 @@ jobs:
           if (!Array.isArray(value.chunks) || value.chunks.length < 1) throw new Error('updater has no chunks');
           NODE
 
+          update_version="$(LATEST="$latest" node -e "const v=JSON.parse(process.env.LATEST||'{}'); process.stdout.write(String(v.version||''))")"
+          first_chunk_name="$(LATEST="$latest" node -e "const v=JSON.parse(process.env.LATEST||'{}'); process.stdout.write(String(v.chunks?.[0]?.name||''))")"
+          first_chunk_size="$(LATEST="$latest" node -e "const v=JSON.parse(process.env.LATEST||'{}'); process.stdout.write(String(v.chunks?.[0]?.size||''))")"
+          first_chunk_file="$(basename "$first_chunk_name")"
+          test -n "$update_version"
+          test -n "$first_chunk_file"
+          test -n "$first_chunk_size"
+
+          curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 90 \
+            --header 'Cache-Control: no-cache' \
+            "$BASE/api/client-update/chunks/$update_version/$first_chunk_file" \
+            --output /tmp/userflow-first-update-chunk.bin
+
+          actual_chunk_size="$(stat -c%s /tmp/userflow-first-update-chunk.bin)"
+          if [ "$actual_chunk_size" != "$first_chunk_size" ]; then
+            echo "Updater first chunk size mismatch: expected=$first_chunk_size actual=$actual_chunk_size" >&2
+            exit 1
+          fi
+          echo "Updater first chunk reachable: $first_chunk_file ($actual_chunk_size bytes)"
+
           code="$(curl --silent --output /tmp/catalog.json --write-out '%{http_code}' "$BASE/api/client/catalog")"
           test "$code" = "401"
 
