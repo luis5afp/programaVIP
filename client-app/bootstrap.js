@@ -261,7 +261,7 @@ function updateChunkUrl(chunkName, version) {
 async function prepareUpdateDirectory() {
   const candidates = [
     path.join(app.getPath('userData'), 'updates'),
-    path.join(app.getPath('temp'), 'userFLOW-updates'),
+    path.join(app.getPath('temp'), `userFLOW-updates-${process.pid}`),
   ];
   let lastError = null;
   for (const updateDir of candidates) {
