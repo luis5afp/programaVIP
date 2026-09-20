@@ -371,7 +371,7 @@ async function verifyInstallerOnDisk(installerPath, manifest) {
   if (hash.digest('hex') !== manifest.sha256) throw new Error('UPDATE_INSTALLER_HASH_CHANGED');
 }
 
-async function launchDownloadedInstaller() {
+async function launchDownloadedInstaller({ silent = false } = {}) {
   if (launchingInstaller || !pendingUpdate) return;
   launchingInstaller = true;
   const { installerPath, manifest } = pendingUpdate;
@@ -380,11 +380,19 @@ async function launchDownloadedInstaller() {
     pushStatus({ phase: 'verifying', message: `Verificando instalador v${manifest.version}…`, percent: 100 });
     await verifyInstallerOnDisk(installerPath, manifest);
 
-    pushStatus({ phase: 'opening-installer', message: 'Abriendo instalador de Windows…', percent: 100 });
-    const child = spawn(installerPath, [], {
+    const args = silent ? ['/S'] : [];
+    pushStatus({
+      phase: 'installing',
+      message: silent
+        ? `Instalando actualización v${manifest.version} automáticamente…`
+        : 'Abriendo instalador de Windows…',
+      percent: 100,
+    });
+    await updaterLog(`lanzando instalador v${manifest.version} modo=${silent ? 'silencioso' : 'interactivo'}`);
+    const child = spawn(installerPath, args, {
       detached: true,
       stdio: 'ignore',
-      windowsHide: false,
+      windowsHide: silent,
     });
 
     await new Promise((resolve, reject) => {
@@ -403,15 +411,23 @@ async function launchDownloadedInstaller() {
     }
 
     child.unref();
-    pushStatus({ phase: 'opening-installer', message: 'Instalador abierto · cerrando userFLOW…', percent: 100 });
+    pushStatus({
+      phase: 'installing',
+      message: silent
+        ? 'Instalación iniciada · cerrando la versión anterior…'
+        : 'Instalador abierto · cerrando userFLOW…',
+      percent: 100,
+    });
+    await updaterLog(`instalador v${manifest.version} iniciado correctamente`);
     await wait(250);
     app.quit();
   } catch (error) {
     launchingInstaller = false;
     console.error('userFLOW installer launch error', error instanceof Error ? error.message : String(error));
+    await updaterLog(`instalación automática falló: ${updateErrorCode(error)}`);
     pushStatus({
       phase: 'ready-install',
-      message: `v${manifest.version} descargada · no se pudo abrir el instalador. Reintenta.`,
+      message: `v${manifest.version} descargada · Windows bloqueó la instalación automática. Pulsa “Instalar actualización”.`,
       percent: 100,
     });
   }
@@ -439,10 +455,11 @@ async function checkUpdatesAndContinue() {
     const installerPath = await downloadInstaller(manifest);
     pendingUpdate = { installerPath, manifest };
     pushStatus({
-      phase: 'ready-install',
-      message: `Actualización v${manifest.version} lista para instalar`,
+      phase: 'installing',
+      message: `Actualización v${manifest.version} verificada · iniciando instalación automática…`,
       percent: 100,
     });
+    await launchDownloadedInstaller({ silent: true });
   } catch (error) {
     const code = updateErrorCode(error);
     console.error('userFLOW updater error', error instanceof Error ? error.message : String(error));
