@@ -12,7 +12,11 @@ import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const HEARTBEAT_MS = 60 * 1000;
+const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
+const HEARTBEAT_RETRY_MS = 15 * 60 * 1000;
+const TECHNICAL_OFFLINE_GRACE_MS = 30 * 60 * 1000;
+const REALTIME_KEEPALIVE_MS = 25 * 1000;
+const REALTIME_RECONNECT_MS = 30 * 1000;
 const GOOGLE_URL = 'https://www.google.com/';
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
@@ -31,8 +35,16 @@ let pendingCatalogTab = false;
 let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
+let heartbeatInFlight = false;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
+let subscriptionExpiryTimer = null;
+let realtimeSocket = null;
+let realtimeConfig = null;
+let realtimeKeepaliveTimer = null;
+let realtimeReconnectTimer = null;
+let realtimeStopped = true;
+let realtimeRef = 0;
 let pendingAuthInvalidation = null;
 const profileTabs = new Map();
 let profileOrder = [];
@@ -461,6 +473,8 @@ function mergeValidationMeta(payload) {
     };
   }
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
+  if (payload.realtime && typeof payload.realtime === 'object') realtimeConfig = payload.realtime;
+  scheduleSubscriptionExpiry();
 }
 
 async function syncClientConfiguration(payload, reason = 'server', knownCatalog = null) {
@@ -484,11 +498,157 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   return { configChanged, catalog: freshCatalog, auth: authMeta, validationReason: reason };
 }
 
-async function runHeartbeat(reason = 'scheduled') {
+function clearHeartbeatTimer() {
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function scheduleHeartbeat(delayMs = HEARTBEAT_MS, reason = '12h') {
+  clearHeartbeatTimer();
   if (!accessToken) return;
+  heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = null;
+    void runHeartbeat(reason);
+  }, Math.max(1_000, delayMs));
+}
+
+function scheduleSubscriptionExpiry() {
+  if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
+  subscriptionExpiryTimer = null;
+  const expiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
+  if (!Number.isFinite(expiresAt)) return;
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    queueMicrotask(() => {
+      if (accessToken) void returnToLogin();
+    });
+    return;
+  }
+  const MAX_TIMER_MS = 24 * 60 * 60 * 1000;
+  subscriptionExpiryTimer = setTimeout(() => {
+    subscriptionExpiryTimer = null;
+    scheduleSubscriptionExpiry();
+  }, Math.min(remaining, MAX_TIMER_MS));
+}
+
+function realtimeSocketUrl(config) {
+  try {
+    const url = new URL(String(config?.url || ''));
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co')) return null;
+    url.protocol = 'wss:';
+    url.pathname = '/realtime/v1/websocket';
+    url.search = '';
+    url.searchParams.set('apikey', String(config?.key || ''));
+    url.searchParams.set('vsn', '1.0.0');
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function realtimeSend(topic, event, payload = {}) {
+  if (!realtimeSocket || realtimeSocket.readyState !== 1) return false;
+  realtimeRef += 1;
+  realtimeSocket.send(JSON.stringify({
+    topic,
+    event,
+    payload,
+    ref: String(realtimeRef),
+  }));
+  return true;
+}
+
+function stopRealtime() {
+  realtimeStopped = true;
+  if (realtimeKeepaliveTimer) clearInterval(realtimeKeepaliveTimer);
+  if (realtimeReconnectTimer) clearTimeout(realtimeReconnectTimer);
+  realtimeKeepaliveTimer = null;
+  realtimeReconnectTimer = null;
+  const socket = realtimeSocket;
+  realtimeSocket = null;
+  if (socket) {
+    try { socket.close(1000, 'client-stop'); } catch {}
+  }
+}
+
+function scheduleRealtimeReconnect() {
+  if (realtimeStopped || realtimeReconnectTimer || !accessToken) return;
+  realtimeReconnectTimer = setTimeout(() => {
+    realtimeReconnectTimer = null;
+    connectRealtime();
+  }, REALTIME_RECONNECT_MS);
+}
+
+function handleRealtimeMessage(raw) {
+  let message = null;
+  try { message = JSON.parse(String(raw || '')); } catch { return; }
+  if (!message || typeof message !== 'object') return;
+  const configuredEvent = String(realtimeConfig?.event || 'config_changed');
+  const broadcastEvent = String(message?.payload?.event || '');
+  if (message.event !== 'broadcast' || broadcastEvent !== configuredEvent) return;
+  void runHeartbeat('config-event');
+}
+
+function connectRealtime() {
+  stopRealtime();
+  realtimeStopped = false;
+  if (!accessToken || !realtimeConfig) return;
+  const url = realtimeSocketUrl(realtimeConfig);
+  const key = String(realtimeConfig?.key || '').trim();
+  const topic = String(realtimeConfig?.topic || '').trim();
+  if (!url || !key || !topic) {
+    scheduleRealtimeReconnect();
+    return;
+  }
+
+  let socket;
+  try {
+    socket = new WebSocket(url);
+  } catch {
+    scheduleRealtimeReconnect();
+    return;
+  }
+  realtimeSocket = socket;
+
+  socket.addEventListener('open', () => {
+    if (realtimeSocket !== socket || realtimeStopped) return;
+    realtimeSend(`realtime:${topic}`, 'phx_join', {
+      config: {
+        broadcast: { ack: false, self: false },
+        presence: { key: '' },
+        postgres_changes: [],
+      },
+    });
+    realtimeKeepaliveTimer = setInterval(() => {
+      realtimeSend('phoenix', 'heartbeat', {});
+    }, REALTIME_KEEPALIVE_MS);
+  });
+
+  socket.addEventListener('message', (event) => {
+    if (realtimeSocket !== socket || realtimeStopped) return;
+    handleRealtimeMessage(event.data);
+  });
+
+  const disconnected = () => {
+    if (realtimeSocket === socket) realtimeSocket = null;
+    if (realtimeKeepaliveTimer) clearInterval(realtimeKeepaliveTimer);
+    realtimeKeepaliveTimer = null;
+    if (!realtimeStopped) scheduleRealtimeReconnect();
+  };
+  socket.addEventListener('close', disconnected);
+  socket.addEventListener('error', () => {
+    try { socket.close(); } catch {}
+  });
+}
+
+async function runHeartbeat(reason = 'scheduled') {
+  if (!accessToken || heartbeatInFlight) return;
+  heartbeatInFlight = true;
+  clearHeartbeatTimer();
 
   const subscriptionExpiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
   if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= Date.now()) {
+    heartbeatInFlight = false;
     await returnToLogin();
     return;
   }
@@ -501,13 +661,18 @@ async function runHeartbeat(reason = 'scheduled') {
       const message = result?.updateRequired === true
         ? (result?.message || `Actualiza userFLOW a v${result?.minimumClientVersion || 'más reciente'} o superior.`)
         : (result?.message || 'Tu sesión ya no está autorizada.');
+      heartbeatInFlight = false;
       await returnToLogin(message, result?.code || null);
       return;
     }
+    const previousRealtime = JSON.stringify(realtimeConfig || null);
     const sync = await syncClientConfiguration(result, reason);
+    if (JSON.stringify(realtimeConfig || null) !== previousRealtime || !realtimeSocket) connectRealtime();
     sendClient('userflex:heartbeat', { ...result, ...sync, connectionLost: false });
+    scheduleHeartbeat(HEARTBEAT_MS, '12h');
   } catch (error) {
     if (authError(error)) {
+      heartbeatInFlight = false;
       await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
       return;
     }
@@ -515,8 +680,7 @@ async function runHeartbeat(reason = 'scheduled') {
     const now = Date.now();
     if (!heartbeatFailureSince) heartbeatFailureSince = now;
     const configuredGraceMinutes = Math.max(0, Number(authMeta?.subscription?.offlineGraceMinutes || 0));
-    const technicalGraceMs = HEARTBEAT_MS * 2;
-    const allowedOfflineMs = Math.max(technicalGraceMs, configuredGraceMinutes * 60 * 1000);
+    const allowedOfflineMs = Math.max(TECHNICAL_OFFLINE_GRACE_MS, configuredGraceMinutes * 60 * 1000);
     const elapsed = now - heartbeatFailureSince;
     const remainingMs = Math.max(0, allowedOfflineMs - elapsed);
 
@@ -532,30 +696,35 @@ async function runHeartbeat(reason = 'scheduled') {
       revoke: false,
       connectionLost: true,
       failClosed: heartbeatFailClosed,
-      retryInMs: HEARTBEAT_MS,
+      retryInMs: HEARTBEAT_RETRY_MS,
       offlineGraceRemainingMs: remainingMs,
       validationReason: reason,
       error: serializeError(error),
     });
+    scheduleHeartbeat(HEARTBEAT_RETRY_MS, 'retry');
+  } finally {
+    heartbeatInFlight = false;
   }
 }
 
 function startHeartbeat() {
   stopHeartbeat();
+  realtimeStopped = false;
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
-  // KAIZEN keeps browser sessions under frequent server revalidation. A short
-  // heartbeat lets userFLOW react to revocation, plan/profile changes and new
-  // managed-session generations without leaving a stale browser alive for hours.
-  void runHeartbeat('startup');
-  heartbeatTimer = setInterval(() => void runHeartbeat('60s'), HEARTBEAT_MS);
+  scheduleSubscriptionExpiry();
+  connectRealtime();
+  scheduleHeartbeat(HEARTBEAT_MS, '12h');
 }
 
 function stopHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = null;
+  clearHeartbeatTimer();
+  heartbeatInFlight = false;
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
+  if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
+  subscriptionExpiryTimer = null;
+  stopRealtime();
 }
 
 function createMainWindow() {
