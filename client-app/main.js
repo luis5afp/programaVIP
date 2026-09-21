@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
+import { RealtimeClient } from '@supabase/realtime-js';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
 const execFileAsync = promisify(execFile);
@@ -15,8 +16,6 @@ const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
 const HEARTBEAT_RETRY_MS = 15 * 60 * 1000;
 const TECHNICAL_OFFLINE_GRACE_MS = 30 * 60 * 1000;
-const REALTIME_KEEPALIVE_MS = 25 * 1000;
-const REALTIME_RECONNECT_MS = 30 * 1000;
 const GOOGLE_URL = 'https://www.google.com/';
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
@@ -39,12 +38,10 @@ let heartbeatInFlight = false;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
 let subscriptionExpiryTimer = null;
-let realtimeSocket = null;
+let realtimeClient = null;
+let realtimeChannel = null;
 let realtimeConfig = null;
-let realtimeKeepaliveTimer = null;
-let realtimeReconnectTimer = null;
-let realtimeStopped = true;
-let realtimeRef = 0;
+let realtimeEverSubscribed = false;
 let pendingAuthInvalidation = null;
 const profileTabs = new Map();
 let profileOrder = [];
@@ -531,114 +528,66 @@ function scheduleSubscriptionExpiry() {
   }, Math.min(remaining, MAX_TIMER_MS));
 }
 
-function realtimeSocketUrl(config) {
+function validRealtimeConfig(config) {
   try {
     const url = new URL(String(config?.url || ''));
+    const key = String(config?.key || '').trim();
+    const topic = String(config?.topic || '').trim();
+    const event = String(config?.event || 'config_changed').trim();
     if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co')) return null;
-    url.protocol = 'wss:';
-    url.pathname = '/realtime/v1/websocket';
-    url.search = '';
-    url.searchParams.set('apikey', String(config?.key || ''));
-    url.searchParams.set('vsn', '1.0.0');
-    return url.toString();
+    if (!key.startsWith('sb_publishable_') || !topic || !event) return null;
+    return { endpoint: `${url.origin}/realtime/v1`, key, topic, event };
   } catch {
     return null;
   }
 }
 
-function realtimeSend(topic, event, payload = {}) {
-  if (!realtimeSocket || realtimeSocket.readyState !== 1) return false;
-  realtimeRef += 1;
-  realtimeSocket.send(JSON.stringify({
-    topic,
-    event,
-    payload,
-    ref: String(realtimeRef),
-  }));
-  return true;
-}
-
 function stopRealtime() {
-  realtimeStopped = true;
-  if (realtimeKeepaliveTimer) clearInterval(realtimeKeepaliveTimer);
-  if (realtimeReconnectTimer) clearTimeout(realtimeReconnectTimer);
-  realtimeKeepaliveTimer = null;
-  realtimeReconnectTimer = null;
-  const socket = realtimeSocket;
-  realtimeSocket = null;
-  if (socket) {
-    try { socket.close(1000, 'client-stop'); } catch {}
+  const channel = realtimeChannel;
+  const client = realtimeClient;
+  realtimeChannel = null;
+  realtimeClient = null;
+  realtimeEverSubscribed = false;
+  if (channel) void channel.unsubscribe().catch(() => null);
+  if (client) {
+    try { client.disconnect(); } catch {}
   }
-}
-
-function scheduleRealtimeReconnect() {
-  if (realtimeStopped || realtimeReconnectTimer || !accessToken) return;
-  realtimeReconnectTimer = setTimeout(() => {
-    realtimeReconnectTimer = null;
-    connectRealtime();
-  }, REALTIME_RECONNECT_MS);
-}
-
-function handleRealtimeMessage(raw) {
-  let message = null;
-  try { message = JSON.parse(String(raw || '')); } catch { return; }
-  if (!message || typeof message !== 'object') return;
-  const configuredEvent = String(realtimeConfig?.event || 'config_changed');
-  const broadcastEvent = String(message?.payload?.event || '');
-  if (message.event !== 'broadcast' || broadcastEvent !== configuredEvent) return;
-  void runHeartbeat('config-event');
 }
 
 function connectRealtime() {
   stopRealtime();
-  realtimeStopped = false;
   if (!accessToken || !realtimeConfig) return;
-  const url = realtimeSocketUrl(realtimeConfig);
-  const key = String(realtimeConfig?.key || '').trim();
-  const topic = String(realtimeConfig?.topic || '').trim();
-  if (!url || !key || !topic) {
-    scheduleRealtimeReconnect();
-    return;
-  }
+  const config = validRealtimeConfig(realtimeConfig);
+  if (!config) return;
 
-  let socket;
-  try {
-    socket = new WebSocket(url);
-  } catch {
-    scheduleRealtimeReconnect();
-    return;
-  }
-  realtimeSocket = socket;
+  const client = new RealtimeClient(config.endpoint, {
+    params: { apikey: config.key },
+    timeout: 10_000,
+  });
+  const channel = client.channel(config.topic, {
+    config: {
+      broadcast: { ack: false, self: false },
+      presence: { enabled: false },
+      private: false,
+    },
+  });
+  realtimeClient = client;
+  realtimeChannel = channel;
 
-  socket.addEventListener('open', () => {
-    if (realtimeSocket !== socket || realtimeStopped) return;
-    realtimeSend(`realtime:${topic}`, 'phx_join', {
-      config: {
-        broadcast: { ack: false, self: false },
-        presence: { key: '' },
-        postgres_changes: [],
-      },
+  channel
+    .on('broadcast', { event: config.event }, () => {
+      if (realtimeChannel !== channel) return;
+      void runHeartbeat('config-event');
+    })
+    .subscribe((status) => {
+      if (realtimeChannel !== channel) return;
+      if (status === 'SUBSCRIBED') {
+        if (realtimeEverSubscribed) {
+          void runHeartbeat('realtime-reconnected');
+        }
+        realtimeEverSubscribed = true;
+      }
     });
-    realtimeKeepaliveTimer = setInterval(() => {
-      realtimeSend('phoenix', 'heartbeat', {});
-    }, REALTIME_KEEPALIVE_MS);
-  });
-
-  socket.addEventListener('message', (event) => {
-    if (realtimeSocket !== socket || realtimeStopped) return;
-    handleRealtimeMessage(event.data);
-  });
-
-  const disconnected = () => {
-    if (realtimeSocket === socket) realtimeSocket = null;
-    if (realtimeKeepaliveTimer) clearInterval(realtimeKeepaliveTimer);
-    realtimeKeepaliveTimer = null;
-    if (!realtimeStopped) scheduleRealtimeReconnect();
-  };
-  socket.addEventListener('close', disconnected);
-  socket.addEventListener('error', () => {
-    try { socket.close(); } catch {}
-  });
 }
 
 async function runHeartbeat(reason = 'scheduled') {
@@ -709,7 +658,6 @@ async function runHeartbeat(reason = 'scheduled') {
 
 function startHeartbeat() {
   stopHeartbeat();
-  realtimeStopped = false;
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
   scheduleSubscriptionExpiry();
