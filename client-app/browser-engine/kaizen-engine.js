@@ -319,6 +319,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     managedExtensions = [],
     usageId = null,
     ephemeral = false,
+    forceRestore = false,
   }) {
     if (!profile?.id || !profile?.url) throw new Error('El perfil no tiene ID o URL.');
     const target = new URL(profile.url);
@@ -371,7 +372,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    const sessionVersionMatches = snapshotManaged
+    const sessionVersionMatches = !forceRestore
+      && snapshotManaged
       && desiredSessionVersion > 0
       && Number(sessionMarker?.version || 0) === desiredSessionVersion
       && sessionMarker?.profileId === profile.id
