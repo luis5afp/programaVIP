@@ -15,6 +15,7 @@ import {
   clientVersionFrom,
   versionAtLeast,
 } from './release-compat';
+import { clientRealtimeConfig } from './client-revalidation';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -23,6 +24,7 @@ function inetHost(value: unknown): string | null {
 }
 
 export async function clientCatalog(env: Env, id: ClientIdentity) {
+  const realtime = await clientRealtimeConfig(env, id.clientId);
   const memberships = await sb(
     env,
     `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&order=created_at.asc`,
@@ -36,6 +38,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
       offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
+      realtime,
       minimumClientVersion: MIN_USERFLOW_VERSION,
     });
   }
@@ -156,6 +159,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
     offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
+    realtime,
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });
 }
@@ -366,6 +370,7 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ expires_at: sessionExpiresAt, last_seen_at: new Date().toISOString() }),
   });
+  const realtime = await clientRealtimeConfig(env, id.clientId);
   return json({
     ok: true,
     active: true,
@@ -375,6 +380,7 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
     sessionExpiresAt,
+    realtime,
     serverTime: new Date().toISOString(),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });

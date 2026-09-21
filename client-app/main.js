@@ -7,12 +7,15 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
+import { RealtimeClient } from '@supabase/realtime-js';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const HEARTBEAT_MS = 60 * 1000;
+const HEARTBEAT_MS = 12 * 60 * 60 * 1000;
+const HEARTBEAT_RETRY_MS = 15 * 60 * 1000;
+const TECHNICAL_OFFLINE_GRACE_MS = 30 * 60 * 1000;
 const GOOGLE_URL = 'https://www.google.com/';
 const TAB_STRIP_HEIGHT = 47;
 const BROWSER_CHROME_HEIGHT = 92;
@@ -31,8 +34,15 @@ let pendingCatalogTab = false;
 let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
+let heartbeatInFlight = false;
+let heartbeatPendingReason = null;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
+let subscriptionExpiryTimer = null;
+let realtimeClient = null;
+let realtimeChannel = null;
+let realtimeConfig = null;
+let realtimeEverSubscribed = false;
 let pendingAuthInvalidation = null;
 const profileTabs = new Map();
 let profileOrder = [];
@@ -461,6 +471,8 @@ function mergeValidationMeta(payload) {
     };
   }
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
+  if (payload.realtime && typeof payload.realtime === 'object') realtimeConfig = payload.realtime;
+  scheduleSubscriptionExpiry();
 }
 
 async function syncClientConfiguration(payload, reason = 'server', knownCatalog = null) {
@@ -484,11 +496,113 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   return { configChanged, catalog: freshCatalog, auth: authMeta, validationReason: reason };
 }
 
+function clearHeartbeatTimer() {
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function scheduleHeartbeat(delayMs = HEARTBEAT_MS, reason = '12h') {
+  clearHeartbeatTimer();
+  if (!accessToken) return;
+  heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = null;
+    void runHeartbeat(reason);
+  }, Math.max(1_000, delayMs));
+}
+
+function scheduleSubscriptionExpiry() {
+  if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
+  subscriptionExpiryTimer = null;
+  const expiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
+  if (!Number.isFinite(expiresAt)) return;
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    queueMicrotask(() => {
+      if (accessToken) void returnToLogin();
+    });
+    return;
+  }
+  const MAX_TIMER_MS = 24 * 60 * 60 * 1000;
+  subscriptionExpiryTimer = setTimeout(() => {
+    subscriptionExpiryTimer = null;
+    scheduleSubscriptionExpiry();
+  }, Math.min(remaining, MAX_TIMER_MS));
+}
+
+function validRealtimeConfig(config) {
+  try {
+    const url = new URL(String(config?.url || ''));
+    const key = String(config?.key || '').trim();
+    const topic = String(config?.topic || '').trim();
+    const event = String(config?.event || 'config_changed').trim();
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co')) return null;
+    if (!key.startsWith('sb_publishable_') || !topic || !event) return null;
+    return { endpoint: `${url.origin}/realtime/v1`, key, topic, event };
+  } catch {
+    return null;
+  }
+}
+
+function stopRealtime() {
+  const channel = realtimeChannel;
+  const client = realtimeClient;
+  realtimeChannel = null;
+  realtimeClient = null;
+  realtimeEverSubscribed = false;
+  if (channel) void channel.unsubscribe().catch(() => null);
+  if (client) {
+    try { client.disconnect(); } catch {}
+  }
+}
+
+function connectRealtime() {
+  stopRealtime();
+  if (!accessToken || !realtimeConfig) return;
+  const config = validRealtimeConfig(realtimeConfig);
+  if (!config) return;
+
+  const client = new RealtimeClient(config.endpoint, {
+    params: { apikey: config.key },
+    timeout: 10_000,
+  });
+  const channel = client.channel(config.topic, {
+    config: {
+      broadcast: { ack: false, self: false },
+      presence: { enabled: false },
+      private: false,
+    },
+  });
+  realtimeClient = client;
+  realtimeChannel = channel;
+
+  channel
+    .on('broadcast', { event: config.event }, () => {
+      if (realtimeChannel !== channel) return;
+      void runHeartbeat('config-event');
+    })
+    .subscribe((status) => {
+      if (realtimeChannel !== channel) return;
+      if (status === 'SUBSCRIBED') {
+        if (realtimeEverSubscribed) {
+          void runHeartbeat('realtime-reconnected');
+        }
+        realtimeEverSubscribed = true;
+      }
+    });
+}
+
 async function runHeartbeat(reason = 'scheduled') {
   if (!accessToken) return;
+  if (heartbeatInFlight) {
+    if (reason === 'config-event' || reason === 'realtime-reconnected') heartbeatPendingReason = reason;
+    return;
+  }
+  heartbeatInFlight = true;
+  clearHeartbeatTimer();
 
   const subscriptionExpiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
   if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= Date.now()) {
+    heartbeatInFlight = false;
     await returnToLogin();
     return;
   }
@@ -501,13 +615,18 @@ async function runHeartbeat(reason = 'scheduled') {
       const message = result?.updateRequired === true
         ? (result?.message || `Actualiza userFLOW a v${result?.minimumClientVersion || 'más reciente'} o superior.`)
         : (result?.message || 'Tu sesión ya no está autorizada.');
+      heartbeatInFlight = false;
       await returnToLogin(message, result?.code || null);
       return;
     }
+    const previousRealtime = JSON.stringify(realtimeConfig || null);
     const sync = await syncClientConfiguration(result, reason);
+    if (JSON.stringify(realtimeConfig || null) !== previousRealtime || !realtimeChannel) connectRealtime();
     sendClient('userflex:heartbeat', { ...result, ...sync, connectionLost: false });
+    scheduleHeartbeat(HEARTBEAT_MS, '12h');
   } catch (error) {
     if (authError(error)) {
+      heartbeatInFlight = false;
       await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
       return;
     }
@@ -515,8 +634,7 @@ async function runHeartbeat(reason = 'scheduled') {
     const now = Date.now();
     if (!heartbeatFailureSince) heartbeatFailureSince = now;
     const configuredGraceMinutes = Math.max(0, Number(authMeta?.subscription?.offlineGraceMinutes || 0));
-    const technicalGraceMs = HEARTBEAT_MS * 2;
-    const allowedOfflineMs = Math.max(technicalGraceMs, configuredGraceMinutes * 60 * 1000);
+    const allowedOfflineMs = Math.max(TECHNICAL_OFFLINE_GRACE_MS, configuredGraceMinutes * 60 * 1000);
     const elapsed = now - heartbeatFailureSince;
     const remainingMs = Math.max(0, allowedOfflineMs - elapsed);
 
@@ -532,11 +650,17 @@ async function runHeartbeat(reason = 'scheduled') {
       revoke: false,
       connectionLost: true,
       failClosed: heartbeatFailClosed,
-      retryInMs: HEARTBEAT_MS,
+      retryInMs: HEARTBEAT_RETRY_MS,
       offlineGraceRemainingMs: remainingMs,
       validationReason: reason,
       error: serializeError(error),
     });
+    scheduleHeartbeat(HEARTBEAT_RETRY_MS, 'retry');
+  } finally {
+    heartbeatInFlight = false;
+    const pendingReason = heartbeatPendingReason;
+    heartbeatPendingReason = null;
+    if (pendingReason && accessToken) queueMicrotask(() => void runHeartbeat(pendingReason));
   }
 }
 
@@ -544,18 +668,20 @@ function startHeartbeat() {
   stopHeartbeat();
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
-  // KAIZEN keeps browser sessions under frequent server revalidation. A short
-  // heartbeat lets userFLOW react to revocation, plan/profile changes and new
-  // managed-session generations without leaving a stale browser alive for hours.
-  void runHeartbeat('startup');
-  heartbeatTimer = setInterval(() => void runHeartbeat('60s'), HEARTBEAT_MS);
+  scheduleSubscriptionExpiry();
+  connectRealtime();
+  scheduleHeartbeat(HEARTBEAT_MS, '12h');
 }
 
 function stopHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = null;
+  clearHeartbeatTimer();
+  heartbeatInFlight = false;
+  heartbeatPendingReason = null;
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
+  if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
+  subscriptionExpiryTimer = null;
+  stopRealtime();
 }
 
 function createMainWindow() {

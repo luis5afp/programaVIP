@@ -2,6 +2,7 @@ export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_PUBLISHABLE_KEY?: string;
   USERFLEX_PROXY_MASTER_KEY?: string;
   USERFLEX_PROXY_KEY_VERSION?: string;
   CREATORTOOLS_AUTH_ORIGIN?: string;
