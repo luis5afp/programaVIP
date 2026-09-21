@@ -775,7 +775,7 @@ export async function adminProfileSessionRoutes(
 
   if (path === '/api/profile-session-checks/request' && method === 'POST') {
     const requested = await requestAllKeeperChecks(env, 'admin-start');
-    await audit(env, request, 'admin', admin.userId, 'session_keeper.check.request_all', 'session_keeper', null, {
+    await audit(env, request, 'admin', admin.userId, 'session_keeper.check.request_all', 'session_keeper', 'all', {
       reason: 'admin-start',
       requested,
     });
