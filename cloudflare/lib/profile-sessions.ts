@@ -732,8 +732,8 @@ export async function adminProfileSessionRoutes(
         'userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_seen_at,last_check_at,last_refresh_at',
       ),
     ]);
-    const sessionsById = new Map((sessions || []).map((row: any) => [String(row.profile_id), row]));
-    const keepersById = new Map((keepers || []).map((row: any) => [String(row.profile_id), row]));
+    const sessionsById = new Map<string, any>((sessions || []).map((row: any) => [String(row.profile_id), row]));
+    const keepersById = new Map<string, any>((keepers || []).map((row: any) => [String(row.profile_id), row]));
     const alerts = (profiles || [])
       .filter((profile: any) => snapshotAuthentication(runtimeForProfile(profile)))
       .map((profile: any) => {
