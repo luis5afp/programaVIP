@@ -35,6 +35,7 @@ let accessToken = null;
 let authMeta = null;
 let heartbeatTimer = null;
 let heartbeatInFlight = false;
+let heartbeatPendingReason = null;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
 let subscriptionExpiryTimer = null;
@@ -591,7 +592,11 @@ function connectRealtime() {
 }
 
 async function runHeartbeat(reason = 'scheduled') {
-  if (!accessToken || heartbeatInFlight) return;
+  if (!accessToken) return;
+  if (heartbeatInFlight) {
+    if (reason === 'config-event' || reason === 'realtime-reconnected') heartbeatPendingReason = reason;
+    return;
+  }
   heartbeatInFlight = true;
   clearHeartbeatTimer();
 
@@ -616,7 +621,7 @@ async function runHeartbeat(reason = 'scheduled') {
     }
     const previousRealtime = JSON.stringify(realtimeConfig || null);
     const sync = await syncClientConfiguration(result, reason);
-    if (JSON.stringify(realtimeConfig || null) !== previousRealtime || !realtimeSocket) connectRealtime();
+    if (JSON.stringify(realtimeConfig || null) !== previousRealtime || !realtimeChannel) connectRealtime();
     sendClient('userflex:heartbeat', { ...result, ...sync, connectionLost: false });
     scheduleHeartbeat(HEARTBEAT_MS, '12h');
   } catch (error) {
@@ -653,6 +658,9 @@ async function runHeartbeat(reason = 'scheduled') {
     scheduleHeartbeat(HEARTBEAT_RETRY_MS, 'retry');
   } finally {
     heartbeatInFlight = false;
+    const pendingReason = heartbeatPendingReason;
+    heartbeatPendingReason = null;
+    if (pendingReason && accessToken) queueMicrotask(() => void runHeartbeat(pendingReason));
   }
 }
 
@@ -668,6 +676,7 @@ function startHeartbeat() {
 function stopHeartbeat() {
   clearHeartbeatTimer();
   heartbeatInFlight = false;
+  heartbeatPendingReason = null;
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
   if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
