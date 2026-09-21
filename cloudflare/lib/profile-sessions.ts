@@ -236,7 +236,7 @@ async function storeSessionSnapshot(
   env: Env,
   profile: any,
   material: any,
-  options: { publicIp?: string | null; validatedAt?: string | null } = {},
+  options: { publicIp?: string | null; validatedAt?: string | null; notifyClients?: boolean } = {},
 ) {
   validateCapturedMaterial(profile, material);
   const serialized = JSON.stringify(material);
@@ -269,7 +269,7 @@ async function storeSessionSnapshot(
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ session_ready: true, updated_at: now }),
   });
-  await touchProfileClients(env, profile.id);
+  if (options.notifyClients !== false) await touchProfileClients(env, profile.id);
   return { version, capturedAt: now };
 }
 
@@ -1318,6 +1318,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const stored = await storeSessionSnapshot(env, profile, body.material, {
       publicIp,
       validatedAt: now,
+      notifyClients: false,
     });
     await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
