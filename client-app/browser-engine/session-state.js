@@ -616,6 +616,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         passwordFieldVisible: false,
         usernameFilled: false,
         passwordFilled: false,
+        loginActionVisible: false,
         helperVisible: false,
       };
     }
@@ -652,6 +653,17 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         .filter((element) => visible(element) && !element.disabled && !element.readOnly);
       const username = inputs.find((element) => fieldKind(element) === 'username') || null;
       const password = inputs.find((element) => fieldKind(element) === 'password') || null;
+      const loginActionVisible = Array.from(document.querySelectorAll('a,button,[role="button"]'))
+        .filter((element) => visible(element))
+        .some((element) => {
+          const label = String(
+            element.textContent
+            || element.getAttribute('aria-label')
+            || element.getAttribute('title')
+            || '',
+          ).replace(/\s+/g, ' ').trim().toLowerCase();
+          return /^(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)$/.test(label);
+        });
       const href = location.href;
       return {
         currentUrl: href,
@@ -660,6 +672,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         passwordFieldVisible: Boolean(password),
         usernameFilled: Boolean(username && String(username.value || '').length > 0),
         passwordFilled: Boolean(password && String(password.value || '').length > 0),
+        loginActionVisible,
         helperVisible: Boolean(document.getElementById('__userflex-credential-helper')),
       };
     }).catch(() => ({
@@ -669,6 +682,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
       passwordFieldVisible: false,
       usernameFilled: false,
       passwordFilled: false,
+      loginActionVisible: false,
       helperVisible: false,
     }));
   } finally {
