@@ -148,7 +148,7 @@ function networkLabel(profile) {
     return 'Red no disponible';
   }
   if (profile?.networkIdentity?.locked) {
-    return profile.networkIdentity.publicIp ? `IP fija ${profile.networkIdentity.publicIp}` : 'Proxy protegido';
+    return profile.networkIdentity.publicIp ? 'IP fija' : 'Proxy protegido';
   }
   if (profile?.managedConnection) return 'Proxy configurado';
   return 'Conexión directa';
