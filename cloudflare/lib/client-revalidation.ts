@@ -82,31 +82,45 @@ export async function touchClientsConfig(env: Env, clientIds: string[]): Promise
   await notifyClientsConfig(env, ids, revision);
 }
 
-export async function touchPlanClients(env: Env, planIds: string[]): Promise<void> {
+export async function clientIdsForPlans(env: Env, planIds: string[]): Promise<string[]> {
   const ids = uniqueIds(planIds);
-  if (!ids.length) return;
+  if (!ids.length) return [];
   const rows = await sb(
     env,
     `userflex_subscriptions?select=client_id&status=eq.active&plan_id=in.(${ids.join(',')})`,
   );
-  await touchClientsConfig(env, (rows || []).map((row: any) => String(row.client_id)));
+  return uniqueIds((rows || []).map((row: any) => String(row.client_id)));
 }
 
-export async function touchProfileClients(env: Env, profileId: string): Promise<void> {
+export async function clientIdsForProfile(env: Env, profileId: string): Promise<string[]> {
   const rows = await sb(
     env,
     `userflex_plan_profiles?select=plan_id&profile_id=eq.${profileId}`,
   );
-  await touchPlanClients(env, (rows || []).map((row: any) => String(row.plan_id)));
+  return clientIdsForPlans(env, (rows || []).map((row: any) => String(row.plan_id)));
 }
 
-export async function touchProxyClients(env: Env, proxyId: string): Promise<void> {
+export async function clientIdsForProxy(env: Env, proxyId: string): Promise<string[]> {
   const [assignments, defaults] = await Promise.all([
     sb(env, `userflex_assignments?select=client_id&proxy_id=eq.${proxyId}`),
     sb(env, `userflex_profile_proxy_defaults?select=profile_id&proxy_id=eq.${proxyId}`),
   ]);
-  await touchClientsConfig(env, (assignments || []).map((row: any) => String(row.client_id)));
+  const direct = (assignments || []).map((row: any) => String(row.client_id));
+  const inherited: string[] = [];
   for (const row of defaults || []) {
-    await touchProfileClients(env, String(row.profile_id));
+    inherited.push(...await clientIdsForProfile(env, String(row.profile_id)));
   }
+  return uniqueIds([...direct, ...inherited]);
+}
+
+export async function touchPlanClients(env: Env, planIds: string[]): Promise<void> {
+  await touchClientsConfig(env, await clientIdsForPlans(env, planIds));
+}
+
+export async function touchProfileClients(env: Env, profileId: string): Promise<void> {
+  await touchClientsConfig(env, await clientIdsForProfile(env, profileId));
+}
+
+export async function touchProxyClients(env: Env, proxyId: string): Promise<void> {
+  await touchClientsConfig(env, await clientIdsForProxy(env, proxyId));
 }
