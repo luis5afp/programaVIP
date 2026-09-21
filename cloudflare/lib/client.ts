@@ -348,6 +348,72 @@ export async function clientLaunch(
   });
 }
 
+export async function clientSessionFallback(
+  request: Request,
+  env: Env,
+  id: ClientIdentity,
+  profileId: string,
+) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(426, 'CLIENT_UPDATE_REQUIRED', `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`);
+  }
+  const body = await bodyJson(request);
+  const beforeVersion = Math.max(1, Math.floor(Number(body.beforeVersion || 0)));
+  if (!Number.isFinite(beforeVersion) || beforeVersion < 2) {
+    return json({ ok: true, available: false });
+  }
+
+  const [memberships, profiles] = await Promise.all([
+    sb(
+      env,
+      `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
+    ),
+    sb(
+      env,
+      `userflex_profiles?select=id,name,url,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&enabled=eq.true&limit=1`,
+    ),
+  ]);
+  if (!memberships?.[0]) {
+    throw new HttpError(403, 'PROFILE_NOT_INCLUDED_IN_PLAN', 'Este perfil no está incluido en tu plan activo.');
+  }
+  const profile = profiles?.[0];
+  if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+
+  const versions = await sb(
+    env,
+    `userflex_profile_session_versions?select=session_version,material_ciphertext,material_iv,material_key_version,expected_egress_ip,captured_at,validated_at&profile_id=eq.${profileId}&session_version=lt.${beforeVersion}&order=session_version.desc&limit=1`,
+  );
+  const row = versions?.[0];
+  if (!row?.material_ciphertext || !row?.material_iv) {
+    return json({ ok: true, available: false });
+  }
+
+  let material: any;
+  try {
+    material = JSON.parse(await decryptProxy(env, row.material_ciphertext, row.material_iv));
+  } catch {
+    throw new HttpError(502, 'SESSION_FALLBACK_INVALID');
+  }
+  validateCapturedMaterial(profile, material);
+
+  return json({
+    ok: true,
+    available: true,
+    sessionDelivery: {
+      ready: true,
+      mode: profile.session_mode,
+      materialIncluded: true,
+      version: Number(row.session_version || 0),
+      expectedPublicIp: inetHost(row.expected_egress_ip),
+      networkLocked: Boolean(row.expected_egress_ip),
+      capturedAt: row.captured_at || null,
+      validatedAt: row.validated_at || null,
+      material,
+    },
+  });
+}
+
 export async function clientHeartbeat(request: Request, env: Env, id: ClientIdentity) {
   const clientVersion = clientVersionFrom(request);
   if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
