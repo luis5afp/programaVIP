@@ -348,7 +348,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           external: true,
           pid: existing.process.pid,
           browser: existing.browserKind,
-          sessionVersion: desiredSessionVersion,
+          sessionVersion: Number(existing.sessionVersion || desiredSessionVersion),
           profileState: 'persistent-reuse',
           runtime,
         };
@@ -481,7 +481,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       stderr: [],
       startedAt: Date.now(),
       devtoolsTimer: null,
-      sessionVersion: desiredSessionVersion,
+      sessionVersion: sessionVersionMatches
+        ? Number(sessionMarker?.version || desiredSessionVersion)
+        : desiredSessionVersion,
       sessionMarker,
       managedExtensions: Array.isArray(managedExtensions) ? managedExtensions : [],
     };
@@ -536,7 +538,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
-            version: desiredSessionVersion,
+            version: Number(sessionMarker?.version || desiredSessionVersion),
             format: sessionMarker?.format || delivery.material.format || null,
             storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
           };
@@ -581,7 +583,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         network: connection?.mode || 'direct',
         networkLocked: connection?.locked === true,
         publicIp: entry.publicIp || null,
-        sessionVersion: desiredSessionVersion,
+        sessionVersion: Number(entry.sessionVersion || desiredSessionVersion),
         profileState: snapshotManaged
           ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored')
           : credentialHelperEnabled ? 'credential-autofill' : 'persistent-local',
