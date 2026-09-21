@@ -177,7 +177,7 @@ async function keeperRow(env: Env, rawToken: string) {
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
   const rows = await sb(
     env,
-    `userflex_session_keepers?select=profile_id,enabled,last_status,last_check_at,last_refresh_at&token_hash=eq.${tokenHash}&limit=1`,
+    `userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_check_at,last_refresh_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const keeper = rows?.[0];
   if (!keeper || keeper.enabled !== true) throw new HttpError(401, 'KEEPER_TOKEN_INVALID');
@@ -1396,6 +1396,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
 
     const profile = await profileRow(env, keeper.profile_id);
     const publicIp = optional(body.publicIp, 64);
+    const previousSession = await sessionRow(env, keeper.profile_id);
+    const previousHealth = managedSessionHealth(previousSession, keeper);
     const stored = await storeSessionSnapshot(env, profile, body.material, {
       publicIp,
       validatedAt: now,
@@ -1413,6 +1415,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         updated_at: now,
       }),
     });
+    if (!previousHealth.usable) await touchProfileClients(env, keeper.profile_id);
     return json({
       ok: true,
       authenticated: true,
