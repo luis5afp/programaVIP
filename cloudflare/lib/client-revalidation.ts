@@ -1,25 +1,83 @@
-import { Env, sb } from './core';
+import { Env, sb, sha } from './core';
+
+const CONFIG_EVENT = 'config_changed';
+const BROADCAST_BATCH_SIZE = 100;
 
 function uniqueIds(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+export async function clientRealtimeTopic(env: Env, clientId: string): Promise<string | null> {
+  const secret = String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  if (!secret || !clientId) return null;
+  const digest = await sha(`userflex-config:${clientId}:${secret}`);
+  return `userflex-config:${digest}`;
+}
+
+export async function clientRealtimeConfig(env: Env, clientId: string) {
+  const topic = await clientRealtimeTopic(env, clientId);
+  return topic ? { topic, event: CONFIG_EVENT } : null;
+}
+
+export async function notifyClientsConfig(
+  env: Env,
+  clientIds: string[],
+  revision = new Date().toISOString(),
+): Promise<void> {
+  const ids = uniqueIds(clientIds);
+  const base = String(env.SUPABASE_URL || '').replace(/\/$/, '');
+  const key = String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  if (!ids.length || !base || !key) return;
+
+  const messages = (
+    await Promise.all(ids.map(async (clientId) => {
+      const topic = await clientRealtimeTopic(env, clientId);
+      return topic
+        ? {
+            topic,
+            event: CONFIG_EVENT,
+            payload: { revision },
+            private: false,
+          }
+        : null;
+    }))
+  ).filter(Boolean);
+
+  for (let index = 0; index < messages.length; index += BROADCAST_BATCH_SIZE) {
+    const batch = messages.slice(index, index + BROADCAST_BATCH_SIZE);
+    try {
+      const response = await fetch(`${base}/realtime/v1/api/broadcast`, {
+        method: 'POST',
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messages: batch }),
+      });
+      if (!response.ok) {
+        console.warn('userFLEX Realtime broadcast failed:', response.status);
+      }
+    } catch (error: any) {
+      console.warn('userFLEX Realtime broadcast unavailable:', error?.message || error);
+    }
+  }
+}
+
 export async function touchClientConfig(env: Env, clientId: string): Promise<void> {
-  await sb(env, `userflex_clients?id=eq.${clientId}`, {
-    method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ updated_at: new Date().toISOString() }),
-  });
+  await touchClientsConfig(env, [clientId]);
 }
 
 export async function touchClientsConfig(env: Env, clientIds: string[]): Promise<void> {
   const ids = uniqueIds(clientIds);
   if (!ids.length) return;
+  const revision = new Date().toISOString();
   await sb(env, `userflex_clients?id=in.(${ids.join(',')})`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ updated_at: revision }),
   });
+  await notifyClientsConfig(env, ids, revision);
 }
 
 export async function touchPlanClients(env: Env, planIds: string[]): Promise<void> {
