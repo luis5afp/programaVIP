@@ -76,7 +76,11 @@ async function api(request: Request, env: Env): Promise<Response> {
     return clientLogin(request, env);
   }
 
-  if (path.startsWith('/api/session-manager/') || path.startsWith('/api/client-test/')) {
+  if (
+    path.startsWith('/api/session-manager/')
+    || path.startsWith('/api/session-keeper/')
+    || path.startsWith('/api/client-test/')
+  ) {
     const response = await publicSessionManagerRoutes(request, env);
     if (response) return response;
     throw new HttpError(404, 'NOT_FOUND');
