@@ -403,7 +403,7 @@ function getKaizenBrowserEngine() {
   kaizenBrowserEngine = createKaizenBrowserEngine({
     app,
     onClosed: async (entry, reason) => {
-      if (reason === 'session_health_restore') return;
+      if (reason === 'session_health_restore' || reason === 'session_fallback_restore') return;
       if (!entry?.usageId) return;
       const usage = {
         usageId: entry.usageId,
@@ -1600,6 +1600,8 @@ async function openProfile(profileId) {
 
     let inspection = null;
     let sessionRecovered = false;
+    let fallbackRecovered = false;
+    let activeDelivery = delivery;
     if (snapshotManagedProfile(profile)) {
       inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       if (inspectionNeedsLogin(inspection) && result?.profileState === 'persistent-reuse') {
@@ -1608,7 +1610,7 @@ async function openProfile(profileId) {
           clientId,
           profile,
           connection,
-          delivery,
+          delivery: activeDelivery,
           credentials,
           managedExtensions,
           usageId: usage.usageId,
@@ -1617,6 +1619,43 @@ async function openProfile(profileId) {
         sessionRecovered = true;
         inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       }
+
+      if (inspectionNeedsLogin(inspection) && result?.profileState === 'server-session-restored') {
+        // The newest central snapshot failed a real browser check. Mark only
+        // that exact generation as suspect, then request older encrypted
+        // snapshots one-by-one. No fallback material is downloaded normally.
+        await reportSessionHealth(profile.id, false, result);
+        let beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
+        for (let attempt = 0; attempt < 2 && beforeVersion > 1; attempt += 1) {
+          const fallback = await apiRequest(`/api/client/profiles/${profile.id}/session-fallback`, {
+            method: 'POST',
+            body: { beforeVersion },
+            timeout: 20_000,
+          }).catch(() => null);
+          if (!fallback?.available || !fallback?.sessionDelivery?.materialIncluded) break;
+
+          activeDelivery = fallback.sessionDelivery;
+          await engine.close(clientId, profile.id, 'session_fallback_restore').catch(() => null);
+          result = await engine.launch({
+            clientId,
+            profile,
+            connection,
+            delivery: activeDelivery,
+            credentials,
+            managedExtensions,
+            usageId: usage.usageId,
+            forceRestore: true,
+          });
+          sessionRecovered = true;
+          inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+          beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
+          if (!inspectionNeedsLogin(inspection)) {
+            fallbackRecovered = true;
+            break;
+          }
+        }
+      }
+
       if (inspection) {
         await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection), result);
       }
@@ -1627,8 +1666,9 @@ async function openProfile(profileId) {
       ok: true,
       tabbed: false,
       engine: 'kaizen-external',
-      sessionVersion: Number(result?.sessionVersion || delivery?.version || 0),
+      sessionVersion: Number(result?.sessionVersion || activeDelivery?.version || 0),
       sessionRecovered,
+      fallbackRecovered,
       inspection,
     };
   } catch (error) {
