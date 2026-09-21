@@ -163,6 +163,108 @@ async function sessionRow(env: Env, profileId: string) {
   return rows?.[0] || null;
 }
 
+async function keeperRow(env: Env, rawToken: string) {
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_KEEPER_TOKEN');
+  const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
+  const rows = await sb(
+    env,
+    `userflex_session_keepers?select=profile_id,enabled,last_status,last_check_at,last_refresh_at&token_hash=eq.${tokenHash}&limit=1`,
+  );
+  const keeper = rows?.[0];
+  if (!keeper || keeper.enabled !== true) throw new HttpError(401, 'KEEPER_TOKEN_INVALID');
+  return keeper;
+}
+
+async function registerSessionKeeper(env: Env, profileId: string) {
+  const rawToken = token(32);
+  const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
+  const now = new Date().toISOString();
+  await sb(env, 'userflex_session_keepers?on_conflict=profile_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({
+      profile_id: profileId,
+      token_hash: tokenHash,
+      enabled: true,
+      last_status: 'registered',
+      last_error: null,
+      updated_at: now,
+    }),
+  });
+  return rawToken;
+}
+
+async function archiveCurrentSession(env: Env, row: any) {
+  if (!row?.profile_id || !row?.material_ciphertext || !row?.material_iv || Number(row?.session_version || 0) < 1) return;
+  await sb(env, 'userflex_profile_session_versions?on_conflict=profile_id,session_version', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
+    body: JSON.stringify({
+      profile_id: row.profile_id,
+      session_version: Number(row.session_version),
+      material_ciphertext: row.material_ciphertext,
+      material_iv: row.material_iv,
+      material_key_version: row.material_key_version || null,
+      expected_egress_ip: row.expected_egress_ip || null,
+      captured_at: row.last_captured_at || null,
+      validated_at: row.last_validated_at || null,
+    }),
+  }).catch(() => null);
+
+  const versions = await sb(
+    env,
+    `userflex_profile_session_versions?select=id&profile_id=eq.${row.profile_id}&order=session_version.desc`,
+  ).catch(() => []);
+  const stale = (versions || []).slice(3).map((item: any) => String(item.id)).filter(Boolean);
+  if (stale.length) {
+    await sb(env, `userflex_profile_session_versions?id=in.(${stale.join(',')})`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    }).catch(() => null);
+  }
+}
+
+async function storeSessionSnapshot(
+  env: Env,
+  profile: any,
+  material: any,
+  options: { publicIp?: string | null; validatedAt?: string | null } = {},
+) {
+  validateCapturedMaterial(profile, material);
+  const serialized = JSON.stringify(material);
+  if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
+    throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE');
+  }
+  const encrypted = await encryptProxy(env, serialized);
+  const existing = await sessionRow(env, profile.id);
+  await archiveCurrentSession(env, existing);
+  const version = Number(existing?.session_version || 0) + 1;
+  const now = new Date().toISOString();
+  await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({
+      profile_id: profile.id,
+      session_version: version,
+      status: 'ready',
+      material_ciphertext: encrypted.ciphertext,
+      material_iv: encrypted.iv,
+      material_key_version: encrypted.keyVersion,
+      expected_egress_ip: options.publicIp || null,
+      last_captured_at: now,
+      last_validated_at: options.validatedAt || null,
+      updated_at: now,
+    }),
+  });
+  await sb(env, `userflex_profiles?id=eq.${profile.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ session_ready: true, updated_at: now }),
+  });
+  await touchProfileClients(env, profile.id);
+  return { version, capturedAt: now };
+}
+
 async function cookieImportJson(request: Request) {
   const advertised = Number(request.headers.get('content-length') || 0);
   if (advertised > MAX_COOKIE_IMPORT_BYTES + 512_000) {
@@ -205,37 +307,8 @@ function cookieImportSummary(inspection: any) {
 }
 
 async function storeImportedSession(env: Env, profile: any, material: any) {
-  const serialized = JSON.stringify(material);
-  if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
-    throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE', 'La sesión importada supera el tamaño permitido.');
-  }
-  const encrypted = await encryptProxy(env, serialized);
-  const existing = await sessionRow(env, profile.id);
-  const version = Number(existing?.session_version || 0) + 1;
-  const now = new Date().toISOString();
-  await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({
-      profile_id: profile.id,
-      session_version: version,
-      status: 'ready',
-      material_ciphertext: encrypted.ciphertext,
-      material_iv: encrypted.iv,
-      material_key_version: encrypted.keyVersion,
-      expected_egress_ip: null,
-      last_captured_at: now,
-      last_validated_at: null,
-      updated_at: now,
-    }),
-  });
-  await sb(env, `userflex_profiles?id=eq.${profile.id}`, {
-    method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ session_ready: true, updated_at: now }),
-  });
-  await touchProfileClients(env, profile.id);
-  return { version, importedAt: now };
+  const stored = await storeSessionSnapshot(env, profile, material);
+  return { version: stored.version, importedAt: stored.capturedAt };
 }
 
 function assertUserflowVersion(request: Request) {
@@ -1135,45 +1208,121 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const rawToken = text(body.token, 'token', 128);
     const job = await captureJob(env, rawToken, 'complete');
     const profile = await profileRow(env, job.profile_id);
-    const material = body.material;
-    validateCapturedMaterial(profile, material);
-    const serialized = JSON.stringify(material);
-    if (new TextEncoder().encode(serialized).byteLength > MAX_SESSION_MATERIAL_BYTES) {
-      throw new HttpError(413, 'SESSION_MATERIAL_TOO_LARGE');
-    }
-    const encrypted = await encryptProxy(env, serialized);
-    const existing = await sessionRow(env, job.profile_id);
-    const version = Number(existing?.session_version || 0) + 1;
-    const now = new Date().toISOString();
     const publicIp = optional(body.publicIp, 64);
-    await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
-      method: 'POST',
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify({
-        profile_id: job.profile_id,
-        session_version: version,
-        status: 'ready',
-        material_ciphertext: encrypted.ciphertext,
-        material_iv: encrypted.iv,
-        material_key_version: encrypted.keyVersion,
-        expected_egress_ip: publicIp,
-        last_captured_at: now,
-        last_validated_at: null,
-        updated_at: now,
-      }),
-    });
-    await sb(env, `userflex_profiles?id=eq.${job.profile_id}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ session_ready: true, updated_at: now }),
-    });
+    const stored = await storeSessionSnapshot(env, profile, body.material, { publicIp });
+    const keeperToken = await registerSessionKeeper(env, job.profile_id);
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'completed' }),
     });
-    await touchProfileClients(env, job.profile_id);
-    return json({ ok: true, profile_id: job.profile_id, version, public_ip: publicIp });
+    return json({
+      ok: true,
+      profile_id: job.profile_id,
+      version: stored.version,
+      public_ip: publicIp,
+      keeper_token: keeperToken,
+    });
+  }
+
+  if (path === '/api/session-keeper/bootstrap' && method === 'POST') {
+    const sessionManagerVersion = assertSessionManagerVersion(request);
+    const body = await bodyJson(request);
+    const rawToken = text(body.token, 'token', 128);
+    const keeper = await keeperRow(env, rawToken);
+    const profile = await profileRow(env, keeper.profile_id);
+    const credentials = await credentialRow(env, keeper.profile_id);
+    const proxy = await captureProxyForProfile(env, profile);
+    const session = await sessionRow(env, keeper.profile_id);
+    const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+    }).catch(() => null);
+    return json({
+      ok: true,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
+      sessionManagerVersion,
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        url: profile.url,
+        browserEngine: profile.browser_engine || 'chrome-native',
+        authStrategy,
+        storageStrategy: profile.storage_strategy || 'portable-first-party',
+        networkStrategy: profile.network_strategy || 'auto',
+        extensionStrategy: profile.extension_strategy || 'custom',
+      },
+      currentVersion: Number(session?.session_version || 0),
+      credentials: credentials ? {
+        username: credentials.login_username,
+        password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
+      } : null,
+      proxy: proxy ? {
+        id: proxy.id,
+        name: proxy.name,
+        host: proxy.host,
+        port: proxy.port,
+        type: proxy.proxy_type || 'http',
+        validationStatus: proxy.validation_status || null,
+        publicIp: inetHost(proxy.public_ip),
+        username: proxy.username || null,
+        password: proxy.password_ciphertext ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv) : null,
+      } : null,
+    });
+  }
+
+  if (path === '/api/session-keeper/complete' && method === 'POST') {
+    assertSessionManagerVersion(request);
+    const body = await bodyJson(request, 10_000_000);
+    const rawToken = text(body.token, 'token', 128);
+    const keeper = await keeperRow(env, rawToken);
+    const now = new Date().toISOString();
+    const authenticated = body.authenticated === true;
+    const error = optional(body.error, 1000);
+
+    if (!authenticated) {
+      await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          last_seen_at: now,
+          last_check_at: now,
+          last_status: 'needs_admin',
+          last_error: error || 'La web solicita iniciar sesión nuevamente.',
+          updated_at: now,
+        }),
+      });
+      return json({ ok: true, authenticated: false, status: 'needs_admin' });
+    }
+
+    const profile = await profileRow(env, keeper.profile_id);
+    const publicIp = optional(body.publicIp, 64);
+    const stored = await storeSessionSnapshot(env, profile, body.material, {
+      publicIp,
+      validatedAt: now,
+    });
+    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        last_seen_at: now,
+        last_check_at: now,
+        last_refresh_at: now,
+        last_status: 'healthy',
+        last_error: null,
+        updated_at: now,
+      }),
+    });
+    return json({
+      ok: true,
+      authenticated: true,
+      status: 'healthy',
+      profile_id: keeper.profile_id,
+      version: stored.version,
+      public_ip: publicIp,
+    });
   }
 
   return null;
