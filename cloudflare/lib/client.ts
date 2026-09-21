@@ -16,6 +16,7 @@ import {
   versionAtLeast,
 } from './release-compat';
 import { clientRealtimeConfig } from './client-revalidation';
+import { requestKeeperChecks } from './keeper-revalidation';
 import { managedSessionHealth } from './session-health-policy';
 
 function inetHost(value: unknown): string | null {
@@ -447,6 +448,25 @@ export async function clientSessionFallback(
       material,
     },
   });
+}
+
+export async function clientRequestSessionChecks(
+  request: Request,
+  env: Env,
+  id: ClientIdentity,
+) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(426, 'CLIENT_UPDATE_REQUIRED', `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`);
+  }
+
+  const memberships = await sb(
+    env,
+    `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}`,
+  );
+  const profileIds = (memberships || []).map((row: any) => String(row.profile_id)).filter(Boolean);
+  const requested = await requestKeeperChecks(env, profileIds, 'client-start');
+  return json({ ok: true, requested });
 }
 
 export async function clientHeartbeat(request: Request, env: Env, id: ClientIdentity) {
