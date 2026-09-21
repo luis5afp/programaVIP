@@ -74,6 +74,17 @@ async function saveKeeper(profile, rawToken) {
   return true;
 }
 
+async function removeKeeper(profileId) {
+  const file = keeperRegistryPath();
+  try {
+    const current = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (!current?.profiles || typeof current.profiles !== 'object') return;
+    delete current.profiles[profileId];
+    await fs.writeFile(file, JSON.stringify(current), { encoding: 'utf8', mode: 0o600 });
+    if (Object.keys(current.profiles).length === 0) configureKeeperStartup(false);
+  } catch {}
+}
+
 function keeperNeedsLoginMessage(inspection) {
   if (!inspection) return 'No se pudo confirmar que la web continúe autenticada.';
   if (inspection.loginLikeUrl) return `La web redirigió a inicio de sesión: ${inspection.href || ''}`;
@@ -159,6 +170,9 @@ async function runKeeperCycle() {
           `Session Keeper check failed for ${entry?.name || profileId}: `
           + `${error instanceof Error ? error.message : String(error || 'error')}`,
         );
+        if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN'].includes(String(error?.code || ''))) {
+          await removeKeeper(profileId);
+        }
         await engine().close('keeper_error').catch(() => null);
       }
     }
@@ -281,7 +295,12 @@ async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
   } catch {
     payload = { error: text };
   }
-  if (!response.ok) throw new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = payload?.code || 'HTTP_ERROR';
+    throw error;
+  }
   return payload;
 }
 
