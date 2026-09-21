@@ -40,7 +40,6 @@ export async function notifyClientsConfig(
             topic,
             event: CONFIG_EVENT,
             payload: { revision },
-            private: false,
           }
         : null;
     }))
