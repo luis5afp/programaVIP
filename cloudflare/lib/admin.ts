@@ -1,5 +1,5 @@
 import { AdminIdentity } from './auth';
-import { touchClientConfig, touchProfileClients } from './client-revalidation';
+import { notifyClientsConfig, touchClientConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
   AUTH_STRATEGIES,
@@ -263,6 +263,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       });
       await closeOpenProfileUsageForClient(env, clientId, 'client_suspended');
     }
+    await notifyClientsConfig(env, [clientId], patch.updated_at);
     await audit(env, request, 'admin', admin.userId, 'client.update', 'client', clientId);
     return json((await clientDetails(env, rows))[0]);
   }
@@ -271,6 +272,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const clientId = uuid(clientMatch[1], 'clientId');
     await closeOpenProfileUsageForClient(env, clientId, 'client_deleted');
     await sb(env, `userflex_clients?id=eq.${clientId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await notifyClientsConfig(env, [clientId]);
     await audit(env, request, 'admin', admin.userId, 'client.delete', 'client', clientId);
     return json({ ok: true });
   }
@@ -305,12 +307,14 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
     const rows = await sb(env, `userflex_plans?id=eq.${planId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
     if (!rows?.[0]) throw new HttpError(404, 'PLAN_NOT_FOUND');
+    await touchPlanClients(env, [planId]);
     await audit(env, request, 'admin', admin.userId, 'plan.update', 'plan', planId);
     return json(rows[0]);
   }
 
   if (planMatch && method === 'DELETE') {
     const planId = uuid(planMatch[1], 'planId');
+    await touchPlanClients(env, [planId]);
     await sb(env, `userflex_plans?id=eq.${planId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await audit(env, request, 'admin', admin.userId, 'plan.delete', 'plan', planId);
     return json({ ok: true });
@@ -470,12 +474,14 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     }
     const rows = await sb(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
     if (!rows?.[0]) throw new HttpError(404, 'PROXY_NOT_FOUND');
+    await touchProxyClients(env, proxyId);
     await audit(env, request, 'admin', admin.userId, 'proxy.update', 'proxy', proxyId, { host: rows[0].host, port: rows[0].port, hasPassword: Boolean(rows[0].password_ciphertext) });
     return json(safeProxy(rows[0]));
   }
 
   if (proxyMatch && method === 'DELETE') {
     const proxyId = uuid(proxyMatch[1], 'proxyId');
+    await touchProxyClients(env, proxyId);
     await sb(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await audit(env, request, 'admin', admin.userId, 'proxy.delete', 'proxy', proxyId);
     return json({ ok: true });
@@ -506,6 +512,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const result = await sb(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: clientId, p_profile_id: profileId, p_proxy_id: proxyId, p_enabled: enabled }) });
     const id = String(Array.isArray(result) ? result[0] : result);
     const row = await assignmentResponse(env, id);
+    await touchClientConfig(env, clientId);
     await audit(env, request, 'admin', admin.userId, 'assignment.upsert', 'assignment', id, { clientId, profileId, proxyAssigned: Boolean(proxyId), enabled });
     return json(row, 201);
   }
@@ -521,6 +528,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const enabled = body.enabled === undefined ? existing.enabled === true : Boolean(body.enabled);
     const result = await sb(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: existing.client_id, p_profile_id: existing.profile_id, p_proxy_id: proxyId, p_enabled: enabled }) });
     const id = String(Array.isArray(result) ? result[0] : result);
+    await touchClientConfig(env, existing.client_id);
     await audit(env, request, 'admin', admin.userId, 'assignment.update', 'assignment', id, { proxyAssigned: Boolean(proxyId), enabled });
     return json(await assignmentResponse(env, id));
   }
