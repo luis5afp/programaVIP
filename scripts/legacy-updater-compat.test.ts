@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../cloudflare/lib/client-updates.ts', import.meta.url), 'utf8');
 
 assert.match(source, /const UPSTREAM_ATTEMPTS = 3/, 'must retry transient Supabase failures');
-assert.match(source, /const UPSTREAM_TIMEOUT_MS = 3_500/, 'upstream attempts must be bounded');
+assert.match(source, /const UPSTREAM_TIMEOUT_MS = 10_000/, 'upstream attempts must be bounded while tolerating slower storage reads');
 assert.match(source, /url\.search = ''/, 'legacy cache-busting query strings must normalize');
 assert.match(source, /latestMemoryCache/, 'latest manifest needs a warm memory cache');
 assert.match(source, /caches\?\.default|caches\?\./, 'latest manifest needs edge cache support');

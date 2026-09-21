@@ -170,7 +170,7 @@ jobs:
           $versionRoot = Join-Path $feedRoot "versions\$version"
           New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
 
-          $chunkSize = 8MB
+          $chunkSize = 4MB
           $chunks = @()
           [int64]$totalChunkBytes = 0
           $input = [System.IO.File]::OpenRead($exe.FullName)

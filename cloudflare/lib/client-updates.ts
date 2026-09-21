@@ -4,7 +4,7 @@ const RELEASE_BUCKET = 'userflex-client-releases';
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const PART_RE = /^part-\d{3}\.bin$/;
 const MAX_CHUNK_BYTES = 25 * 1024 * 1024;
-const UPSTREAM_TIMEOUT_MS = 3_500;
+const UPSTREAM_TIMEOUT_MS = 10_000;
 const UPSTREAM_ATTEMPTS = 3;
 const LATEST_MEMORY_TTL_MS = 30_000;
 
