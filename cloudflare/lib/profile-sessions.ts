@@ -21,6 +21,7 @@ import {
   inspectCookieImport,
   validateCapturedMaterialData,
 } from './session-material';
+import { managedSessionHealth } from './session-health-policy';
 import {
   Env,
   HttpError,
@@ -716,6 +717,57 @@ export async function adminProfileSessionRoutes(
     )));
   }
 
+  if (path === '/api/profile-session-alerts' && method === 'GET') {
+    const [profiles, sessions, keepers] = await Promise.all([
+      sb(
+        env,
+        'userflex_profiles?select=id,name,enabled,session_mode,auth_strategy,browser_engine,storage_strategy,network_strategy,extension_strategy&enabled=eq.true&order=name.asc',
+      ),
+      sb(
+        env,
+        'userflex_profile_sessions?select=profile_id,session_version,status,last_validated_at,last_captured_at,updated_at',
+      ),
+      sb(
+        env,
+        'userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_seen_at,last_check_at,last_refresh_at',
+      ),
+    ]);
+    const sessionsById = new Map((sessions || []).map((row: any) => [String(row.profile_id), row]));
+    const keepersById = new Map((keepers || []).map((row: any) => [String(row.profile_id), row]));
+    const alerts = (profiles || [])
+      .filter((profile: any) => snapshotAuthentication(runtimeForProfile(profile)))
+      .map((profile: any) => {
+        const session = sessionsById.get(String(profile.id)) || null;
+        const keeper = keepersById.get(String(profile.id)) || null;
+        const health = managedSessionHealth(session, keeper);
+        return {
+          profile_id: profile.id,
+          profile_name: profile.name,
+          severity: health.severity,
+          status: health.status,
+          usable: health.usable,
+          reason: health.reason,
+          validated_at: health.validatedAt,
+          session_version: Number(session?.session_version || 0),
+          keeper_status: keeper?.last_status || null,
+          keeper_last_check_at: keeper?.last_check_at || null,
+        };
+      })
+      .filter((item: any) => item.severity !== 'ok')
+      .sort((left: any, right: any) => {
+        const score = (item: any) => item.severity === 'critical' ? 0 : 1;
+        return score(left) - score(right)
+          || String(left.profile_name).localeCompare(String(right.profile_name));
+      });
+    return json({
+      ok: true,
+      count: alerts.length,
+      criticalCount: alerts.filter((item: any) => item.severity === 'critical').length,
+      warningCount: alerts.filter((item: any) => item.severity === 'warning').length,
+      profiles: alerts,
+    });
+  }
+
   const credentialsMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/managed-credentials$/i);
   if (credentialsMatch && method === 'POST') {
     const profileId = uuid(credentialsMatch[1], 'profileId');
@@ -1317,17 +1369,28 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const error = optional(body.error, 1000);
 
     if (!authenticated) {
-      await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          last_seen_at: now,
-          last_check_at: now,
-          last_status: 'needs_admin',
-          last_error: error || 'La web solicita iniciar sesión nuevamente.',
-          updated_at: now,
+      await Promise.all([
+        sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            last_seen_at: now,
+            last_check_at: now,
+            last_status: 'needs_admin',
+            last_error: error || 'La web solicita iniciar sesión nuevamente.',
+            updated_at: now,
+          }),
         }),
-      });
+        sb(env, `userflex_profile_sessions?profile_id=eq.${keeper.profile_id}&status=eq.ready`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            last_validated_at: null,
+            updated_at: now,
+          }),
+        }),
+      ]);
+      await touchProfileClients(env, keeper.profile_id);
       return json({ ok: true, authenticated: false, status: 'needs_admin' });
     }
 
