@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.25/userFLEX-Session-Manager-0.3.25-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.26/userFLEX-Session-Manager-0.3.26-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -101,6 +101,37 @@ function normalizeSearchValue(value: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase('es');
+}
+
+const SNAPSHOT_VALIDATION_FRESH_MS = 24 * 60 * 60 * 1000;
+
+function snapshotBadge(session: ProfileSessionState | null) {
+  if (!session || session.status !== 'active') {
+    return session?.status === 'needs_auth'
+      ? { tone: 'warn' as const, compact: 'Snapshot: acceso', detail: 'Snapshot: requiere acceso' }
+      : { tone: 'bad' as const, compact: 'Snapshot: sin cargar', detail: 'Snapshot: sin cargar' };
+  }
+  const version = Number(session.version || 0);
+  const validatedAt = session.validated_at ? Date.parse(session.validated_at) : Number.NaN;
+  if (!Number.isFinite(validatedAt)) {
+    return {
+      tone: 'warn' as const,
+      compact: `Snapshot: v${version} · sin verificar`,
+      detail: `Snapshot: guardado · v${version} · pendiente de prueba real`,
+    };
+  }
+  if (Date.now() - validatedAt > SNAPSHOT_VALIDATION_FRESH_MS) {
+    return {
+      tone: 'warn' as const,
+      compact: `Snapshot: v${version} · revisar`,
+      detail: `Snapshot: guardado · v${version} · verificación antigua`,
+    };
+  }
+  return {
+    tone: 'ok' as const,
+    compact: `Snapshot: v${version} · OK`,
+    detail: `Snapshot: activo · v${version} · verificado recientemente`,
+  };
 }
 
 function launchCustomProtocol(launchUrl: string) {
@@ -814,11 +845,10 @@ export function ProfilesView() {
                   <div className="profile-compact-summary">
                     <Badge tone="neutral">Auth: {AUTH_STRATEGY_LABEL[profileAuth]}</Badge>
                     <Badge tone="neutral">Red: {NETWORK_STRATEGY_LABEL[profileNetwork]}</Badge>
-                    {snapshotManaged && (
-                      <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
-                        Snapshot: {session?.status === 'active' ? `v${session.version}` : session?.status === 'needs_auth' ? 'acceso' : 'sin cargar'}
-                      </Badge>
-                    )}
+                    {snapshotManaged && (() => {
+                      const snapshot = snapshotBadge(session);
+                      return <Badge tone={snapshot.tone}>{snapshot.compact}</Badge>;
+                    })()}
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>Proxy: {selectedProxy.name}</Badge>
                     ) : (
@@ -885,13 +915,10 @@ export function ProfilesView() {
                         <div className="profile-config-title">Acceso</div>
                         <div className="profile-config-items">
                           <Badge tone="neutral">Auth: {AUTH_STRATEGY_LABEL[profileAuth]}</Badge>
-                          {snapshotManaged && (
-                            <Badge tone={session?.status === 'active' ? 'ok' : session?.status === 'needs_auth' ? 'warn' : 'bad'}>
-                              Snapshot: {session?.status === 'active'
-                                ? `activo · v${session.version}${session.validated_at ? ' · verificado' : ' · pendiente de prueba'}`
-                                : session?.status === 'needs_auth' ? 'requiere acceso' : 'sin cargar'}
-                            </Badge>
-                          )}
+                          {snapshotManaged && (() => {
+                            const snapshot = snapshotBadge(session);
+                            return <Badge tone={snapshot.tone}>{snapshot.detail}</Badge>;
+                          })()}
                           {credentialHelperSupported && (
                             <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
                               {profileAuth === 'cookie-snapshot'
@@ -1658,7 +1685,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.25 · userFLOW v0.3.25
+              Instalar / actualizar Session Manager v0.3.26 · userFLOW v0.3.26
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, vuelve aquí y pulsa <b>Guardar sesión / generar snapshot</b>.

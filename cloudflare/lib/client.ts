@@ -1,5 +1,5 @@
 import { ClientIdentity } from './auth';
-import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, decryptProxy, json, sb } from './core';
+import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, json, sb } from './core';
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import { managedExtensionsForProfiles } from './extensions';
@@ -384,6 +384,37 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     serverTime: new Date().toISOString(),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });
+}
+
+export async function clientSessionHealth(
+  request: Request,
+  env: Env,
+  id: ClientIdentity,
+  profileId: string,
+) {
+  const clientVersion = clientVersionFrom(request);
+  if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
+    throw new HttpError(426, 'CLIENT_UPDATE_REQUIRED', `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`);
+  }
+  const memberships = await sb(
+    env,
+    `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
+  );
+  if (!memberships?.[0]) {
+    throw new HttpError(403, 'PROFILE_NOT_INCLUDED_IN_PLAN', 'Este perfil no está incluido en tu plan activo.');
+  }
+  const body = await bodyJson(request);
+  const authenticated = body.authenticated === true;
+  const now = new Date().toISOString();
+  await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      last_validated_at: authenticated ? now : null,
+      updated_at: now,
+    }),
+  });
+  return json({ ok: true, authenticated, checkedAt: now });
 }
 
 export async function clientLogout(env: Env, id: ClientIdentity) {
