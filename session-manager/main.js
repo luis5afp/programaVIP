@@ -1,8 +1,11 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, safeStorage } from 'electron';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
 
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
+const KEEPER_INTERVAL_MS = 3 * 60 * 60 * 1000;
+const KEEPER_INITIAL_DELAY_MS = 60 * 1000;
 
 let readyWindow = null;
 let pendingProtocolUrl = null;
@@ -10,10 +13,183 @@ let protocolRegistered = false;
 let captureEngine = null;
 let activeCaptureToken = null;
 let quitAfterCleanup = false;
+let keeperTimer = null;
+let keeperRunning = false;
 
 function engine() {
   if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
   return captureEngine;
+}
+
+function keeperRegistryPath() {
+  return path.join(app.getPath('userData'), 'session-keepers.json');
+}
+
+async function loadKeeperRegistry() {
+  if (!safeStorage.isEncryptionAvailable()) return {};
+  try {
+    const raw = JSON.parse(await fs.readFile(keeperRegistryPath(), 'utf8'));
+    const entries = raw && typeof raw === 'object' && raw.profiles && typeof raw.profiles === 'object'
+      ? raw.profiles
+      : {};
+    const result = {};
+    for (const [profileId, item] of Object.entries(entries)) {
+      if (!/^[0-9a-f-]{36}$/i.test(profileId) || typeof item?.token !== 'string') continue;
+      try {
+        const token = safeStorage.decryptString(Buffer.from(item.token, 'base64'));
+        if (/^[A-Za-z0-9_-]{40,64}$/.test(token)) {
+          result[profileId] = {
+            token,
+            name: typeof item.name === 'string' ? item.name : profileId,
+            updatedAt: item.updatedAt || null,
+          };
+        }
+      } catch {}
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+async function saveKeeper(profile, rawToken) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('Session Keeper no pudo guardar el token porque safeStorage no está disponible.');
+    return false;
+  }
+  if (!profile?.id || !/^[A-Za-z0-9_-]{40,64}$/.test(String(rawToken || ''))) return false;
+  const file = keeperRegistryPath();
+  let current = { profiles: {} };
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (parsed && typeof parsed === 'object' && parsed.profiles && typeof parsed.profiles === 'object') current = parsed;
+  } catch {}
+  current.profiles[profile.id] = {
+    token: safeStorage.encryptString(String(rawToken)).toString('base64'),
+    name: profile.name || profile.id,
+    updatedAt: new Date().toISOString(),
+  };
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(current), { encoding: 'utf8', mode: 0o600 });
+  return true;
+}
+
+function keeperNeedsLoginMessage(inspection) {
+  if (!inspection) return 'No se pudo confirmar que la web continúe autenticada.';
+  if (inspection.loginLikeUrl) return `La web redirigió a inicio de sesión: ${inspection.href || ''}`;
+  if (inspection.passwordFieldVisible) return 'La web está mostrando un campo de contraseña.';
+  if (inspection.usernameFieldVisible) return 'La web está mostrando un campo de usuario/correo.';
+  if (inspection.loginActionVisible) return 'La web está mostrando una acción de inicio de sesión.';
+  return 'La web ya no parece autenticada.';
+}
+
+async function checkKeeperProfile(profileId, entry) {
+  const token = entry?.token;
+  if (!token) return;
+  const bootstrap = await apiPost(API_ORIGIN, '/api/session-keeper/bootstrap', { token }, 45_000);
+  const profile = bootstrap.profile;
+  const credentials = bootstrap.credentials || null;
+  const proxy = bootstrap.proxy || null;
+  if (!profile?.id || profile.id !== profileId || !profile?.url) {
+    throw new Error('Session Keeper recibió una configuración de perfil inválida.');
+  }
+
+  try {
+    await engine().launch({
+      profile,
+      credentials,
+      proxy,
+      background: true,
+      onComplete: async ({ material, publicIp, diagnostics }) => {
+        const completed = await apiPost(API_ORIGIN, '/api/session-keeper/complete', {
+          token,
+          authenticated: true,
+          publicIp,
+          material,
+        }, 90_000);
+        console.log(
+          `Session Keeper refreshed ${profile.name || profile.id} v${completed.version}: `
+          + `${diagnostics.cookieCount} cookies, ${diagnostics.indexedDbCount} IndexedDB databases.`,
+        );
+        return {
+          version: completed.version,
+          publicIp: completed.public_ip || publicIp || null,
+        };
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 4500));
+    let inspection = await engine().inspectActive().catch(() => null);
+    if (!inspection?.authenticated && profile.authStrategy === 'hybrid' && credentials?.username && credentials?.password) {
+      // Give the managed autofill a short window to recover sessions that only
+      // need the stored account identifier/password. 2FA/CAPTCHA still requires
+      // the administrator and will never overwrite the last good snapshot.
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      inspection = await engine().inspectActive().catch(() => inspection);
+    }
+
+    if (!inspection?.authenticated) {
+      const reason = keeperNeedsLoginMessage(inspection);
+      await apiPost(API_ORIGIN, '/api/session-keeper/complete', {
+        token,
+        authenticated: false,
+        error: reason,
+      }, 30_000).catch(() => null);
+      console.warn(`Session Keeper requires administrator for ${profile.name || profile.id}: ${reason}`);
+      return;
+    }
+
+    await engine().saveActive();
+  } finally {
+    await engine().close('keeper_check').catch(() => null);
+  }
+}
+
+async function runKeeperCycle() {
+  if (keeperRunning) return;
+  keeperRunning = true;
+  try {
+    const registry = await loadKeeperRegistry();
+    for (const [profileId, entry] of Object.entries(registry)) {
+      if (quitAfterCleanup) break;
+      try {
+        await checkKeeperProfile(profileId, entry);
+      } catch (error) {
+        console.warn(
+          `Session Keeper check failed for ${entry?.name || profileId}: `
+          + `${error instanceof Error ? error.message : String(error || 'error')}`,
+        );
+        await engine().close('keeper_error').catch(() => null);
+      }
+    }
+  } finally {
+    keeperRunning = false;
+  }
+}
+
+function scheduleKeeper() {
+  if (keeperTimer) clearTimeout(keeperTimer);
+  keeperTimer = setTimeout(() => {
+    keeperTimer = null;
+    void runKeeperCycle().finally(() => {
+      if (!quitAfterCleanup) {
+        keeperTimer = setTimeout(() => void scheduleKeeper(), KEEPER_INTERVAL_MS);
+        keeperTimer.unref?.();
+      }
+    });
+  }, KEEPER_INITIAL_DELAY_MS);
+  keeperTimer.unref?.();
+}
+
+function configureKeeperStartup() {
+  if (process.platform !== 'win32' || process.defaultApp) return;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      openAsHidden: true,
+      args: ['--keeper'],
+    });
+  } catch {}
 }
 
 function protocolUrlFromArgs(args) {
@@ -159,6 +335,11 @@ async function startCapture(rawUrl) {
         publicIp,
         material,
       }, 90_000);
+      if (completed?.keeper_token) {
+        await saveKeeper(profile, completed.keeper_token);
+        configureKeeperStartup();
+        scheduleKeeper();
+      }
       if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
       console.log(
         `Session Manager KAIZEN saved profile ${profile.id} v${completed.version}: `
@@ -239,10 +420,13 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     protocolRegistered = registerProtocol();
+    configureKeeperStartup();
+    scheduleKeeper();
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
+    const keeperOnly = process.argv.includes('--keeper') && !protocolUrl;
     pendingProtocolUrl = null;
     if (protocolUrl) await handleProtocolUrl(protocolUrl).catch(showFatalError);
-    else showReadyWindow();
+    else if (!keeperOnly) showReadyWindow();
   });
 
   app.on('activate', () => {
@@ -253,6 +437,8 @@ if (!gotLock) {
     if (quitAfterCleanup) return;
     event.preventDefault();
     quitAfterCleanup = true;
+    if (keeperTimer) clearTimeout(keeperTimer);
+    keeperTimer = null;
     void engine().close('app_exit')
       .catch(() => null)
       .finally(() => app.quit());
