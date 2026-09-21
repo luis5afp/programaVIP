@@ -158,6 +158,10 @@ async function checkKeeperProfile(profileId, entry) {
 
 async function runKeeperCycle() {
   if (keeperRunning) return;
+  if (engine().active) {
+    console.log('Session Keeper pospuesto porque hay una captura manual activa.');
+    return;
+  }
   keeperRunning = true;
   try {
     const registry = await loadKeeperRegistry();
