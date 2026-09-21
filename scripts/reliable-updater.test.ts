@@ -12,11 +12,11 @@ assert.doesNotMatch(
 );
 
 assert.match(bootstrap, /const UPDATE_MANIFEST_ATTEMPTS = 3/, 'manifest check must retry');
-assert.match(bootstrap, /const UPDATE_CHUNK_ATTEMPTS = 3/, 'chunk downloads must retry');
+assert.match(bootstrap, /const UPDATE_CHUNK_ATTEMPTS = 4/, 'chunk downloads must retry generously');
 assert.match(bootstrap, /async function prepareUpdateDirectory\(\)/, 'updater needs writable-directory fallback');
 assert.match(bootstrap, /app\.getPath\('temp'\)/, 'updater needs Windows temp fallback');
 assert.match(bootstrap, /async function updaterLog\(message\)/, 'updater failures must be written to startup.log');
-assert.match(bootstrap, /UPDATE_CHUNK_TIMEOUT_MS = 45_000/, 'chunk attempts need a bounded timeout');
+assert.match(bootstrap, /UPDATE_CHUNK_TIMEOUT_MS = 120_000/, 'chunk attempts need a bounded timeout that tolerates slow connections');
 assert.match(bootstrap, /bloque \$\{index \+ 1\}\/\$\{manifest\.chunks\.length\}/, 'download status must show chunk progress');
 
 const updateStart = bootstrap.indexOf('async function checkUpdatesAndContinue()');
@@ -30,6 +30,6 @@ assert.doesNotMatch(updaterCatch, /await startMain\(\)/, 'update failure must st
 assert.match(updaterCatch, /Actualización detenida/, 'update failure must show a visible diagnostic');
 assert.match(updaterCatch, /Reintentar verificación/, 'update failure must offer a retry');
 
-assert.match(workflow, /\$chunkSize = 8MB/, 'release feed must use smaller legacy-compatible chunks');
+assert.match(workflow, /\$chunkSize = 4MB/, 'release feed must use smaller legacy-compatible chunks');
 
 console.log('Reliable updater flow: OK');
