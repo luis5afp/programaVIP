@@ -35,6 +35,8 @@ jobs:
         run: node --experimental-strip-types scripts/automatic-updater-install.test.ts
       - name: Test reliable updater flow
         run: node --experimental-strip-types scripts/reliable-updater.test.ts
+      - name: Test event-driven client heartbeat
+        run: node --experimental-strip-types scripts/event-driven-heartbeat.test.ts
       - name: Test legacy updater compatibility
         run: node --experimental-strip-types scripts/legacy-updater-compat.test.ts
       - name: Test managed browser launch and autofill
