@@ -2,6 +2,7 @@ import { Env, sb, sha } from './core';
 
 const KEEPER_EVENT = 'keeper_check';
 const BROADCAST_BATCH_SIZE = 100;
+const KEEPER_REQUEST_COOLDOWN_MS = 5 * 60 * 1000;
 
 function uniqueIds(values: string[]): string[] {
   return [...new Set(values.map((value) => String(value || '')).filter(Boolean))];
@@ -32,9 +33,17 @@ export async function requestKeeperChecks(
 
   const keepers = await sb(
     env,
-    `userflex_session_keepers?select=profile_id&enabled=eq.true&profile_id=in.(${ids.join(',')})`,
+    `userflex_session_keepers?select=profile_id,last_check_at&enabled=eq.true&profile_id=in.(${ids.join(',')})`,
   );
-  const enabledProfileIds = uniqueIds((keepers || []).map((row: any) => String(row.profile_id)));
+  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update';
+  const now = Date.now();
+  const enabledProfileIds = uniqueIds((keepers || [])
+    .filter((row: any) => {
+      if (bypassCooldown) return true;
+      const lastCheck = Date.parse(String(row.last_check_at || ''));
+      return !Number.isFinite(lastCheck) || now - lastCheck >= KEEPER_REQUEST_COOLDOWN_MS;
+    })
+    .map((row: any) => String(row.profile_id)));
   if (!enabledProfileIds.length) return 0;
 
   const base = String(env.SUPABASE_URL || '').replace(/\/$/, '');
