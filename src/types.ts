@@ -179,6 +179,27 @@ export interface ProfileSessionState {
   } | null;
 }
 
+export interface SessionAlertItem {
+  profile_id: string;
+  profile_name: string;
+  severity: 'warning' | 'critical';
+  status: 'renew_soon' | 'pending_validation' | 'stale_validation' | 'needs_renewal' | 'not_configured';
+  usable: boolean;
+  reason: string | null;
+  validated_at: string | null;
+  session_version: number;
+  keeper_status: string | null;
+  keeper_last_check_at: string | null;
+}
+
+export interface SessionAlertSummary {
+  ok: true;
+  count: number;
+  criticalCount: number;
+  warningCount: number;
+  profiles: SessionAlertItem[];
+}
+
 export type ProfileValidationStatus = 'pass' | 'warn' | 'fail';
 
 export interface ProfileValidationCheck {
