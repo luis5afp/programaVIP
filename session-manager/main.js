@@ -1,4 +1,5 @@
 import { app, BrowserWindow, safeStorage } from 'electron';
+import { RealtimeClient } from '@supabase/realtime-js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
@@ -6,6 +7,8 @@ import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engin
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const KEEPER_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const KEEPER_INITIAL_DELAY_MS = 60 * 1000;
+const KEEPER_EVENT_COOLDOWN_MS = 5 * 60 * 1000;
+const KEEPER_EVENT_RETRY_MS = 15 * 1000;
 
 let readyWindow = null;
 let pendingProtocolUrl = null;
@@ -15,6 +18,11 @@ let activeCaptureToken = null;
 let quitAfterCleanup = false;
 let keeperTimer = null;
 let keeperRunning = false;
+let keeperRealtimeClient = null;
+let keeperRealtimeChannels = [];
+let keeperEventTimer = null;
+const keeperRequestedProfiles = new Map();
+const keeperLastEventCheck = new Map();
 
 function engine() {
   if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
@@ -49,6 +57,99 @@ async function loadKeeperRegistry() {
     return result;
   } catch {
     return {};
+  }
+}
+
+function validKeeperRealtimeConfig(config) {
+  try {
+    const url = new URL(String(config?.url || ''));
+    const key = String(config?.key || '').trim();
+    const topic = String(config?.topic || '').trim();
+    const event = String(config?.event || 'keeper_check').trim();
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.supabase.co')) return null;
+    if (!key.startsWith('sb_publishable_') || !topic || !event) return null;
+    return { endpoint: `${url.origin}/realtime/v1`, key, topic, event };
+  } catch {
+    return null;
+  }
+}
+
+function stopKeeperRealtime() {
+  const channels = keeperRealtimeChannels;
+  const client = keeperRealtimeClient;
+  keeperRealtimeChannels = [];
+  keeperRealtimeClient = null;
+  for (const channel of channels) void channel.unsubscribe().catch(() => null);
+  if (client) {
+    try { client.disconnect(); } catch {}
+  }
+}
+
+function scheduleRequestedKeeperChecks(delayMs = 250) {
+  if (keeperEventTimer || quitAfterCleanup) return;
+  keeperEventTimer = setTimeout(() => {
+    keeperEventTimer = null;
+    void runRequestedKeeperChecks();
+  }, delayMs);
+  keeperEventTimer.unref?.();
+}
+
+function queueKeeperCheck(profileId, reason = 'event') {
+  if (!/^[0-9a-f-]{36}$/i.test(String(profileId || ''))) return;
+  const last = Number(keeperLastEventCheck.get(profileId) || 0);
+  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update';
+  if (!bypassCooldown && Date.now() - last < KEEPER_EVENT_COOLDOWN_MS) return;
+  keeperRequestedProfiles.set(profileId, reason);
+  scheduleRequestedKeeperChecks();
+}
+
+async function connectKeeperRealtime() {
+  stopKeeperRealtime();
+  const registry = await loadKeeperRegistry();
+  const entries = Object.entries(registry);
+  if (!entries.length || quitAfterCleanup) return;
+
+  const subscriptions = [];
+  for (const [profileId, entry] of entries) {
+    try {
+      const response = await apiPost(API_ORIGIN, '/api/session-keeper/realtime', { token: entry.token }, 20_000);
+      const config = validKeeperRealtimeConfig(response?.realtime);
+      if (config && String(response?.profileId || '') === profileId) {
+        subscriptions.push({ profileId, config });
+      }
+    } catch (error) {
+      if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN', 'KEEPER_DISABLED'].includes(String(error?.code || ''))) {
+        await removeKeeper(profileId);
+      } else {
+        console.warn(`Session Keeper Realtime no disponible para ${entry?.name || profileId}: ${error?.message || error}`);
+      }
+    }
+  }
+  if (!subscriptions.length || quitAfterCleanup) return;
+
+  const first = subscriptions[0].config;
+  const client = new RealtimeClient(first.endpoint, {
+    params: { apikey: first.key },
+    timeout: 10_000,
+  });
+  keeperRealtimeClient = client;
+
+  for (const subscription of subscriptions) {
+    if (subscription.config.endpoint !== first.endpoint || subscription.config.key !== first.key) continue;
+    const channel = client.channel(subscription.config.topic, {
+      config: {
+        broadcast: { ack: false, self: false },
+        presence: { enabled: false },
+        private: false,
+      },
+    });
+    channel
+      .on('broadcast', { event: subscription.config.event }, (message) => {
+        const reason = String(message?.payload?.reason || 'event');
+        queueKeeperCheck(subscription.profileId, reason);
+      })
+      .subscribe();
+    keeperRealtimeChannels.push(channel);
   }
 }
 
@@ -156,6 +257,43 @@ async function checkKeeperProfile(profileId, entry) {
   }
 }
 
+async function runRequestedKeeperChecks() {
+  if (keeperRunning || engine().active || quitAfterCleanup) {
+    if (keeperRequestedProfiles.size) scheduleRequestedKeeperChecks(KEEPER_EVENT_RETRY_MS);
+    return;
+  }
+  if (!keeperRequestedProfiles.size) return;
+
+  keeperRunning = true;
+  try {
+    const registry = await loadKeeperRegistry();
+    while (keeperRequestedProfiles.size && !quitAfterCleanup) {
+      const [profileId, reason] = keeperRequestedProfiles.entries().next().value || [];
+      if (!profileId) break;
+      keeperRequestedProfiles.delete(profileId);
+      const entry = registry[profileId];
+      if (!entry) continue;
+      try {
+        keeperLastEventCheck.set(profileId, Date.now());
+        console.log(`Session Keeper event check ${entry?.name || profileId}: ${reason || 'event'}`);
+        await checkKeeperProfile(profileId, entry);
+      } catch (error) {
+        console.warn(
+          `Session Keeper event check failed for ${entry?.name || profileId}: `
+          + `${error instanceof Error ? error.message : String(error || 'error')}`,
+        );
+        if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN', 'KEEPER_DISABLED'].includes(String(error?.code || ''))) {
+          await removeKeeper(profileId);
+        }
+        await engine().close('keeper_event_error').catch(() => null);
+      }
+    }
+  } finally {
+    keeperRunning = false;
+    if (keeperRequestedProfiles.size) scheduleRequestedKeeperChecks(KEEPER_EVENT_RETRY_MS);
+  }
+}
+
 async function runKeeperCycle() {
   if (keeperRunning) return;
   if (engine().active) {
@@ -182,6 +320,7 @@ async function runKeeperCycle() {
     }
   } finally {
     keeperRunning = false;
+    if (keeperRequestedProfiles.size) scheduleRequestedKeeperChecks();
   }
 }
 
@@ -362,6 +501,7 @@ async function startCapture(rawUrl) {
         await saveKeeper(profile, completed.keeper_token);
         configureKeeperStartup();
         scheduleKeeper();
+        void connectKeeperRealtime();
       }
       if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
       console.log(
@@ -446,7 +586,10 @@ if (!gotLock) {
     const keepers = await loadKeeperRegistry();
     const hasKeepers = Object.keys(keepers).length > 0;
     configureKeeperStartup(hasKeepers);
-    if (hasKeepers) scheduleKeeper();
+    if (hasKeepers) {
+      scheduleKeeper();
+      void connectKeeperRealtime();
+    }
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
     const keeperOnly = process.argv.includes('--keeper') && !protocolUrl;
     pendingProtocolUrl = null;
@@ -464,6 +607,9 @@ if (!gotLock) {
     quitAfterCleanup = true;
     if (keeperTimer) clearTimeout(keeperTimer);
     keeperTimer = null;
+    if (keeperEventTimer) clearTimeout(keeperEventTimer);
+    keeperEventTimer = null;
+    stopKeeperRealtime();
     void engine().close('app_exit')
       .catch(() => null)
       .finally(() => app.quit());
