@@ -1668,8 +1668,7 @@ async function handleClientTestProtocol(rawUrl) {
     const snapshotLooksAuthenticated = Boolean(
       result?.restore
       && inspection
-      && inspection.loginLikeUrl !== true
-      && !loginFieldsVisible,
+      && !inspectionNeedsLogin(inspection),
     );
 
     let outcome = 'browser-launched';
