@@ -154,6 +154,21 @@ function networkLabel(profile) {
   return 'Conexión directa';
 }
 
+function sessionUnavailableLabels(profile) {
+  switch (String(profile?.sessionStatus || '')) {
+    case 'needs_renewal':
+      return { availability: 'Requiere renovación', action: 'Esperando admin' };
+    case 'pending_validation':
+      return { availability: 'Sesión pendiente', action: 'Esperando admin' };
+    case 'stale_validation':
+      return { availability: 'Sesión sin validar', action: 'Esperando admin' };
+    case 'not_configured':
+      return { availability: 'Sesión no configurada', action: 'Esperando admin' };
+    default:
+      return { availability: 'No disponible', action: 'Mantenimiento' };
+  }
+}
+
 function descriptionFor(profile) {
   const host = domain(profile.url);
   if (profile?.launchReady === false) {
@@ -228,10 +243,11 @@ function makeProfileCard(profile) {
   footer.className = 'card-footer';
   const availability = document.createElement('span');
   availability.className = `availability${unavailable ? ' maintenance' : ''}`;
-  availability.textContent = unavailable ? 'No disponible' : networkLabel(profile);
+  const unavailableLabels = sessionUnavailableLabels(profile);
+  availability.textContent = unavailable ? unavailableLabels.availability : networkLabel(profile);
   const state = document.createElement('span');
   state.className = 'card-state';
-  state.textContent = unavailable ? 'Mantenimiento' : 'Abrir';
+  state.textContent = unavailable ? unavailableLabels.action : 'Abrir';
   footer.append(availability, state);
 
   card.append(image, body, footer);
