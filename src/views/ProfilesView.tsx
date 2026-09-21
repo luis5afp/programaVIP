@@ -134,6 +134,42 @@ function snapshotBadge(session: ProfileSessionState | null) {
   };
 }
 
+function keeperBadge(session: ProfileSessionState | null) {
+  const keeper = session?.keeper || null;
+  if (!keeper) {
+    return {
+      tone: 'warn' as const,
+      compact: 'Keeper: pendiente',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.27+.',
+    };
+  }
+  if (keeper.enabled === false || keeper.status === 'disabled') {
+    return { tone: 'neutral' as const, compact: 'Keeper: apagado', detail: 'Session Keeper: desactivado' };
+  }
+  if (keeper.status === 'healthy') {
+    return { tone: 'ok' as const, compact: 'Keeper: activo', detail: 'Session Keeper: activo · sesión central vigilada' };
+  }
+  if (keeper.status === 'needs_admin') {
+    return {
+      tone: 'bad' as const,
+      compact: 'Keeper: requiere acceso',
+      detail: `Session Keeper: requiere administrador${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
+    };
+  }
+  if (keeper.status === 'error') {
+    return {
+      tone: 'bad' as const,
+      compact: 'Keeper: error',
+      detail: `Session Keeper: error${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
+    };
+  }
+  return {
+    tone: 'neutral' as const,
+    compact: 'Keeper: registrado',
+    detail: 'Session Keeper: registrado · esperando primera comprobación automática',
+  };
+}
+
 function launchCustomProtocol(launchUrl: string) {
   const anchor = document.createElement('a');
   anchor.href = launchUrl;
@@ -596,7 +632,7 @@ export function ProfilesView() {
           setCaptureSaveMessage(
             `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
           );
-          setSuccess('Sesión guardada y snapshot actualizado correctamente.');
+          setSuccess('Sesión guardada. Session Keeper quedó registrado para mantenerla automáticamente.');
           return;
         }
       }
@@ -849,6 +885,10 @@ export function ProfilesView() {
                       const snapshot = snapshotBadge(session);
                       return <Badge tone={snapshot.tone}>{snapshot.compact}</Badge>;
                     })()}
+                    {snapshotManaged && (() => {
+                      const keeper = keeperBadge(session);
+                      return <Badge tone={keeper.tone}>{keeper.compact}</Badge>;
+                    })()}
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>Proxy: {selectedProxy.name}</Badge>
                     ) : (
@@ -918,6 +958,10 @@ export function ProfilesView() {
                           {snapshotManaged && (() => {
                             const snapshot = snapshotBadge(session);
                             return <Badge tone={snapshot.tone}>{snapshot.detail}</Badge>;
+                          })()}
+                          {snapshotManaged && (() => {
+                            const keeper = keeperBadge(session);
+                            return <Badge tone={keeper.tone}>{keeper.detail}</Badge>;
                           })()}
                           {credentialHelperSupported && (
                             <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
