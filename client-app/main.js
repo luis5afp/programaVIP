@@ -1543,10 +1543,14 @@ function inspectionNeedsLogin(inspection) {
   );
 }
 
-async function reportSessionHealth(profileId, authenticated) {
+async function reportSessionHealth(profileId, authenticated, result = null) {
   await apiRequest(`/api/client/profiles/${profileId}/session-health`, {
     method: 'POST',
-    body: { authenticated: authenticated === true },
+    body: {
+      authenticated: authenticated === true,
+      sessionVersion: Number(result?.sessionVersion || 0),
+      source: String(result?.profileState || ''),
+    },
     timeout: 8_000,
   }).catch((error) => {
     console.warn('userFLOW session health report failed:', error?.message || error);
@@ -1614,7 +1618,7 @@ async function openProfile(profileId) {
         inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       }
       if (inspection) {
-        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection));
+        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection), result);
       }
     }
 
@@ -1623,7 +1627,7 @@ async function openProfile(profileId) {
       ok: true,
       tabbed: false,
       engine: 'kaizen-external',
-      sessionVersion: Number(delivery?.version || result?.sessionVersion || 0),
+      sessionVersion: Number(result?.sessionVersion || delivery?.version || 0),
       sessionRecovered,
       inspection,
     };
