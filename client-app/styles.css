@@ -11,8 +11,8 @@
   --text: #f4f6fa;
   --muted: #8993a4;
   --muted-2: #616b7c;
-  --accent: #f5b15b;
-  --accent-2: #ffd08f;
+  --accent: #7567ee;
+  --accent-2: #aaa2ff;
   --green: #42d89d;
   --danger: #ff6b7a;
 }
@@ -134,7 +134,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 18px 24px 12px;
+  padding: 15px 22px 10px;
   background: rgba(7, 10, 15, .95);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid rgba(28, 36, 48, .72);
@@ -142,7 +142,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .launcher-topline {
   display: grid;
   grid-template-columns: auto minmax(280px, 520px) auto;
-  gap: 26px;
+  gap: 22px;
   align-items: center;
 }
 .brand-inline { display: flex; align-items: center; gap: 9px; white-space: nowrap; }
@@ -150,7 +150,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .brand-inline .version-text { margin-left: -3px; }
 .launcher-search { width: 100%; justify-self: center; position: relative; }
 .launcher-search input {
-  height: 40px;
+  height: 38px;
   padding: 0 13px 0 37px;
   border-color: transparent;
   background: #0b0f16;
@@ -161,18 +161,27 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   position: absolute;
   left: 13px;
   top: 50%;
+  width: 16px;
+  height: 16px;
   transform: translateY(-50%);
   color: #717b8d;
   pointer-events: none;
-  font-size: 18px;
+}
+.search-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 .header-right { display: flex; align-items: center; gap: 12px; justify-self: end; }
 .status-dot { font-size: 11px; color: #98a2b3; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .status-dot::before { content: ''; width: 7px; height: 7px; background: var(--green); border-radius: 50%; box-shadow: 0 0 12px rgba(66, 216, 157, .55); }
 .status-dot.bad::before { background: var(--danger); box-shadow: 0 0 12px rgba(255, 107, 122, .45); }
 .icon-button {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border: 1px solid #1a2720;
   background: #0a1812;
   color: #79d5ae;
@@ -192,7 +201,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   justify-content: center;
   align-items: center;
   gap: 7px;
-  margin-top: 14px;
+  margin-top: 10px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -201,44 +210,44 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border: 1px solid #1c2430;
   background: #0d1118;
   color: #a2aab8;
-  border-radius: 10px;
-  min-width: 62px;
-  padding: 8px 13px;
+  border-radius: 999px;
+  min-width: 58px;
+  padding: 7px 12px;
   font-size: 12px;
   font-weight: 800;
   transition: .16s ease;
 }
 .category-pill:hover { border-color: #323a48; color: #d4d8df; }
 .category-pill.active {
-  color: #151008;
-  background: linear-gradient(180deg, #ffc873, #f0aa52);
-  border-color: #f6bd70;
-  box-shadow: 0 5px 18px rgba(245, 177, 91, .18);
+  color: #f6f4ff;
+  background: linear-gradient(180deg, #7668ef, #5c4fd1);
+  border-color: #8578f4;
+  box-shadow: 0 5px 18px rgba(101, 87, 225, .22);
 }
 
 .catalog-content {
   width: min(1540px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 20px 0 44px;
+  padding: 16px 0 40px;
 }
 .catalog-error { margin: 0 0 18px; }
 .profiles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
   align-items: stretch;
 }
 .profile-card {
-  min-height: 102px;
+  min-height: 92px;
   position: relative;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   grid-template-rows: 1fr auto;
-  column-gap: 11px;
-  row-gap: 7px;
+  column-gap: 10px;
+  row-gap: 5px;
   align-items: center;
-  padding: 13px 14px 10px;
+  padding: 11px 12px 9px;
   border: 1px solid #171e28;
   border-radius: 11px;
   background:
@@ -277,9 +286,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .profile-image {
   position: relative;
   z-index: 1;
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   overflow: hidden;
   display: grid;
   place-items: center;
@@ -290,12 +299,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border: 1px solid #2a3240;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
 }
-.profile-image img { width: 100%; height: 100%; object-fit: cover; }
+.profile-image img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
 .profile-body { position: relative; z-index: 1; min-width: 0; align-self: center; }
 .profile-body h3 {
   margin: 0;
   color: #f5f6f8;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.2;
   font-weight: 820;
   letter-spacing: -.2px;
@@ -306,7 +315,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .profile-description {
   margin: 4px 0 0;
   color: #959dad;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -330,7 +339,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   gap: 5px;
   min-width: 0;
   color: #707b8d;
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -340,14 +349,26 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .availability.maintenance { color: #846c72; }
 .availability.maintenance::before { background: #8b4b57; box-shadow: none; }
 .card-state {
-  color: #929cab;
+  color: #c9c5ff;
+  background: rgba(106, 91, 229, .10);
+  border: 1px solid rgba(132, 119, 244, .22);
+  border-radius: 999px;
+  padding: 4px 8px;
   font-size: 9px;
-  font-weight: 800;
+  font-weight: 850;
   white-space: nowrap;
-  transition: color .16s ease;
+  transition: color .16s ease, background .16s ease, border-color .16s ease;
 }
-.profile-card:not(.unavailable):hover .card-state { color: var(--accent-2); }
-.unavailable .card-state { color: #7d5961; }
+.profile-card:not(.unavailable):hover .card-state {
+  color: #fff;
+  background: rgba(117, 103, 238, .18);
+  border-color: rgba(151, 140, 255, .42);
+}
+.unavailable .card-state {
+  color: #9a747d;
+  background: rgba(125, 67, 81, .08);
+  border-color: rgba(125, 67, 81, .20);
+}
 
 .empty {
   min-height: 430px;
@@ -374,7 +395,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   align-items: center;
   gap: 16px;
   padding: 0 18px;
-  background: rgba(19, 16, 16, .93);
+  background: rgba(7, 10, 15, .96);
   backdrop-filter: blur(16px);
   border-top: 1px solid rgba(255, 255, 255, .07);
   box-shadow: 0 -8px 26px rgba(0, 0, 0, .20);
