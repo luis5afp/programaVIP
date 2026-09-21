@@ -403,6 +403,7 @@ function getKaizenBrowserEngine() {
   kaizenBrowserEngine = createKaizenBrowserEngine({
     app,
     onClosed: async (entry, reason) => {
+      if (reason === 'session_health_restore') return;
       if (!entry?.usageId) return;
       const usage = {
         usageId: entry.usageId,
@@ -1503,6 +1504,34 @@ function detachIfOutside(profileId, point) {
   return outside ? detachProfile(profileId, { x, y }) : false;
 }
 
+function snapshotManagedProfile(profile) {
+  const authStrategy = profile?.runtime?.authStrategy
+    || (profile?.sessionMode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+  return authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
+}
+
+function inspectionNeedsLogin(inspection) {
+  return Boolean(
+    inspection
+    && (
+      inspection.loginLikeUrl === true
+      || inspection.usernameFieldVisible === true
+      || inspection.passwordFieldVisible === true
+      || inspection.loginActionVisible === true
+    )
+  );
+}
+
+async function reportSessionHealth(profileId, authenticated) {
+  await apiRequest(`/api/client/profiles/${profileId}/session-health`, {
+    method: 'POST',
+    body: { authenticated: authenticated === true },
+    timeout: 8_000,
+  }).catch((error) => {
+    console.warn('userFLOW session health report failed:', error?.message || error);
+  });
+}
+
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
 
@@ -1532,8 +1561,10 @@ async function openProfile(profileId) {
   };
 
   try {
-    const result = await getKaizenBrowserEngine().launch({
-      clientId: authMeta?.client?.id || 'client',
+    const clientId = authMeta?.client?.id || 'client';
+    const engine = getKaizenBrowserEngine();
+    let result = await engine.launch({
+      clientId,
       profile,
       connection,
       delivery,
@@ -1541,12 +1572,39 @@ async function openProfile(profileId) {
       managedExtensions,
       usageId: usage.usageId,
     });
+
+    let inspection = null;
+    let sessionRecovered = false;
+    if (snapshotManagedProfile(profile)) {
+      inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+      if (inspectionNeedsLogin(inspection) && result?.profileState === 'persistent-reuse') {
+        await engine.close(clientId, profile.id, 'session_health_restore').catch(() => null);
+        result = await engine.launch({
+          clientId,
+          profile,
+          connection,
+          delivery,
+          credentials,
+          managedExtensions,
+          usageId: usage.usageId,
+          forceRestore: true,
+        });
+        sessionRecovered = true;
+        inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+      }
+      if (inspection) {
+        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection));
+      }
+    }
+
     return {
       ...result,
       ok: true,
       tabbed: false,
       engine: 'kaizen-external',
       sessionVersion: Number(delivery?.version || result?.sessionVersion || 0),
+      sessionRecovered,
+      inspection,
     };
   } catch (error) {
     await closeWorkspaceUsage(usage, 'launch_failed');
