@@ -22,12 +22,14 @@ assert.match(sessions, /validatedAt: now/);
 assert.match(sessions, /archiveCurrentSession/);
 assert.match(sessions, /slice\(3\)/);
 assert.match(worker, /path\.startsWith\('\/api\/session-keeper\/'\)/);
+assert.match(worker, /session-fallback/);
+assert.match(sessions, /notifyClients !== false/);
 
 assert.match(manager, /safeStorage\.encryptString/);
 assert.match(manager, /safeStorage\.decryptString/);
 assert.match(manager, /const KEEPER_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
 assert.match(manager, /setLoginItemSettings/);
-assert.match(manager, /args: \['--keeper'\]/);
+assert.match(manager, /args: enabled === true \? \['--keeper'\] : \[\]/);
 assert.match(manager, /background: true/);
 assert.match(manager, /authenticated: false/);
 assert.match(manager, /await engine\(\)\.saveActive\(\)/);
@@ -51,6 +53,9 @@ assert.match(clientEngine, /Number\(sessionMarker\?\.version \|\| 0\) > 0/);
 
 assert.match(clientMain, /preserveProfilesForAuthError/);
 assert.match(clientMain, /clientId && !preserveProfiles/);
+assert.match(clientMain, /session-fallback/);
+assert.match(clientMain, /fallbackRecovered/);
+assert.match(clientMain, /sessionVersion: Number\(result\?\.sessionVersion/);
 
 assert.match(profilesView, /Keeper: activo/);
 assert.match(profilesView, /Keeper: requiere acceso/);
