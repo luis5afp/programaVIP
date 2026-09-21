@@ -48,7 +48,7 @@ function inetHost(value: unknown): string | null {
   return raw ? raw.split('/')[0] || null : null;
 }
 
-function safeState(profileId: string, credential: any, session: any) {
+function safeState(profileId: string, credential: any, session: any, keeper: any = null) {
   return {
     profile_id: profileId,
     has_credentials: Boolean(credential),
@@ -59,6 +59,14 @@ function safeState(profileId: string, credential: any, session: any) {
     captured_at: session?.last_captured_at || null,
     validated_at: session?.last_validated_at || null,
     updated_at: session?.updated_at || credential?.updated_at || null,
+    keeper: keeper ? {
+      enabled: keeper.enabled === true,
+      status: keeper.last_status || 'registered',
+      last_seen_at: keeper.last_seen_at || null,
+      last_check_at: keeper.last_check_at || null,
+      last_refresh_at: keeper.last_refresh_at || null,
+      last_error: keeper.last_error || null,
+    } : null,
   };
 }
 
@@ -688,16 +696,24 @@ export async function adminProfileSessionRoutes(
   }
 
   if (path === '/api/profile-session-states' && method === 'GET') {
-    const [credentials, sessions] = await Promise.all([
+    const [credentials, sessions, keepers] = await Promise.all([
       sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
       sb(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
+      sb(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,updated_at'),
     ]);
     const profileIds = new Set<string>();
     for (const row of credentials || []) profileIds.add(row.profile_id);
     for (const row of sessions || []) profileIds.add(row.profile_id);
+    for (const row of keepers || []) profileIds.add(row.profile_id);
     const credentialsById = new Map((credentials || []).map((row: any) => [row.profile_id, row]));
     const sessionsById = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
-    return json([...profileIds].map((profileId) => safeState(profileId, credentialsById.get(profileId), sessionsById.get(profileId))));
+    const keepersById = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
+    return json([...profileIds].map((profileId) => safeState(
+      profileId,
+      credentialsById.get(profileId),
+      sessionsById.get(profileId),
+      keepersById.get(profileId),
+    )));
   }
 
   const credentialsMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/managed-credentials$/i);
