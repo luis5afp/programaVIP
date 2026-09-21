@@ -103,6 +103,7 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
+const SNAPSHOT_VALIDATION_WARNING_MS = 12 * 60 * 60 * 1000;
 const SNAPSHOT_VALIDATION_FRESH_MS = 24 * 60 * 60 * 1000;
 
 function snapshotBadge(session: ProfileSessionState | null) {
@@ -120,11 +121,19 @@ function snapshotBadge(session: ProfileSessionState | null) {
       detail: `Snapshot: guardado · v${version} · pendiente de prueba real`,
     };
   }
-  if (Date.now() - validatedAt > SNAPSHOT_VALIDATION_FRESH_MS) {
+  const validationAge = Date.now() - validatedAt;
+  if (validationAge > SNAPSHOT_VALIDATION_FRESH_MS) {
+    return {
+      tone: 'bad' as const,
+      compact: `Snapshot: v${version} · vencida`,
+      detail: `Snapshot: guardado · v${version} · validación vencida; requiere revisión`,
+    };
+  }
+  if (validationAge > SNAPSHOT_VALIDATION_WARNING_MS) {
     return {
       tone: 'warn' as const,
-      compact: `Snapshot: v${version} · revisar`,
-      detail: `Snapshot: guardado · v${version} · verificación antigua`,
+      compact: `Snapshot: v${version} · validar pronto`,
+      detail: `Snapshot: activo · v${version} · conviene validar antes de 24 h`,
     };
   }
   return {
@@ -140,7 +149,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.27+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.28+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
