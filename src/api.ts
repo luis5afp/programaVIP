@@ -199,6 +199,7 @@ export const api = {
   profileSessions: {
     list: () => request<ProfileSessionState[]>('/api/profile-session-states'),
     alerts: () => request<SessionAlertSummary>('/api/profile-session-alerts'),
+    requestChecks: () => request<{ ok: true; requested: number }>('/api/profile-session-checks/request', { method: 'POST' }),
     inspectCookies: (file: File, url: string) => {
       const body = new FormData();
       body.append('cookies', file, file.name || 'cookies.json');
