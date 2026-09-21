@@ -430,12 +430,24 @@ function authError(error) {
   return error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(error?.code);
 }
 
+function preserveProfilesForAuthError(error) {
+  const code = String(error?.code || '');
+  if (['CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(code)) return false;
+  return Number(error?.status || 0) === 401 || code === 'CLIENT_UNAUTHENTICATED';
+}
+
 async function catalog() {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   try {
     return await apiRequest('/api/client/catalog');
   } catch (error) {
-    if (authError(error)) await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
+    if (authError(error)) {
+      await returnToLogin(
+        error?.message || 'Tu sesión ya no está activa.',
+        error?.code || null,
+        { preserveProfiles: preserveProfilesForAuthError(error) },
+      );
+    }
     throw error;
   }
 }
@@ -617,7 +629,11 @@ async function runHeartbeat(reason = 'scheduled') {
         ? (result?.message || `Actualiza userFLOW a v${result?.minimumClientVersion || 'más reciente'} o superior.`)
         : (result?.message || 'Tu sesión ya no está autorizada.');
       heartbeatInFlight = false;
-      await returnToLogin(message, result?.code || null);
+      await returnToLogin(
+        message,
+        result?.code || null,
+        { preserveProfiles: result?.updateRequired === true },
+      );
       return;
     }
     const previousRealtime = JSON.stringify(realtimeConfig || null);
@@ -628,7 +644,11 @@ async function runHeartbeat(reason = 'scheduled') {
   } catch (error) {
     if (authError(error)) {
       heartbeatInFlight = false;
-      await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
+      await returnToLogin(
+        error?.message || 'Tu sesión ya no está activa.',
+        error?.code || null,
+        { preserveProfiles: preserveProfilesForAuthError(error) },
+      );
       return;
     }
 
@@ -730,15 +750,16 @@ function enterWorkspace(sender) {
   }, 0);
 }
 
-async function returnToLogin(message = null, code = null) {
+async function returnToLogin(message = null, code = null, options = {}) {
   const clientId = authMeta?.client?.id || null;
+  const preserveProfiles = options?.preserveProfiles === true;
 
   // Keep at least one Electron window alive during the transition back to
   // login. On Windows, closing the workspace while it is the only window emits
   // window-all-closed and can terminate the whole app before login is recreated.
-  await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
+  await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
-  if (clientId) {
+  if (clientId && !preserveProfiles) {
     await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
   }
   await clearAuth();
