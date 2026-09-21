@@ -11,8 +11,13 @@ const profilesView = readFileSync(new URL('../src/views/ProfilesView.tsx', impor
 
 assert.match(
   sessions,
-  /last_captured_at: now,\s*last_validated_at: null,/,
-  'capturing a snapshot must not falsely mark it as live-validated',
+  /last_captured_at: now,\s*last_validated_at: options\.validatedAt \|\| null,/,
+  'central session storage must only mark validation when explicitly supplied',
+);
+assert.match(
+  sessions,
+  /\/api\/session-manager\/complete[\s\S]{0,1800}storeSessionSnapshot\(env, profile, body\.material, \{ publicIp \}\)/,
+  'manual capture must remain unverified until a real browser health check',
 );
 assert.match(
   sessions,
@@ -56,8 +61,8 @@ assert.match(
 );
 assert.match(
   client,
-  /last_validated_at: authenticated \? now : null/,
-  'live client health must update verification truthfully',
+  /sameCentralGeneration[\s\S]{0,900}last_validated_at: authenticated \? now : null/,
+  'live client health must update only the exact central generation that was tested',
 );
 assert.match(
   profilesView,
