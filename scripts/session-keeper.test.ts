@@ -24,6 +24,8 @@ assert.match(sessions, /slice\(3\)/);
 assert.match(worker, /path\.startsWith\('\/api\/session-keeper\/'\)/);
 assert.match(worker, /session-fallback/);
 assert.match(sessions, /notifyClients !== false/);
+assert.match(sessions, /userflex_session_keepers\?profile_id=eq\.\$\{profileId\}[\s\S]{0,260}method: 'DELETE'/);
+assert.match(sessions, /KEEPER_DISABLED/);
 
 assert.match(manager, /safeStorage\.encryptString/);
 assert.match(manager, /safeStorage\.decryptString/);
@@ -34,6 +36,7 @@ assert.match(manager, /background: true/);
 assert.match(manager, /authenticated: false/);
 assert.match(manager, /await engine\(\)\.saveActive\(\)/);
 assert.match(manager, /completed\?\.keeper_token/);
+assert.match(manager, /if \(engine\(\)\.active\)[\s\S]{0,180}captura manual activa/);
 
 assert.match(captureState, /export async function inspectCaptureSession/);
 assert.match(captureState, /loginActionVisible/);
