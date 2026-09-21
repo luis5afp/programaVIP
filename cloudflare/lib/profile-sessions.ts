@@ -395,12 +395,10 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
         add(
           'snapshot',
           'Snapshot de sesión',
-          importedJson && !runtimeValidated ? 'warn' : 'pass',
-          importedJson
-            ? runtimeValidated
-              ? `Cookies JSON v${Number(session.session_version || 0)} verificadas en userFLOW.`
-              : `Cookies JSON v${Number(session.session_version || 0)} cargadas. Falta “Probar en userFLOW” para confirmar que la web reconoce la sesión.`
-            : `Sesión v${Number(session.session_version || 0)} disponible.`,
+          runtimeValidated ? 'pass' : 'warn',
+          runtimeValidated
+            ? `${importedJson ? 'Cookies JSON' : 'Sesión'} v${Number(session.session_version || 0)} verificadas en userFLOW.`
+            : `${importedJson ? 'Cookies JSON' : 'Sesión'} v${Number(session.session_version || 0)} guardadas. Falta una comprobación real en userFLOW para confirmar que la web sigue autenticada.`,
         );
       } catch {
         add('snapshot', 'Snapshot de sesión', 'fail', 'El material cifrado de sesión no se pudo leer.');
@@ -1057,11 +1055,22 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         completed_at: now,
       }),
     });
-    if (result.ok && result.outcome === 'snapshot-authenticated') {
+    const sessionOutcome = String(result.outcome || '');
+    const sessionChecked = result.ok && [
+      'snapshot-authenticated',
+      'snapshot-needs-login-autofill-ready',
+      'snapshot-needs-login',
+      'hybrid-autofill-ready',
+      'hybrid-login-not-detected',
+    ].includes(sessionOutcome);
+    if (sessionChecked) {
       await sb(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ last_validated_at: now, updated_at: now }),
+        body: JSON.stringify({
+          last_validated_at: sessionOutcome === 'snapshot-authenticated' ? now : null,
+          updated_at: now,
+        }),
       }).catch(() => null);
     }
     return json({ ok: true, job_id: job.id, status: result.ok ? 'completed' : 'failed' });
@@ -1149,7 +1158,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         material_key_version: encrypted.keyVersion,
         expected_egress_ip: publicIp,
         last_captured_at: now,
-        last_validated_at: now,
+        last_validated_at: null,
         updated_at: now,
       }),
     });
