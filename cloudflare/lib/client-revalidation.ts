@@ -100,3 +100,14 @@ export async function touchProfileClients(env: Env, profileId: string): Promise<
   );
   await touchPlanClients(env, (rows || []).map((row: any) => String(row.plan_id)));
 }
+
+export async function touchProxyClients(env: Env, proxyId: string): Promise<void> {
+  const [assignments, defaults] = await Promise.all([
+    sb(env, `userflex_assignments?select=client_id&proxy_id=eq.${proxyId}`),
+    sb(env, `userflex_profile_proxy_defaults?select=profile_id&proxy_id=eq.${proxyId}`),
+  ]);
+  await touchClientsConfig(env, (assignments || []).map((row: any) => String(row.client_id)));
+  for (const row of defaults || []) {
+    await touchProfileClients(env, String(row.profile_id));
+  }
+}
