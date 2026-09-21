@@ -16,6 +16,7 @@ import type {
   ProfileUsage,
   ProfileProxyDefault,
   ProfileSessionState,
+  SessionAlertSummary,
   ProfileValidation,
   ProfileValidationJob,
   ProxyRecord,
@@ -197,6 +198,7 @@ export const api = {
 
   profileSessions: {
     list: () => request<ProfileSessionState[]>('/api/profile-session-states'),
+    alerts: () => request<SessionAlertSummary>('/api/profile-session-alerts'),
     inspectCookies: (file: File, url: string) => {
       const body = new FormData();
       body.append('cookies', file, file.name || 'cookies.json');

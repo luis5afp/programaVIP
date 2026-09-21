@@ -160,3 +160,15 @@
   .profile-session-actions, .profile-actions { width:100%; }
   .profile-actions { justify-content:flex-start; }
 }
+.session-alert-banner { margin:14px 26px 0; padding:12px 14px; border:1px solid; border-radius:13px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:11px; box-shadow:0 5px 18px rgba(15,23,42,.055); }
+.session-alert-banner.warning { background:#fffbeb; border-color:#fde68a; color:#92400e; }
+.session-alert-banner.critical { background:#fff1f2; border-color:#fecdd3; color:#9f1239; }
+.session-alert-icon { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; background:rgba(255,255,255,.72); }
+.session-alert-copy { min-width:0; display:grid; gap:3px; }
+.session-alert-copy strong { font-size:11.5px; line-height:1.3; }
+.session-alert-copy span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; opacity:.8; }
+.session-alert-action { background:rgba(255,255,255,.76) !important; }
+@media (max-width: 760px) {
+  .session-alert-banner { margin:12px 14px 0; grid-template-columns:auto minmax(0,1fr); }
+  .session-alert-action { grid-column:1 / -1; justify-self:start; }
+}

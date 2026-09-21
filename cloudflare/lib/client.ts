@@ -16,6 +16,7 @@ import {
   versionAtLeast,
 } from './release-compat';
 import { clientRealtimeConfig } from './client-revalidation';
+import { managedSessionHealth } from './session-health-policy';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -45,7 +46,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
 
   const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults, sessions, assignments, credentials, extensionMap] = await Promise.all([
+  const [profiles, defaults, sessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=in.(${ids})&enabled=eq.true`,
@@ -56,7 +57,11 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
     ),
     sb(
       env,
-      `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip&profile_id=in.(${ids})`,
+      `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_validated_at&profile_id=in.(${ids})`,
+    ),
+    sb(
+      env,
+      `userflex_session_keepers?select=profile_id,enabled,last_status,last_error&profile_id=in.(${ids})`,
     ),
     sb(
       env,
@@ -83,6 +88,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
   const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
+  const keeperMap = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
   const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
   const credentialMap = new Map<string, any>((credentials || []).map((row: any) => [String(row.profile_id), row]));
   const credentialProfileIds = new Set(credentialMap.keys());
@@ -102,7 +108,11 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
       const assignmentProxy: any = assignmentProxyId ? proxyMap.get(assignmentProxyId) : null;
       const hasCredentials = credentialProfileIds.has(String(profile.id));
       const snapshotReady = profile.session_ready === true && session?.status === 'ready';
-      const sessionReady = (!snapshotRequired || snapshotReady) && (!credentialsRequired || hasCredentials);
+      const snapshotHealth = snapshotRequired
+        ? managedSessionHealth(session, keeperMap.get(profile.id))
+        : { usable: true, needsAttention: false, severity: 'ok', status: 'valid', reason: null, validatedAt: null, ageMs: null };
+      const sessionReady = (!snapshotRequired || (snapshotReady && snapshotHealth.usable))
+        && (!credentialsRequired || hasCredentials);
       const networkPolicy = selectNetworkPolicy(runtime, profileProxyId, assignmentProxyId);
       const activeProxy: any = networkPolicy.effectiveProxyId
         ? proxyMap.get(networkPolicy.effectiveProxyId)
@@ -125,10 +135,14 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         managedConnection: networkUsesProxy,
         sessionMode: profile.session_mode,
         sessionReady,
+        sessionStatus: snapshotRequired ? snapshotHealth.status : 'valid',
+        sessionValidatedAt: snapshotRequired ? snapshotHealth.validatedAt : null,
         networkReady,
         launchReady,
         unavailableReason: !sessionReady
-          ? 'Autenticación/sesión no lista'
+          ? (snapshotRequired && !snapshotHealth.usable
+            ? snapshotHealth.reason || 'La sesión necesita validación del administrador.'
+            : 'Autenticación/sesión no lista')
           : !networkReady
             ? networkPolicy.required && !networkPolicy.effectiveProxyId
               ? 'Falta el proxy requerido por el perfil'
@@ -179,7 +193,7 @@ export async function clientLaunch(
     );
   }
 
-  const [memberships, assignments, profiles, defaults] = await Promise.all([
+  const [memberships, assignments, profiles, defaults, keepers] = await Promise.all([
     sb(
       env,
       `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
@@ -195,6 +209,10 @@ export async function clientLaunch(
     sb(
       env,
       `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
+    ),
+    sb(
+      env,
+      `userflex_session_keepers?select=profile_id,enabled,last_status,last_error&profile_id=eq.${profileId}&limit=1`,
     ),
   ]);
   if (!memberships?.[0]) {
@@ -269,6 +287,23 @@ export async function clientLaunch(
     if (!session || profile.session_ready !== true) {
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'Este perfil necesita una sesión capturada antes de abrirse.');
     }
+    const sessionHealth = managedSessionHealth(
+      {
+        status: 'ready',
+        last_validated_at: session.validatedAt,
+      },
+      keepers?.[0] || null,
+    );
+    if (!sessionHealth.usable) {
+      const code = sessionHealth.status === 'needs_renewal'
+        ? 'MANAGED_SESSION_RENEWAL_REQUIRED'
+        : 'MANAGED_SESSION_VALIDATION_REQUIRED';
+      throw new HttpError(
+        409,
+        code,
+        sessionHealth.reason || 'La sesión necesita validación del administrador antes de abrirse.',
+      );
+    }
     validateCapturedMaterial(profile, session.material);
     const lockedNetwork = connection.mode === 'proxy' && connection.locked === true;
     const currentProxyIp = lockedNetwork ? inetHost(effectiveProxy?.public_ip) : null;
@@ -335,7 +370,7 @@ export async function clientLaunch(
       imageUrl: profile.image_url,
       tags: profile.tags || [],
       sessionMode: profile.session_mode,
-      sessionReady: (!snapshotRequired || profile.session_ready === true),
+      sessionReady: true,
       runtime,
       extensions: managedExtensions,
     },
