@@ -169,6 +169,14 @@ export interface ProfileSessionState {
   captured_at: string | null;
   validated_at: string | null;
   updated_at: string | null;
+  keeper: {
+    enabled: boolean;
+    status: 'registered' | 'healthy' | 'refreshing' | 'needs_admin' | 'error' | 'disabled';
+    last_seen_at: string | null;
+    last_check_at: string | null;
+    last_refresh_at: string | null;
+    last_error: string | null;
+  } | null;
 }
 
 export type ProfileValidationStatus = 'pass' | 'warn' | 'fail';

@@ -336,7 +336,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
-      const generationMatches = (!snapshotManaged || Number(existing.sessionVersion || 0) === desiredSessionVersion)
+      const generationMatches = (!snapshotManaged || Number(existing.sessionVersion || 0) > 0)
         && String(existing.credentialRevision || '') === desiredCredentialRevision
         && String(existing.runtimeKey || '') === desiredRuntimeKey
         && String(existing.extensionKey || '') === desiredExtensionKey;
@@ -348,7 +348,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           external: true,
           pid: existing.process.pid,
           browser: existing.browserKind,
-          sessionVersion: desiredSessionVersion,
+          sessionVersion: Number(existing.sessionVersion || desiredSessionVersion),
           profileState: 'persistent-reuse',
           runtime,
         };
@@ -372,10 +372,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
+    // A newer central snapshot is a recovery source, not a reason to destroy a
+    // local Chromium profile that may still have a perfectly valid rolling
+    // session. Reuse the local profile first and only force-restore the newest
+    // server snapshot when the live health check detects a login state.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
       && desiredSessionVersion > 0
-      && Number(sessionMarker?.version || 0) === desiredSessionVersion
+      && Number(sessionMarker?.version || 0) > 0
       && sessionMarker?.profileId === profile.id
       && restorePolicyMatches;
 
@@ -477,7 +481,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       stderr: [],
       startedAt: Date.now(),
       devtoolsTimer: null,
-      sessionVersion: desiredSessionVersion,
+      sessionVersion: sessionVersionMatches
+        ? Number(sessionMarker?.version || desiredSessionVersion)
+        : desiredSessionVersion,
       sessionMarker,
       managedExtensions: Array.isArray(managedExtensions) ? managedExtensions : [],
     };
@@ -532,7 +538,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
-            version: desiredSessionVersion,
+            version: Number(sessionMarker?.version || desiredSessionVersion),
             format: sessionMarker?.format || delivery.material.format || null,
             storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
           };
@@ -577,7 +583,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         network: connection?.mode || 'direct',
         networkLocked: connection?.locked === true,
         publicIp: entry.publicIp || null,
-        sessionVersion: desiredSessionVersion,
+        sessionVersion: Number(entry.sessionVersion || desiredSessionVersion),
         profileState: snapshotManaged
           ? (sessionVersionMatches ? 'persistent-reuse' : 'server-session-restored')
           : credentialHelperEnabled ? 'credential-autofill' : 'persistent-local',
@@ -715,9 +721,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
       const extensionsChanged = runningEntry && String(runningEntry.extensionKey || '') !== desiredExtensionKey;
-      const snapshotChanged = runningEntry && wantsSnapshot && (
-        !snapshotReady || Number(runningEntry.sessionVersion || 0) !== desiredVersion
-      );
+      const snapshotChanged = runningEntry && wantsSnapshot && !snapshotReady;
       const credentialsChanged = runningEntry
         && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
 
@@ -754,7 +758,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
         const markerInvalid = !wantsSnapshot
           || !snapshotReady
-          || markerVersion !== desiredVersion
           || markerPolicy !== desiredPolicy;
         if (markerInvalid) {
           await killStrayProfileProcesses(dir);

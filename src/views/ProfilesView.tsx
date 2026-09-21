@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.26/userFLEX-Session-Manager-0.3.26-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.27/userFLEX-Session-Manager-0.3.27-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -131,6 +131,42 @@ function snapshotBadge(session: ProfileSessionState | null) {
     tone: 'ok' as const,
     compact: `Snapshot: v${version} · OK`,
     detail: `Snapshot: activo · v${version} · verificado recientemente`,
+  };
+}
+
+function keeperBadge(session: ProfileSessionState | null) {
+  const keeper = session?.keeper || null;
+  if (!keeper) {
+    return {
+      tone: 'warn' as const,
+      compact: 'Keeper: pendiente',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.27+.',
+    };
+  }
+  if (keeper.enabled === false || keeper.status === 'disabled') {
+    return { tone: 'neutral' as const, compact: 'Keeper: apagado', detail: 'Session Keeper: desactivado' };
+  }
+  if (keeper.status === 'healthy') {
+    return { tone: 'ok' as const, compact: 'Keeper: activo', detail: 'Session Keeper: activo · sesión central vigilada' };
+  }
+  if (keeper.status === 'needs_admin') {
+    return {
+      tone: 'bad' as const,
+      compact: 'Keeper: requiere acceso',
+      detail: `Session Keeper: requiere administrador${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
+    };
+  }
+  if (keeper.status === 'error') {
+    return {
+      tone: 'bad' as const,
+      compact: 'Keeper: error',
+      detail: `Session Keeper: error${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
+    };
+  }
+  return {
+    tone: 'neutral' as const,
+    compact: 'Keeper: registrado',
+    detail: 'Session Keeper: registrado · esperando primera comprobación automática',
   };
 }
 
@@ -596,7 +632,7 @@ export function ProfilesView() {
           setCaptureSaveMessage(
             `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
           );
-          setSuccess('Sesión guardada y snapshot actualizado correctamente.');
+          setSuccess('Sesión guardada. Session Keeper quedó registrado para mantenerla automáticamente.');
           return;
         }
       }
@@ -849,6 +885,10 @@ export function ProfilesView() {
                       const snapshot = snapshotBadge(session);
                       return <Badge tone={snapshot.tone}>{snapshot.compact}</Badge>;
                     })()}
+                    {snapshotManaged && (() => {
+                      const keeper = keeperBadge(session);
+                      return <Badge tone={keeper.tone}>{keeper.compact}</Badge>;
+                    })()}
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>Proxy: {selectedProxy.name}</Badge>
                     ) : (
@@ -918,6 +958,10 @@ export function ProfilesView() {
                           {snapshotManaged && (() => {
                             const snapshot = snapshotBadge(session);
                             return <Badge tone={snapshot.tone}>{snapshot.detail}</Badge>;
+                          })()}
+                          {snapshotManaged && (() => {
+                            const keeper = keeperBadge(session);
+                            return <Badge tone={keeper.tone}>{keeper.detail}</Badge>;
                           })()}
                           {credentialHelperSupported && (
                             <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
@@ -1685,7 +1729,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.26 · userFLOW v0.3.26
+              Instalar / actualizar Session Manager v0.3.27 · userFLOW v0.3.27
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, vuelve aquí y pulsa <b>Guardar sesión / generar snapshot</b>.

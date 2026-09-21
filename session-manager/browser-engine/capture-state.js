@@ -638,6 +638,121 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
   }
 }
 
+export async function inspectCaptureSession(debugPort, profileUrl) {
+  const browser = await connectCaptureBrowser(debugPort);
+  try {
+    const target = new URL(profileUrl);
+    let pages = await browser.pages();
+    let page = null;
+
+    for (const candidate of pages) {
+      try {
+        const current = new URL(candidate.url());
+        if (current.origin === target.origin) {
+          page = candidate;
+          break;
+        }
+        const googleAuth = target.hostname.endsWith('.google.com')
+          && (current.hostname === 'accounts.google.com' || /^accounts\.google\./i.test(current.hostname));
+        if (!page && googleAuth) page = candidate;
+      } catch {}
+    }
+
+    if (!page) {
+      page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
+      await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => null);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+
+    const state = await page.evaluate(() => {
+      const visible = (element) => {
+        try {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity || 1) !== 0
+            && rect.width > 0
+            && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const inputs = Array.from(document.querySelectorAll('input')).filter((element) => visible(element));
+      const passwordFieldVisible = inputs.some((element) => {
+        const hint = [
+          element.type,
+          element.name,
+          element.id,
+          element.autocomplete,
+          element.placeholder,
+          element.getAttribute('aria-label') || '',
+        ].join(' ').toLowerCase();
+        return element.type === 'password' || /password|passwd|passcode|contrase/.test(hint);
+      });
+      const usernameFieldVisible = inputs.some((element) => {
+        const hint = [
+          element.type,
+          element.name,
+          element.id,
+          element.autocomplete,
+          element.placeholder,
+          element.getAttribute('aria-label') || '',
+        ].join(' ').toLowerCase();
+        return element.type === 'email' || /email|e-mail|user|usuario|login|account|identifier/.test(hint);
+      });
+      const loginActionVisible = Array.from(document.querySelectorAll('a,button,[role="button"]'))
+        .filter((element) => visible(element))
+        .some((element) => {
+          const label = String(
+            element.textContent
+            || element.getAttribute('aria-label')
+            || element.getAttribute('title')
+            || '',
+          ).replace(/\s+/g, ' ').trim().toLowerCase();
+          return /^(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)$/.test(label);
+        });
+      return {
+        href: location.href,
+        hostname: location.hostname,
+        pathname: location.pathname,
+        usernameFieldVisible,
+        passwordFieldVisible,
+        loginActionVisible,
+      };
+    }).catch(() => ({
+      href: page.url(),
+      hostname: '',
+      pathname: '',
+      usernameFieldVisible: false,
+      passwordFieldVisible: false,
+      loginActionVisible: false,
+    }));
+
+    let current;
+    try { current = new URL(state.href || page.url()); } catch { current = target; }
+    const path = String(current.pathname || '').toLowerCase();
+    const loginLikeUrl = current.hostname === 'accounts.google.com'
+      || /^accounts\.google\./i.test(current.hostname)
+      || /\/(?:login|signin|sign-in|auth|account\/login|servicelogin)(?:\/|$)/i.test(path)
+      || ((target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))
+        && (path.startsWith('/login') || path.startsWith('/signup')));
+
+    const authenticated = !loginLikeUrl
+      && state.usernameFieldVisible !== true
+      && state.passwordFieldVisible !== true
+      && state.loginActionVisible !== true;
+
+    return {
+      ...state,
+      loginLikeUrl,
+      authenticated,
+    };
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
 export async function navigateCaptureHome(debugPort, profileUrl) {
   const browser = await connectCaptureBrowser(debugPort);
   try {

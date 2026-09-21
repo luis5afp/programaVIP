@@ -403,7 +403,7 @@ function getKaizenBrowserEngine() {
   kaizenBrowserEngine = createKaizenBrowserEngine({
     app,
     onClosed: async (entry, reason) => {
-      if (reason === 'session_health_restore') return;
+      if (reason === 'session_health_restore' || reason === 'session_fallback_restore') return;
       if (!entry?.usageId) return;
       const usage = {
         usageId: entry.usageId,
@@ -430,12 +430,24 @@ function authError(error) {
   return error?.status === 401 || ['CLIENT_UNAUTHENTICATED', 'CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(error?.code);
 }
 
+function preserveProfilesForAuthError(error) {
+  const code = String(error?.code || '');
+  if (['CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(code)) return false;
+  return Number(error?.status || 0) === 401 || code === 'CLIENT_UNAUTHENTICATED';
+}
+
 async function catalog() {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   try {
     return await apiRequest('/api/client/catalog');
   } catch (error) {
-    if (authError(error)) await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
+    if (authError(error)) {
+      await returnToLogin(
+        error?.message || 'Tu sesión ya no está activa.',
+        error?.code || null,
+        { preserveProfiles: preserveProfilesForAuthError(error) },
+      );
+    }
     throw error;
   }
 }
@@ -617,7 +629,11 @@ async function runHeartbeat(reason = 'scheduled') {
         ? (result?.message || `Actualiza userFLOW a v${result?.minimumClientVersion || 'más reciente'} o superior.`)
         : (result?.message || 'Tu sesión ya no está autorizada.');
       heartbeatInFlight = false;
-      await returnToLogin(message, result?.code || null);
+      await returnToLogin(
+        message,
+        result?.code || null,
+        { preserveProfiles: result?.updateRequired === true },
+      );
       return;
     }
     const previousRealtime = JSON.stringify(realtimeConfig || null);
@@ -628,7 +644,11 @@ async function runHeartbeat(reason = 'scheduled') {
   } catch (error) {
     if (authError(error)) {
       heartbeatInFlight = false;
-      await returnToLogin(error?.message || 'Tu sesión ya no está activa.', error?.code || null);
+      await returnToLogin(
+        error?.message || 'Tu sesión ya no está activa.',
+        error?.code || null,
+        { preserveProfiles: preserveProfilesForAuthError(error) },
+      );
       return;
     }
 
@@ -730,15 +750,16 @@ function enterWorkspace(sender) {
   }, 0);
 }
 
-async function returnToLogin(message = null, code = null) {
+async function returnToLogin(message = null, code = null, options = {}) {
   const clientId = authMeta?.client?.id || null;
+  const preserveProfiles = options?.preserveProfiles === true;
 
   // Keep at least one Electron window alive during the transition back to
   // login. On Windows, closing the workspace while it is the only window emits
   // window-all-closed and can terminate the whole app before login is recreated.
-  await getKaizenBrowserEngine().closeAll('logout').catch(() => null);
+  await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
-  if (clientId) {
+  if (clientId && !preserveProfiles) {
     await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
   }
   await clearAuth();
@@ -1522,10 +1543,14 @@ function inspectionNeedsLogin(inspection) {
   );
 }
 
-async function reportSessionHealth(profileId, authenticated) {
+async function reportSessionHealth(profileId, authenticated, result = null) {
   await apiRequest(`/api/client/profiles/${profileId}/session-health`, {
     method: 'POST',
-    body: { authenticated: authenticated === true },
+    body: {
+      authenticated: authenticated === true,
+      sessionVersion: Number(result?.sessionVersion || 0),
+      source: String(result?.profileState || ''),
+    },
     timeout: 8_000,
   }).catch((error) => {
     console.warn('userFLOW session health report failed:', error?.message || error);
@@ -1575,6 +1600,8 @@ async function openProfile(profileId) {
 
     let inspection = null;
     let sessionRecovered = false;
+    let fallbackRecovered = false;
+    let activeDelivery = delivery;
     if (snapshotManagedProfile(profile)) {
       inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       if (inspectionNeedsLogin(inspection) && result?.profileState === 'persistent-reuse') {
@@ -1583,7 +1610,7 @@ async function openProfile(profileId) {
           clientId,
           profile,
           connection,
-          delivery,
+          delivery: activeDelivery,
           credentials,
           managedExtensions,
           usageId: usage.usageId,
@@ -1592,8 +1619,45 @@ async function openProfile(profileId) {
         sessionRecovered = true;
         inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       }
+
+      if (inspectionNeedsLogin(inspection) && result?.profileState === 'server-session-restored') {
+        // The newest central snapshot failed a real browser check. Mark only
+        // that exact generation as suspect, then request older encrypted
+        // snapshots one-by-one. No fallback material is downloaded normally.
+        await reportSessionHealth(profile.id, false, result);
+        let beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
+        for (let attempt = 0; attempt < 2 && beforeVersion > 1; attempt += 1) {
+          const fallback = await apiRequest(`/api/client/profiles/${profile.id}/session-fallback`, {
+            method: 'POST',
+            body: { beforeVersion },
+            timeout: 20_000,
+          }).catch(() => null);
+          if (!fallback?.available || !fallback?.sessionDelivery?.materialIncluded) break;
+
+          activeDelivery = fallback.sessionDelivery;
+          await engine.close(clientId, profile.id, 'session_fallback_restore').catch(() => null);
+          result = await engine.launch({
+            clientId,
+            profile,
+            connection,
+            delivery: activeDelivery,
+            credentials,
+            managedExtensions,
+            usageId: usage.usageId,
+            forceRestore: true,
+          });
+          sessionRecovered = true;
+          inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+          beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
+          if (!inspectionNeedsLogin(inspection)) {
+            fallbackRecovered = true;
+            break;
+          }
+        }
+      }
+
       if (inspection) {
-        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection));
+        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection), result);
       }
     }
 
@@ -1602,8 +1666,9 @@ async function openProfile(profileId) {
       ok: true,
       tabbed: false,
       engine: 'kaizen-external',
-      sessionVersion: Number(delivery?.version || result?.sessionVersion || 0),
+      sessionVersion: Number(result?.sessionVersion || activeDelivery?.version || 0),
       sessionRecovered,
+      fallbackRecovered,
       inspection,
     };
   } catch (error) {

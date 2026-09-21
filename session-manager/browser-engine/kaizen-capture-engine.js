@@ -11,6 +11,7 @@ import {
   capturePortableSession,
   closeDevtoolsTargets,
   connectCaptureBrowser,
+  inspectCaptureSession,
   installCaptureAutomation,
   navigateCaptureHome,
 } from './capture-state.js';
@@ -310,14 +311,14 @@ async function startControlServer({ secret, credentials, onSave }) {
   };
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, background = false }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
     '--no-first-run',
     '--no-default-browser-check',
-    '--start-maximized',
+    ...(background ? ['--window-position=-32000,-32000', '--window-size=1200,900'] : ['--start-maximized']),
     '--disable-features=SignInProfileCreation,SigninConsistency',
     '--disable-password-saving',
     '--disable-save-password-bubble',
@@ -354,7 +355,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     log.log?.(`Session Manager KAIZEN closed: ${reason}`);
   }
 
-  async function launch({ profile, credentials, proxy = null, onComplete }) {
+  async function launch({ profile, credentials, proxy = null, onComplete, background = false }) {
     if (!profile?.id || !profile?.url) throw new Error('Configuración de perfil incompleta.');
     if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
       throw new Error('El perfil híbrido no tiene credenciales administradas.');
@@ -471,6 +472,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       debugPort,
       proxyRules,
       extensionDir,
+      background,
     }), {
       detached: false,
       windowsHide: false,
@@ -559,10 +561,18 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     return active.saveCapture();
   }
 
+  async function inspectActive() {
+    if (!active || active.closed || !active.debugPort || !active.profile?.url) {
+      throw new Error('No hay una sesión activa para verificar.');
+    }
+    return inspectCaptureSession(active.debugPort, active.profile.url);
+  }
+
   return {
     launch,
     close,
     saveActive,
+    inspectActive,
     get active() { return active; },
   };
 }
