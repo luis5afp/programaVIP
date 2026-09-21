@@ -975,6 +975,10 @@ export async function adminProfileSessionRoutes(
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
+    await sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    }).catch(() => null);
     await sb(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
@@ -1251,6 +1255,20 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const proxy = await captureProxyForProfile(env, profile);
     const session = await sessionRow(env, keeper.profile_id);
     const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    if (!['cookie-snapshot', 'hybrid'].includes(authStrategy)) {
+      const now = new Date().toISOString();
+      await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          enabled: false,
+          last_status: 'disabled',
+          last_error: 'El perfil ya no utiliza snapshot administrado.',
+          updated_at: now,
+        }),
+      }).catch(() => null);
+      throw new HttpError(401, 'KEEPER_DISABLED', 'Este perfil ya no necesita Session Keeper.');
+    }
     await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
