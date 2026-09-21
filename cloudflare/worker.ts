@@ -1,7 +1,7 @@
 import { adminLogin, adminLogout, clientLogin, requireAdmin, requireClient } from './lib/auth';
 import { adminRoutes } from './lib/admin';
 import { adminUserRoutes } from './lib/admin-users';
-import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout } from './lib/client';
+import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout, clientSessionHealth } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
 import { publicClientUpdateRoutes } from './lib/client-updates';
 import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION, clientVersionFrom, versionAtLeast } from './lib/release-compat';
@@ -96,6 +96,8 @@ async function api(request: Request, env: Env): Promise<Response> {
     }
     if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(request, env, identity);
     if (path === '/api/client/logout' && method === 'POST') return clientLogout(env, identity);
+    const sessionHealth = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/session-health$/i);
+    if (sessionHealth && method === 'POST') return clientSessionHealth(request, env, identity, sessionHealth[1]);
     const launch = path.match(/^\/api\/client\/profiles\/([0-9a-f-]{36})\/launch$/i);
     if (launch && method === 'POST') return clientLaunch(request, env, identity, launch[1]);
     const extensionPackage = path.match(/^\/api\/client\/extensions\/([0-9a-f-]{36})\/package$/i);
