@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from './api';
-import type { AdminSession, ViewKey } from './types';
+import type { AdminSession, SessionAlertSummary, ViewKey } from './types';
 import { Login } from './components/Login';
 import { Layout } from './components/Layout';
 import { DashboardView } from './views/DashboardView';
@@ -20,6 +20,7 @@ export default function App() {
   const [view, setView] = useState<ViewKey>('dashboard');
   const [historySearch, setHistorySearch] = useState('');
   const [activityTab, setActivityTab] = useState<'history' | 'audit'>('history');
+  const [sessionAlerts, setSessionAlerts] = useState<SessionAlertSummary | null>(null);
 
   useEffect(() => {
     api.session()
@@ -29,6 +30,29 @@ export default function App() {
         else setSession(null);
       });
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setSessionAlerts(null);
+      return;
+    }
+    let cancelled = false;
+    const loadAlerts = async () => {
+      try {
+        const result = await api.profileSessions.alerts();
+        if (!cancelled) setSessionAlerts(result);
+      } catch {
+        // The main Admin UI should remain usable even if the alert summary
+        // cannot be loaded temporarily.
+      }
+    };
+    void loadAlerts();
+    const timer = window.setInterval(() => void loadAlerts(), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session?.id]);
 
   async function logout() {
     try { await api.logout(); } finally { setSession(null); setView('dashboard'); }
@@ -54,5 +78,17 @@ export default function App() {
     default: content = <DashboardView />;
   }
 
-  return <Layout session={session} view={view} onView={(next) => { if (next === 'activity') { setHistorySearch(''); setActivityTab('history'); } setView(next); }} onLogout={logout}>{content}</Layout>;
+  return <Layout
+    session={session}
+    view={view}
+    sessionAlerts={sessionAlerts}
+    onView={(next) => {
+      if (next === 'activity') {
+        setHistorySearch('');
+        setActivityTab('history');
+      }
+      setView(next);
+    }}
+    onLogout={logout}
+  >{content}</Layout>;
 }
