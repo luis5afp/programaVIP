@@ -15,6 +15,8 @@ const managerPackage = JSON.parse(readFileSync(new URL('../session-manager/packa
 assert.match(keeper, /const KEEPER_EVENT = 'keeper_check'/);
 assert.match(keeper, /userflex-keeper:\$\{profileId\}:\$\{secret\}/);
 assert.match(keeper, /\/realtime\/v1\/api\/broadcast/);
+assert.match(keeper, /KEEPER_REQUEST_COOLDOWN_MS = 5 \* 60 \* 1000/);
+assert.match(keeper, /last_check_at/);
 assert.match(keeper, /reason: 'admin-start' \| 'client-start' \| 'profile-update' \| 'credentials-update'/);
 
 assert.match(sessions, /\/api\/profile-session-checks\/request/);
