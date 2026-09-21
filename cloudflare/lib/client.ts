@@ -405,16 +405,40 @@ export async function clientSessionHealth(
   }
   const body = await bodyJson(request);
   const authenticated = body.authenticated === true;
+  const reportedVersion = Math.max(0, Number(body.sessionVersion || 0));
+  const source = typeof body.source === 'string' ? body.source.slice(0, 64) : '';
+  const currentRows = await sb(
+    env,
+    `userflex_profile_sessions?select=session_version,status&profile_id=eq.${profileId}&limit=1`,
+  );
+  const current = currentRows?.[0] || null;
+  const currentVersion = Number(current?.session_version || 0);
   const now = new Date().toISOString();
-  await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
-    method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({
-      last_validated_at: authenticated ? now : null,
-      updated_at: now,
-    }),
+  const sameCentralGeneration = current?.status === 'ready'
+    && reportedVersion > 0
+    && reportedVersion === currentVersion;
+  const centralUpdated = authenticated
+    ? sameCentralGeneration
+    : sameCentralGeneration && source === 'server-session-restored';
+
+  if (centralUpdated) {
+    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        last_validated_at: authenticated ? now : null,
+        updated_at: now,
+      }),
+    });
+  }
+  return json({
+    ok: true,
+    authenticated,
+    checkedAt: now,
+    reportedVersion,
+    currentVersion,
+    centralUpdated,
   });
-  return json({ ok: true, authenticated, checkedAt: now });
 }
 
 export async function clientLogout(env: Env, id: ClientIdentity) {
