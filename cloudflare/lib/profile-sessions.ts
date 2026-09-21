@@ -23,6 +23,11 @@ import {
 } from './session-material';
 import { managedSessionHealth } from './session-health-policy';
 import {
+  keeperRealtimeConfig,
+  requestAllKeeperChecks,
+  requestKeeperChecks,
+} from './keeper-revalidation';
+import {
   Env,
   HttpError,
   audit,
@@ -768,6 +773,15 @@ export async function adminProfileSessionRoutes(
     });
   }
 
+  if (path === '/api/profile-session-checks/request' && method === 'POST') {
+    const requested = await requestAllKeeperChecks(env, 'admin-start');
+    await audit(env, request, 'admin', admin.userId, 'session_keeper.check.request_all', 'session_keeper', 'all', {
+      reason: 'admin-start',
+      requested,
+    });
+    return json({ ok: true, requested });
+  }
+
   const credentialsMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/managed-credentials$/i);
   if (credentialsMatch && method === 'POST') {
     const profileId = uuid(credentialsMatch[1], 'profileId');
@@ -805,6 +819,7 @@ export async function adminProfileSessionRoutes(
       body: JSON.stringify({ updated_at: new Date().toISOString() }),
     });
     await touchProfileClients(env, profileId);
+    await requestKeeperChecks(env, [profileId], 'credentials-update');
     await audit(env, request, 'admin', admin.userId, 'profile.credentials.update', 'profile', profileId, {
       loginUsername,
       passwordChanged: Boolean(password),
@@ -1297,6 +1312,20 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     });
   }
 
+  if (path === '/api/session-keeper/realtime' && method === 'POST') {
+    const sessionManagerVersion = assertSessionManagerVersion(request);
+    const body = await bodyJson(request);
+    const rawToken = text(body.token, 'token', 128);
+    const keeper = await keeperRow(env, rawToken);
+    return json({
+      ok: true,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
+      sessionManagerVersion,
+      profileId: keeper.profile_id,
+      realtime: await keeperRealtimeConfig(env, keeper.profile_id),
+    });
+  }
+
   if (path === '/api/session-keeper/bootstrap' && method === 'POST') {
     const sessionManagerVersion = assertSessionManagerVersion(request);
     const body = await bodyJson(request);
@@ -1341,6 +1370,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         extensionStrategy: profile.extension_strategy || 'custom',
       },
       currentVersion: Number(session?.session_version || 0),
+      realtime: await keeperRealtimeConfig(env, keeper.profile_id),
       credentials: credentials ? {
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),

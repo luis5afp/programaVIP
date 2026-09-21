@@ -1543,6 +1543,15 @@ function inspectionNeedsLogin(inspection) {
   );
 }
 
+async function requestSessionKeeperChecks() {
+  await apiRequest('/api/client/session-checks/request', {
+    method: 'POST',
+    timeout: 8_000,
+  }).catch((error) => {
+    console.warn('userFLOW Keeper startup request failed:', error?.message || error);
+  });
+}
+
 async function reportSessionHealth(profileId, authenticated, result = null) {
   await apiRequest(`/api/client/profiles/${profileId}/session-health`, {
     method: 'POST',
@@ -1918,6 +1927,7 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
     }
     const data = await catalog();
     await syncClientConfiguration(data, 'bootstrap', data);
+    void requestSessionKeeperChecks();
     startHeartbeat();
     enterWorkspace(event.sender);
     return { authenticated: true, auth: authMeta, catalog: data };
@@ -1953,6 +1963,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
     await saveAuth(result.accessToken, meta);
     const data = await catalog();
     await syncClientConfiguration(data, 'login', data);
+    void requestSessionKeeperChecks();
     startHeartbeat();
     enterWorkspace(event.sender);
     return { ok: true, auth: authMeta, catalog: data };

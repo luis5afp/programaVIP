@@ -1,5 +1,6 @@
 import { AdminIdentity } from './auth';
 import { clientIdsForPlans, clientIdsForProfile, clientIdsForProxy, notifyClientsConfig, touchClientConfig, touchClientsConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
+import { requestKeeperChecks } from './keeper-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
   AUTH_STRATEGIES,
@@ -415,6 +416,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     }
 
     await touchProfileClients(env, profileId);
+    if (!invalidateSnapshot && nextSnapshot && rows[0]?.enabled !== false) {
+      await requestKeeperChecks(env, [profileId], 'profile-update');
+    }
     await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId, {
       originChanged,
       snapshotInvalidated: invalidateSnapshot,

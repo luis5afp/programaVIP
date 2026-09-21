@@ -1,7 +1,7 @@
 {
   "name": "userflex-session-manager",
   "private": true,
-  "version": "0.3.28",
+  "version": "0.3.29",
   "description": "userFLEX KAIZEN external browser session capture helper",
   "type": "module",
   "main": "entry.js",
@@ -10,6 +10,7 @@
     "dist:win": "electron-builder --win nsis --x64"
   },
   "dependencies": {
+    "@supabase/realtime-js": "^2.99.2",
     "socks": "^2.8.10",
     "puppeteer-core": "^24.17.1"
   },
