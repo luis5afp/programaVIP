@@ -1,5 +1,5 @@
 import { AdminIdentity } from './auth';
-import { notifyClientsConfig, touchClientConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
+import { clientIdsForPlans, clientIdsForProfile, clientIdsForProxy, notifyClientsConfig, touchClientConfig, touchClientsConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
   AUTH_STRATEGIES,
@@ -314,8 +314,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (planMatch && method === 'DELETE') {
     const planId = uuid(planMatch[1], 'planId');
-    await touchPlanClients(env, [planId]);
+    const affectedClientIds = await clientIdsForPlans(env, [planId]);
     await sb(env, `userflex_plans?id=eq.${planId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'plan.delete', 'plan', planId);
     return json({ ok: true });
   }
@@ -424,8 +425,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (profileMatch && method === 'DELETE') {
     const profileId = uuid(profileMatch[1], 'profileId');
-    await touchProfileClients(env, profileId);
+    const affectedClientIds = await clientIdsForProfile(env, profileId);
     await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'profile.delete', 'profile', profileId);
     return json({ ok: true });
   }
@@ -481,8 +483,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (proxyMatch && method === 'DELETE') {
     const proxyId = uuid(proxyMatch[1], 'proxyId');
-    await touchProxyClients(env, proxyId);
+    const affectedClientIds = await clientIdsForProxy(env, proxyId);
     await sb(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'proxy.delete', 'proxy', proxyId);
     return json({ ok: true });
   }
