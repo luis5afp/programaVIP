@@ -181,13 +181,13 @@ function scheduleKeeper() {
   keeperTimer.unref?.();
 }
 
-function configureKeeperStartup() {
+function configureKeeperStartup(enabled = true) {
   if (process.platform !== 'win32' || process.defaultApp) return;
   try {
     app.setLoginItemSettings({
-      openAtLogin: true,
-      openAsHidden: true,
-      args: ['--keeper'],
+      openAtLogin: enabled === true,
+      openAsHidden: enabled === true,
+      args: enabled === true ? ['--keeper'] : [],
     });
   } catch {}
 }
@@ -420,8 +420,10 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     protocolRegistered = registerProtocol();
-    configureKeeperStartup();
-    scheduleKeeper();
+    const keepers = await loadKeeperRegistry();
+    const hasKeepers = Object.keys(keepers).length > 0;
+    configureKeeperStartup(hasKeepers);
+    if (hasKeepers) scheduleKeeper();
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
     const keeperOnly = process.argv.includes('--keeper') && !protocolUrl;
     pendingProtocolUrl = null;
