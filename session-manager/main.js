@@ -306,6 +306,7 @@ async function runKeeperCycle() {
     for (const [profileId, entry] of Object.entries(registry)) {
       if (quitAfterCleanup) break;
       try {
+        keeperLastEventCheck.set(profileId, Date.now());
         await checkKeeperProfile(profileId, entry);
       } catch (error) {
         console.warn(
@@ -320,6 +321,7 @@ async function runKeeperCycle() {
     }
   } finally {
     keeperRunning = false;
+    if (!keeperRealtimeClient && !quitAfterCleanup) void connectKeeperRealtime();
     if (keeperRequestedProfiles.size) scheduleRequestedKeeperChecks();
   }
 }
