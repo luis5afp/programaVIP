@@ -16,7 +16,10 @@ export async function clientRealtimeTopic(env: Env, clientId: string): Promise<s
 
 export async function clientRealtimeConfig(env: Env, clientId: string) {
   const topic = await clientRealtimeTopic(env, clientId);
-  return topic ? { topic, event: CONFIG_EVENT } : null;
+  const base = String(env.SUPABASE_URL || '').replace(/\/$/, '');
+  const key = String(env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+  if (!topic || !base || !key) return null;
+  return { url: base, key, topic, event: CONFIG_EVENT };
 }
 
 export async function notifyClientsConfig(
