@@ -65,7 +65,7 @@ assert.match(
 );
 
 
-assert.match(engine, /async function devtoolsPageUrls/);
+assert.match(engine, /async function devtoolsPageStates/);
 assert.match(engine, /function isOpenAiAuthFlowUrl/);
 assert.match(engine, /function isOpenAiAppUrl/);
 assert.match(
@@ -82,6 +82,22 @@ assert.match(
   engine,
   /initialUrl: openAiCapture \? profile\.url : 'about:blank'/,
   'OpenAI capture must let Chrome navigate natively instead of using Puppeteer for the initial page',
+);
+
+
+assert.match(engine, /function isOpenAiChallengeState/);
+assert.match(engine, /un momento\|just a moment/);
+assert.match(engine, /async function activateOpenAiAutomation/);
+assert.match(engine, /async function deactivateOpenAiAutomation/);
+assert.match(
+  engine,
+  /challengeActive[\s\S]{0,420}deactivateOpenAiAutomation\(entry\)[\s\S]{0,220}return null;/,
+  'Cloudflare challenge must keep Puppeteer detached even if autofill had already been activated',
+);
+assert.match(
+  engine,
+  /activateOpenAiAutomation\(entry,[\s\S]{0,520}OpenAI autofill activated after the Cloudflare challenge completed/,
+  'autofill must activate only after auth.openai.com leaves the challenge state',
 );
 
 console.log('ChatGPT security-challenge compatibility regression: OK');

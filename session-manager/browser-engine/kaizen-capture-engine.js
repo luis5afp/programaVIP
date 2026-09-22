@@ -363,7 +363,7 @@ async function closeBrowserGracefully(entry) {
   return exited || entry.process?.exitCode !== null;
 }
 
-async function devtoolsPageUrls(debugPort) {
+async function devtoolsPageStates(debugPort) {
   try {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, {
       signal: AbortSignal.timeout(1_500),
@@ -374,7 +374,10 @@ async function devtoolsPageUrls(debugPort) {
     return Array.isArray(targets)
       ? targets
         .filter((target) => target?.type === 'page' && typeof target?.url === 'string')
-        .map((target) => String(target.url))
+        .map((target) => ({
+          url: String(target.url),
+          title: String(target.title || '').trim(),
+        }))
       : [];
   } catch {
     return [];
@@ -402,6 +405,58 @@ function isOpenAiAppUrl(rawUrl) {
       && !value.pathname.toLowerCase().startsWith('/auth/');
   } catch {
     return false;
+  }
+}
+
+function isOpenAiChallengeState(state) {
+  if (!state?.url) return false;
+  try {
+    const value = new URL(String(state.url));
+    const host = value.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host === 'challenges.cloudflare.com' || host.endsWith('.challenges.cloudflare.com')) return true;
+    if (!(host === 'auth.openai.com' || host.endsWith('.auth.openai.com'))) return false;
+    const title = String(state.title || '').trim().toLowerCase();
+    if (!title) return true;
+    return /un momento|just a moment|verifica(?:r|ción)?|verify|checking your browser|comprobando tu navegador|security verification|verificación de seguridad|cloudflare/.test(title);
+  } catch {
+    return false;
+  }
+}
+
+async function deactivateOpenAiAutomation(entry) {
+  if (!entry) return;
+  try { entry.automation?.cleanup?.(); } catch {}
+  entry.automation = null;
+  if (entry.browser) {
+    try { await entry.browser.disconnect(); } catch {}
+  }
+  entry.browser = null;
+  entry.openAiAutomationActivated = false;
+}
+
+async function activateOpenAiAutomation(entry, { profileUrl, credentials, extensionStrategy, controlPort, controlSecret, onSave }) {
+  if (!entry || entry.closed || entry.openAiAutomationActivated) return;
+  if (entry.openAiAutomationPromise) return entry.openAiAutomationPromise;
+
+  entry.openAiAutomationPromise = (async () => {
+    const browser = await connectCaptureBrowser(entry.debugPort);
+    entry.browser = browser;
+    entry.automation = await installCaptureAutomation({
+      browser,
+      profileUrl,
+      credentials,
+      extensionStrategy,
+      controlPort,
+      controlSecret,
+      onSave,
+    });
+    entry.openAiAutomationActivated = true;
+  })();
+
+  try {
+    await entry.openAiAutomationPromise;
+  } finally {
+    entry.openAiAutomationPromise = null;
   }
 }
 
@@ -667,6 +722,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       stableAuthChecks: 0,
       openAiAuthFlowSeen: false,
       openAiInitialInspectionDone: false,
+      openAiAutomationActivated: false,
+      openAiAutomationPromise: null,
       devtoolsTimer: null,
       closed: false,
     };
@@ -727,18 +784,48 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
           const inspect = async () => {
             if (openAiCapture) {
-              const urls = await devtoolsPageUrls(debugPort);
-              const authFlowActive = urls.some(isOpenAiAuthFlowUrl);
-              if (authFlowActive) {
+              const states = await devtoolsPageStates(debugPort);
+              const authStates = states.filter((state) => isOpenAiAuthFlowUrl(state.url));
+              if (authStates.length > 0) {
                 entry.openAiAuthFlowSeen = true;
+                entry.stableAuthChecks = 0;
+
+                const challengeActive = authStates.some(isOpenAiChallengeState);
+                if (challengeActive) {
+                  if (entry.openAiAutomationActivated || entry.browser) {
+                    await deactivateOpenAiAutomation(entry);
+                    log.log?.('Session Manager OpenAI safe-auth mode: detached again because Cloudflare verification is active.');
+                  }
+                  return null;
+                }
+
+                await activateOpenAiAutomation(entry, {
+                  profileUrl: profile.url,
+                  credentials,
+                  extensionStrategy: profile.extensionStrategy || 'custom',
+                  controlPort: control.port,
+                  controlSecret: secret,
+                  onSave: saveCapture,
+                });
+                log.log?.('Session Manager OpenAI autofill activated after the Cloudflare challenge completed.');
+                return null;
+              }
+
+              const appActive = states.some((state) => isOpenAiAppUrl(state.url));
+              if (!appActive) {
                 entry.stableAuthChecks = 0;
                 return null;
               }
 
-              const appActive = urls.some(isOpenAiAppUrl);
-              if (!appActive) {
-                entry.stableAuthChecks = 0;
-                return null;
+              if (!entry.openAiAutomationActivated) {
+                await activateOpenAiAutomation(entry, {
+                  profileUrl: profile.url,
+                  credentials,
+                  extensionStrategy: profile.extensionStrategy || 'custom',
+                  controlPort: control.port,
+                  controlSecret: secret,
+                  onSave: saveCapture,
+                });
               }
 
               // Before the user enters OpenAI auth, inspect the landing page only once.
