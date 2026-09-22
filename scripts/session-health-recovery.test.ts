@@ -16,8 +16,8 @@ assert.match(
 );
 assert.match(
   sessions,
-  /\/api\/session-manager\/complete[\s\S]{0,1800}storeSessionSnapshot\(env, profile, body\.material, \{ publicIp \}\)/,
-  'manual capture must remain unverified until a real browser health check',
+  /\/api\/session-manager\/complete[\s\S]{0,1800}authenticated = body\.authenticated === true[\s\S]{0,900}validatedAt: authenticated \? now : null/,
+  'capture must be marked verified only when Session Manager explicitly confirms a real authenticated browser state',
 );
 assert.match(
   sessions,
