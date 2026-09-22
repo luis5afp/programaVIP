@@ -13,6 +13,11 @@ assert.match(api, /save_url: string/, 'Admin API client must receive the save de
 assert.match(worker, /userflex-session:\/\/save\?endpoint=/, 'capture API must issue a save deep link bound to the capture token');
 assert.match(manager, /url\.hostname === 'save'/, 'Session Manager must accept the save action');
 assert.match(manager, /sameCaptureToken\(activeCaptureToken, token\)/, 'save action must be bound to the active capture token');
+assert.match(manager, /activeCaptureToken = token;[\s\S]{0,500}captureStartState = \{ token, promise: launchPromise \}/, 'capture ticket must become active before Chromium startup completes');
+assert.match(manager, /await waitForCaptureStart\(token\)/, 'save must wait for a matching capture that is still starting');
+assert.match(manager, /completedCaptureFor\(token\)/, 'repeated save commands for the same completed ticket must be idempotent');
+assert.match(admin, /const beforeSaveRows = await api\.profileSessions\.list\(\)/, 'Admin must check whether Chromium already saved before sending a Save protocol');
+assert.match(admin, /Sesión ya guardada correctamente/, 'Admin must report an already-completed overlay save without opening an error window');
 assert.match(engine, /async function saveActive\(\)/, 'capture engine must expose a save-active operation');
 assert.match(engine, /return active\.saveCapture\(\)/, 'save-active must reuse the exact capture material pipeline');
 
