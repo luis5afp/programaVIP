@@ -50,31 +50,28 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-      - name: Wait for paired desktop release
+      - name: Validate desktop release prerequisites
         shell: bash
         run: |
           set -euo pipefail
           EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
           MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
-          BASE="https://userflex-admin.luis5afp.workers.dev"
-          echo "Waiting for userFLOW v$EXPECTED_USERFLOW and compatible Session Manager >= v$MIN_SESSION_MANAGER..."
+          echo "Validating published desktop releases: userFLOW v$EXPECTED_USERFLOW · Session Manager >= v$MIN_SESSION_MANAGER..."
 
-          for attempt in $(seq 1 90); do
-            current="$(curl --silent --show-error "$BASE/api/client-update/latest" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version||'')}catch{console.log('')}})")"
-            sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}' \
-              --header "Authorization: Bearer ${{ github.token }}" \
-              --header 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
-            if [ "$current" = "$EXPECTED_USERFLOW" ] && [ "$sm_code" = "200" ]; then
-              echo "Independent desktop releases are ready: userFLOW v$EXPECTED_USERFLOW · Session Manager minimum v$MIN_SESSION_MANAGER."
-              break
-            fi
-            if [ "$attempt" = "90" ]; then
-              echo "Timed out waiting for independent desktop releases. userFLOW=$current expected=$EXPECTED_USERFLOW session-manager-min=$MIN_SESSION_MANAGER http=$sm_code" >&2
-              exit 1
-            fi
-            sleep 10
-          done
+          client_code="$(curl --silent --output /tmp/client-release.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${{ github.token }}" \
+            --header 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/client-v$EXPECTED_USERFLOW")"
+          sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${{ github.token }}" \
+            --header 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
+
+          if [ "$client_code" != "200" ] || [ "$sm_code" != "200" ]; then
+            echo "Required desktop release is missing. userFLOW-http=$client_code session-manager-http=$sm_code" >&2
+            exit 1
+          fi
+          echo "Desktop release prerequisites are published."
 
       - name: Configure Supabase service secret
         shell: bash
