@@ -433,7 +433,7 @@ export async function installCaptureAutomation({
       } catch (error) {
         if (button) {
           button.disabled = false;
-          button.textContent = 'Guardar sesión';
+          button.textContent = 'Guardar ahora';
         }
         if (message) message.textContent = error?.message || String(error || 'No se pudo guardar la sesión.');
       }
@@ -479,9 +479,9 @@ export async function installCaptureAutomation({
           <div class="row">
             <button type="button" data-kind="username" class="secondary">Email</button>
             <button type="button" data-kind="password" class="secondary">Password</button>
-            <button type="button" data-kind="save">Guardar sesión</button>
+            <button type="button" data-kind="save">Guardar ahora</button>
           </div>
-          <div class="msg">El autofill está activo. Completa cualquier 2FA/CAPTCHA manualmente.</div>
+          <div class="msg">Guardado automático activo. Completa cualquier 2FA/CAPTCHA; si Chromium no se cierra, pulsa Guardar ahora.</div>
         </div>
       `;
       document.documentElement.appendChild(host);
