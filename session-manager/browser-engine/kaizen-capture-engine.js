@@ -156,7 +156,6 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   const origin=String(location.origin||'').toLowerCase();
   const allowedOrigins=Array.isArray(CONFIG.allowedOrigins)?CONFIG.allowedOrigins.map((value)=>String(value||'').toLowerCase()):[];
   const googleAuthAllowed=allowedOrigins.includes('https://accounts.google.com')&&location.protocol==='https:'&&(host==='accounts.google.com'||/^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(host));
-  const openAiLoginPage=(host==='chatgpt.com'&&String(location.pathname||'').toLowerCase().startsWith('/auth/'))||host==='auth.openai.com';
   if(!(allowedOrigins.includes(origin)||googleAuthAllowed||host===root||host.endsWith('.'+root))) return;
 
   const stop=(event)=>{event.preventDefault();event.stopPropagation();};
@@ -186,20 +185,6 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       try{el.blur();}catch{}
     }catch{}
   };
-  const actionLabel=(el)=>String(el?.textContent||el?.value||el?.getAttribute?.('aria-label')||el?.getAttribute?.('title')||'').replace(/\s+/g,' ').trim().toLowerCase();
-  const maybeAdvanceOpenAiUsername=(user,pass)=>{
-    if(!openAiLoginPage||!user||pass||!credentials?.username) return;
-    const current=String(user.value||'').trim();
-    if(!current||current.toLowerCase()!==String(credentials.username||'').trim().toLowerCase()) return;
-    const key=location.href+'|'+current.toLowerCase();
-    if(globalThis.__userflexOpenAiUsernameAdvance===key) return;
-    const rootNode=user.form||document;
-    const actions=Array.from(rootNode.querySelectorAll('button,input[type="submit"],[role="button"]')).filter((el)=>visible(el)&&!el.disabled);
-    const action=actions.find((el)=>/^(continue|next|continuar|siguiente)$/.test(actionLabel(el)))||actions.find((el)=>el instanceof HTMLInputElement&&el.type==='submit');
-    if(!action) return;
-    globalThis.__userflexOpenAiUsernameAdvance=key;
-    setTimeout(()=>{try{if(document.contains(action)&&visible(action)&&!action.disabled) action.click();}catch{}},250);
-  };
   const autofill=()=>{
     if(!credentials) return;
     const inputs=Array.from(document.querySelectorAll('input')).filter((el)=>visible(el)&&!el.disabled&&!el.readOnly);
@@ -213,7 +198,6 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     });
     if(user&&!user.value) setNativeValue(user,credentials.username||'');
     if(pass&&!pass.value) setNativeValue(pass,credentials.password||'');
-    maybeAdvanceOpenAiUsername(user,pass);
   };
   const install=()=>{
     if(document.getElementById('userflex-session-overlay')) return;
