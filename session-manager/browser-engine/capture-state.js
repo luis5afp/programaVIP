@@ -919,6 +919,8 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
         usernameFieldVisible,
         passwordFieldVisible,
         loginActionVisible,
+        meaningfulContent: String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().length >= 24,
+        readyState: document.readyState,
       };
     }).catch(() => ({
       href: page.url(),
