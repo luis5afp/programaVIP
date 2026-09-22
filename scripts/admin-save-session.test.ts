@@ -39,5 +39,10 @@ assert.match(captureState, /options\?\.navigateIfMissing === false/);
 assert.match(captureState, /meaningfulContent/);
 assert.match(captureState, /targetOriginMatched/);
 assert.match(captureState, /state\.meaningfulContent === true/);
+assert.match(captureState, /captureNavigationTarget/, 'Netflix capture must normalize public locale landing URLs');
+assert.match(captureState, /target\.pathname = '\/browse'/, 'Netflix capture must enter the authenticated app instead of the public landing page');
+assert.match(captureState, /netflixAuthCookies/, 'Netflix verification must require the first-party authentication cookies');
+assert.match(captureState, /netflixAppPath/, 'Netflix verification must confirm an authenticated app path');
+assert.match(engine, /closeBrowserGracefully/, 'saved captures must attempt a graceful Chromium shutdown before force-kill');
 
 console.log('Automatic single-shot session save regression: OK');

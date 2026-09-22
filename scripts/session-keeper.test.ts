@@ -41,6 +41,10 @@ assert.match(manager, /if \(engine\(\)\.active\)[\s\S]{0,180}captura manual acti
 assert.match(captureState, /export async function inspectCaptureSession/);
 assert.match(captureState, /loginActionVisible/);
 assert.match(captureState, /authenticated,/);
+assert.match(captureState, /captureNavigationTarget/);
+assert.match(captureState, /netflixAuthCookies/);
+assert.match(captureState, /netflixAppPath/);
+assert.match(manager, /Netflix no abrió el área autenticada \(\/browse\)/);
 
 assert.doesNotMatch(
   clientEngine,

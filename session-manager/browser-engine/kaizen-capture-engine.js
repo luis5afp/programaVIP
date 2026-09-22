@@ -311,6 +311,36 @@ async function startControlServer({ secret, credentials, onSave }) {
   };
 }
 
+async function waitForProcessExit(proc, timeoutMs = 3000) {
+  if (!proc?.pid || proc.exitCode !== null) return true;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { proc.off('exit', onExit); } catch {}
+      resolve(value);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(proc.exitCode !== null), timeoutMs);
+    proc.once('exit', onExit);
+  });
+}
+
+async function closeBrowserGracefully(entry) {
+  if (!entry?.browser || typeof entry.browser.close !== 'function') return false;
+  const closePromise = Promise.resolve()
+    .then(() => entry.browser.close())
+    .catch(() => null);
+  const exited = await waitForProcessExit(entry.process, 3000);
+  await Promise.race([
+    closePromise,
+    new Promise((resolve) => setTimeout(resolve, 100)),
+  ]);
+  return exited || entry.process?.exitCode !== null;
+}
+
 function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, background = false }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -348,14 +378,18 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
     entry.closed = true;
     try { entry.automation?.cleanup?.(); } catch {}
-    try { await entry.browser?.disconnect?.(); } catch {}
+    const graceful = await closeBrowserGracefully(entry).catch(() => false);
+    if (!graceful) {
+      try { await entry.browser?.disconnect?.(); } catch {}
+      await killProcessTree(entry.process);
+    }
     try { await entry.control?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
-    await killProcessTree(entry.process);
+    await markProfileExitedCleanly(entry.userDataDir);
     if (entry.extensionDir) {
       try { await fsp.rm(entry.extensionDir, { recursive: true, force: true }); } catch {}
     }
-    log.log?.(`Session Manager KAIZEN closed: ${reason}`);
+    log.log?.(`Session Manager KAIZEN closed: ${reason} · ${graceful ? 'graceful' : 'forced'}`);
   }
 
   async function launch({ profile, credentials, proxy = null, onComplete, background = false }) {
@@ -498,7 +532,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         }
         entry.autoSaveCloseTimer = setTimeout(() => {
           if (active === entry) void close('capture_saved');
-        }, 450);
+        }, 800);
         entry.autoSaveCloseTimer.unref?.();
         return result;
       })();

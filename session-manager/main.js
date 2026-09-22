@@ -191,6 +191,12 @@ async function removeKeeper(profileId) {
 function keeperNeedsLoginMessage(inspection) {
   if (!inspection) return 'No se pudo confirmar que la web continúe autenticada.';
   if (inspection.loginLikeUrl) return `La web redirigió a inicio de sesión: ${inspection.href || ''}`;
+  if (inspection.netflixTarget && inspection.netflixAuthCookies === false) {
+    return 'Netflix ya no conserva NetflixId y SecureNetflixId en el perfil local.';
+  }
+  if (inspection.netflixTarget && inspection.netflixAppPath === false) {
+    return `Netflix no abrió el área autenticada (/browse). URL actual: ${inspection.href || ''}`;
+  }
   if (inspection.passwordFieldVisible) return 'La web está mostrando un campo de contraseña.';
   if (inspection.usernameFieldVisible) return 'La web está mostrando un campo de usuario/correo.';
   if (inspection.loginActionVisible) return 'La web está mostrando una acción de inicio de sesión.';
@@ -401,7 +407,7 @@ function showReadyWindow(message = null) {
           <li>Vuelve al panel userFLEX.</li>
           <li>Pulsa <b>Cargar sesión</b> en el perfil.</li>
           <li>Se abrirá el navegador externo con el perfil aislado.</li>
-          <li>Completa el acceso y pulsa <b>Guardar sesión</b> en el recuadro userFLEX.</li>
+          <li>Completa el acceso. userFLEX guardará automáticamente; si Chromium no se cierra, pulsa <b>Guardar ahora</b>.</li>
         </ol>
         <p style="margin-bottom:0;color:#64748b;font-size:13px">La nueva captura incluye cookies, Local Storage, Session Storage e IndexedDB y se envía cifrada al servidor userFLEX.</p>
       </div>

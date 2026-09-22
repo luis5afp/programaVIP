@@ -31,6 +31,31 @@ function domainMatches(cookieDomain, hostname) {
   return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
 }
 
+function isNetflixHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return host === 'netflix.com' || host.endsWith('.netflix.com');
+}
+
+function isNetflixLandingPath(pathname) {
+  const path = String(pathname || '').toLowerCase();
+  return path === '/' || /^\/[a-z]{2}(?:-[a-z]{2})?\/?$/.test(path);
+}
+
+function isNetflixAuthenticatedAppPath(pathname) {
+  return /^\/(?:browse|profiles|manageprofiles|switchprofile|kids|latest|search|title|watch|youraccount|account)(?:\/|$)/i
+    .test(String(pathname || ''));
+}
+
+export function captureNavigationTarget(profileUrl) {
+  const target = new URL(profileUrl);
+  if (isNetflixHost(target.hostname) && isNetflixLandingPath(target.pathname)) {
+    target.pathname = '/browse';
+    target.search = '';
+    target.hash = '';
+  }
+  return target;
+}
+
 function normalizeCookie(cookie) {
   return {
     name: String(cookie?.name || ''),
@@ -73,10 +98,13 @@ async function validateCapturePage(page, target) {
     throw new Error(`La pestaña activa no corresponde a ${target.hostname}. Abre el perfil correcto antes de guardar.`);
   }
 
-  if (target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com')) {
+  if (isNetflixHost(target.hostname)) {
     const pathname = String(state.pathname || '').toLowerCase();
     if (pathname.startsWith('/login') || pathname.startsWith('/signup')) {
       throw new Error('Netflix todavía no tiene la cuenta abierta. Completa el inicio de sesión antes de guardar.');
+    }
+    if (isNetflixLandingPath(pathname)) {
+      throw new Error('Netflix está en la portada pública, no dentro de la cuenta. Espera a que abra /browse antes de guardar.');
     }
     const text = String(state.text || '').toLowerCase();
     const errorSignals = [
@@ -775,7 +803,7 @@ export async function installCaptureAutomation({
 }
 
 export async function capturePortableSession({ debugPort, profile, networkMode = 'direct' }) {
-  const target = new URL(profile.url);
+  const target = captureNavigationTarget(profile.url);
   const browser = await connectCaptureBrowser(debugPort);
   try {
     const page = await pageForOrigin(browser, target);
@@ -785,7 +813,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
       .filter((cookie) => cookie?.name && domainMatches(cookie.domain, target.hostname))
       .map(normalizeCookie);
 
-    if (target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com')) {
+    if (isNetflixHost(target.hostname)) {
       const names = new Set(cookies.map((cookie) => cookie.name.toLowerCase()));
       const missing = ['netflixid', 'securenetflixid'].filter((name) => !names.has(name));
       if (missing.length) {
@@ -841,7 +869,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
 export async function inspectCaptureSession(debugPort, profileUrl, options = {}) {
   const browser = await connectCaptureBrowser(debugPort);
   try {
-    const target = new URL(profileUrl);
+    const target = captureNavigationTarget(profileUrl);
     let pages = await browser.pages();
     let page = null;
 
@@ -955,14 +983,26 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
     let current;
     try { current = new URL(state.href || page.url()); } catch { current = target; }
     const path = String(current.pathname || '').toLowerCase();
+    const netflixTarget = isNetflixHost(target.hostname);
     const loginLikeUrl = current.hostname === 'accounts.google.com'
       || /^accounts\.google\./i.test(current.hostname)
       || /\/(?:login|signin|sign-in|auth|account\/login|servicelogin)(?:\/|$)/i.test(path)
-      || ((target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))
-        && (path.startsWith('/login') || path.startsWith('/signup')));
+      || (netflixTarget && (path.startsWith('/login') || path.startsWith('/signup')));
 
     const targetOriginMatched = current.origin === target.origin;
-    const authenticated = targetOriginMatched
+    let netflixAuthCookies = null;
+    let netflixAppPath = null;
+    if (netflixTarget) {
+      const cookieNames = new Set(
+        (await allCookies(page).catch(() => []))
+          .filter((cookie) => cookie?.name && domainMatches(cookie.domain, target.hostname))
+          .map((cookie) => String(cookie.name || '').toLowerCase()),
+      );
+      netflixAuthCookies = cookieNames.has('netflixid') && cookieNames.has('securenetflixid');
+      netflixAppPath = isNetflixAuthenticatedAppPath(path);
+    }
+
+    const genericAuthenticated = targetOriginMatched
       && state.meaningfulContent === true
       && state.readyState !== 'loading'
       && !loginLikeUrl
@@ -970,10 +1010,24 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       && state.passwordFieldVisible !== true
       && state.loginActionVisible !== true;
 
+    const authenticated = netflixTarget
+      ? targetOriginMatched
+        && state.meaningfulContent === true
+        && state.readyState !== 'loading'
+        && !loginLikeUrl
+        && netflixAuthCookies === true
+        && netflixAppPath === true
+        && state.passwordFieldVisible !== true
+        && state.loginActionVisible !== true
+      : genericAuthenticated;
+
     return {
       ...state,
       loginLikeUrl,
       targetOriginMatched,
+      netflixTarget,
+      netflixAuthCookies,
+      netflixAppPath,
       authenticated,
     };
   } finally {
@@ -984,7 +1038,7 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
 export async function navigateCaptureHome(debugPort, profileUrl) {
   const browser = await connectCaptureBrowser(debugPort);
   try {
-    const target = new URL(profileUrl);
+    const target = captureNavigationTarget(profileUrl);
     const page = await pageForOrigin(browser, target);
     if (page.url() !== target.toString()) {
       await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
