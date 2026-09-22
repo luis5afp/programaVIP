@@ -282,6 +282,67 @@ export async function browserPublicIp(debugPort) {
 }
 
 
+function isOpenAIManagedProfile(profileUrl) {
+  try {
+    const target = new URL(String(profileUrl || ''));
+    const host = String(target.hostname || '').toLowerCase().replace(/^www\./, '');
+    return target.protocol === 'https:'
+      && (host === 'chatgpt.com'
+        || host.endsWith('.chatgpt.com')
+        || host === 'openai.com'
+        || host.endsWith('.openai.com'));
+  } catch {
+    return false;
+  }
+}
+
+function isChatGPTLoginWithUrl(value) {
+  try {
+    const target = new URL(String(value || ''));
+    const host = String(target.hostname || '').toLowerCase().replace(/^www\./, '');
+    return target.protocol === 'https:'
+      && host === 'chatgpt.com'
+      && /^\/auth\/login_with\/?$/i.test(target.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function recoverBlankOpenAIAuth(page, profileUrl, recoveredUrls) {
+  if (!page || !isOpenAIManagedProfile(profileUrl)) return false;
+  const currentUrl = page.url();
+  if (!isChatGPTLoginWithUrl(currentUrl)) return false;
+  if (recoveredUrls.get(page) === currentUrl) return false;
+
+  await delay(1800);
+  if (page.url() !== currentUrl) return false;
+
+  const blank = await page.evaluate(() => {
+    const text = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    const controls = document.querySelectorAll('input,button,a,[role="button"]').length;
+    return text.length < 20 && controls === 0;
+  }).catch(() => false);
+  if (!blank) return false;
+
+  recoveredUrls.set(page, currentUrl);
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+  await delay(1800);
+  if (page.url() !== currentUrl) return true;
+
+  const stillBlank = await page.evaluate(() => {
+    const text = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    const controls = document.querySelectorAll('input,button,a,[role="button"]').length;
+    return text.length < 20 && controls === 0;
+  }).catch(() => false);
+  if (!stillBlank) return true;
+
+  const stuck = new URL(currentUrl);
+  const restart = new URL('/auth/login', 'https://chatgpt.com');
+  restart.searchParams.set('callback_path', stuck.searchParams.get('callback_path') || '/');
+  await page.goto(restart.toString(), { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+  return true;
+}
+
 export async function installCaptureAutomation({
   browser,
   profileUrl,
@@ -304,6 +365,8 @@ export async function installCaptureAutomation({
 
   const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
     const currentHost = String(location.hostname || '').toLowerCase();
+    const openAIAuthFlow = currentHost === 'auth.openai.com'
+      || (currentHost === 'chatgpt.com' && /^\/auth(?:\/|$)/i.test(location.pathname || ''));
     const googleAuthAllowed = Array.isArray(allowedOrigins)
       && allowedOrigins.includes('https://accounts.google.com')
       && location.protocol === 'https:'
@@ -311,7 +374,7 @@ export async function installCaptureAutomation({
         || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost));
     if (!Array.isArray(allowedOrigins) || (!allowedOrigins.includes(location.origin) && !googleAuthAllowed)) return;
 
-    const GLOBAL_KEY = '__userflexCaptureAutomationV312';
+    const GLOBAL_KEY = '__userflexCaptureAutomationV313';
     const existing = globalThis[GLOBAL_KEY];
     if (existing?.refresh) {
       try { existing.refresh(); } catch {}
@@ -437,6 +500,7 @@ export async function installCaptureAutomation({
     };
 
     const ensureOverlay = () => {
+      if (openAIAuthFlow) return null;
       if (!document.documentElement) return null;
       const current = document.getElementById('userflex-session-overlay');
       if (current) return current;
@@ -531,9 +595,11 @@ export async function installCaptureAutomation({
   };
 
   const prepared = new WeakSet();
+  const recoveredOpenAIAuthUrls = new WeakMap();
   const instrument = async (page) => {
     if (!page) return;
     try {
+      await recoverBlankOpenAIAuth(page, profileUrl, recoveredOpenAIAuthUrls);
       const canonicalUrl = canonicalGoogleAccountsUrl(page.url());
       if (canonicalUrl) {
         await page.goto(canonicalUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => null);
