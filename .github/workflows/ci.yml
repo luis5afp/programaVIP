@@ -23,6 +23,8 @@ jobs:
         run: node --experimental-strip-types scripts/profile-runtime-matrix.test.ts
       - name: Test release compatibility
         run: node --experimental-strip-types scripts/release-hardening.test.ts
+      - name: Test reliability hardening
+        run: node --experimental-strip-types scripts/reliability-hardening.test.ts
       - name: Test password security
         run: node --experimental-strip-types scripts/password-security.test.ts
       - name: Test captured session validation

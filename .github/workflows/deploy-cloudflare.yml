@@ -94,16 +94,30 @@ jobs:
           TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
           EXPECTED="$(node -p "require('./client-app/package.json').version")"
 
-          health="$(curl --fail --silent --show-error "$BASE/api/health")"
-          HEALTH="$health" EXPECTED="$EXPECTED" node - <<'NODE'
+          ready=0
+          for attempt in $(seq 1 30); do
+            health="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache' "$BASE/api/health" || true)"
+            if HEALTH="$health" EXPECTED="$EXPECTED" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
           const expected = process.env.EXPECTED;
-          if (value.ok !== true) throw new Error('health endpoint is not OK');
-          if (value.minimumClientVersion !== expected) throw new Error('unexpected minimum client version');
-          if (value.minimumSessionManagerVersion !== expected) throw new Error('unexpected minimum Session Manager version');
+          if (value.ok !== true) process.exit(1);
+          if (value.minimumClientVersion !== expected) process.exit(1);
+          if (value.minimumSessionManagerVersion !== expected) process.exit(1);
           NODE
+            then
+              ready=1
+              echo "Production Worker v$EXPECTED is active after propagation attempt $attempt."
+              break
+            fi
+            echo "Waiting for Cloudflare propagation ($attempt/30)..."
+            sleep 5
+          done
+          if [ "$ready" != "1" ]; then
+            echo "Production Worker did not expose expected version v$EXPECTED after propagation window." >&2
+            exit 1
+          fi
 
-          latest="$(curl --fail --silent --show-error "$BASE/api/client-update/latest")"
+          latest="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 --header 'Cache-Control: no-cache' "$BASE/api/client-update/latest")"
           LATEST="$latest" node - <<'NODE'
           const value = JSON.parse(process.env.LATEST || '{}');
           if (!/^\d+\.\d+\.\d+/.test(String(value.version || ''))) throw new Error('invalid updater version');

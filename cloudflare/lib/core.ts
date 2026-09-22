@@ -73,13 +73,43 @@ function config(env: Env) {
 
 export async function sb(env: Env, path: string, init: RequestInit = {}): Promise<any> {
   const { url, key } = config(env);
-  const headers = new Headers(init.headers);
-  headers.set('apikey', key);
-  headers.set('Authorization', `Bearer ${key}`);
-  headers.set('Accept', 'application/json');
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const method = String(init.method || 'GET').toUpperCase();
+  const retryable = method === 'GET' || method === 'HEAD';
+  const maxAttempts = retryable ? 3 : 1;
+  let response: Response | null = null;
 
-  const response = await fetch(`${url}/rest/v1/${path}`, { ...init, headers });
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const headers = new Headers(init.headers);
+    headers.set('apikey', key);
+    headers.set('Authorization', `Bearer ${key}`);
+    headers.set('Accept', 'application/json');
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+
+    try {
+      response = await fetch(`${url}/rest/v1/${path}`, {
+        ...init,
+        headers,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (error) {
+      console.error('Supabase network error', path, error instanceof Error ? error.message : String(error));
+      if (retryable && attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        continue;
+      }
+      throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
+    }
+
+    if (retryable && [408, 425, 429, 502, 503, 504].includes(response.status) && attempt < maxAttempts) {
+      await response.text().catch(() => '');
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+      continue;
+    }
+    break;
+  }
+
+  if (!response) throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no está disponible.');
+
   const raw = await response.text();
   let body: any = null;
   if (raw) {
@@ -111,6 +141,9 @@ export async function sb(env: Env, path: string, init: RequestInit = {}): Promis
     }
     if (body?.code === '23503') {
       throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
+    }
+    if ([408, 425, 429, 502, 503, 504].includes(response.status)) {
+      throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos está temporalmente ocupada. Intenta nuevamente.');
     }
     throw new HttpError(502, 'DATABASE_ERROR', 'No se pudo completar la operación en la base de datos.');
   }

@@ -34,35 +34,98 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
-  if (init.body && !isFormData && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+type RequestOptions = RequestInit & { timeoutMs?: number };
 
-  const response = await fetch(path, {
-    ...init,
-    headers,
-    credentials: 'include',
-  });
+const REQUEST_TIMEOUT_MS = 20_000;
+const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 502, 503, 504]);
 
-  const text = await response.text();
-  let payload: any = null;
-  if (text) {
+function safeToRetry(method: string) {
+  return method === 'GET' || method === 'HEAD';
+}
+
+function requestId() {
+  try { return crypto.randomUUID(); } catch { return `uf-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+}
+
+function retryDelay(attempt: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, 250 * attempt));
+}
+
+async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...fetchInit } = init;
+  const method = String(fetchInit.method || 'GET').toUpperCase();
+  const retryable = safeToRetry(method);
+  const maxAttempts = retryable ? 3 : 1;
+  const operationId = requestId();
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const headers = new Headers(fetchInit.headers);
+    const isFormData = typeof FormData !== 'undefined' && fetchInit.body instanceof FormData;
+    if (fetchInit.body && !isFormData && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    headers.set('X-Userflex-Request-Id', operationId);
+
+    const controller = new AbortController();
+    const externalSignal = fetchInit.signal;
+    const abortFromCaller = () => controller.abort(externalSignal?.reason);
+    if (externalSignal) {
+      if (externalSignal.aborted) abortFromCaller();
+      else externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+    }
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = { error: text };
+      const response = await fetch(path, {
+        ...fetchInit,
+        headers,
+        credentials: 'include',
+        signal: controller.signal,
+      });
+
+      const text = await response.text();
+      let payload: any = null;
+      if (text) {
+        try { payload = JSON.parse(text); } catch { payload = { error: text }; }
+      }
+
+      if (!response.ok) {
+        if (retryable && RETRYABLE_HTTP_STATUS.has(response.status) && attempt < maxAttempts) {
+          await retryDelay(attempt);
+          continue;
+        }
+        const error = new ApiError(
+          payload?.message || payload?.error || `HTTP ${response.status}`,
+          response.status,
+          payload?.code,
+        );
+        (error as ApiError & { requestId?: string }).requestId =
+          response.headers.get('X-Userflex-Request-Id') || operationId;
+        throw error;
+      }
+      return payload as T;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof ApiError) throw error;
+      if (externalSignal?.aborted) throw new ApiError('La operación fue cancelada.', 0, 'REQUEST_CANCELLED');
+      if (retryable && attempt < maxAttempts) {
+        await retryDelay(attempt);
+        continue;
+      }
+      const timedOut = controller.signal.aborted;
+      const failure = new ApiError(
+        timedOut ? 'El servidor tardó demasiado en responder. Intenta nuevamente.' : 'No se pudo conectar con userFLEX.',
+        0,
+        timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+      );
+      (failure as ApiError & { requestId?: string }).requestId = operationId;
+      throw failure;
+    } finally {
+      window.clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
 
-  if (!response.ok) {
-    throw new ApiError(
-      payload?.message || payload?.error || `HTTP ${response.status}`,
-      response.status,
-      payload?.code,
-    );
-  }
-  return payload as T;
+  throw lastError instanceof Error ? lastError : new ApiError('No se pudo completar la solicitud.', 0, 'REQUEST_FAILED');
 }
 
 export const api = {

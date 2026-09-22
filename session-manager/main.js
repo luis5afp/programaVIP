@@ -2,6 +2,7 @@ import { app, BrowserWindow, safeStorage } from 'electron';
 import { RealtimeClient } from '@supabase/realtime-js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
 
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
@@ -432,15 +433,31 @@ function showReadyWindow(message = null) {
 }
 
 async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
-  const response = await fetch(`${endpoint}${pathName}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'X-Userflex-Session-Manager-Version': app.getVersion(),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const operationId = (() => {
+    try { return crypto.randomUUID(); } catch { return `sm-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+  })();
+
+  let response;
+  try {
+    response = await fetch(`${endpoint}${pathName}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'X-Userflex-Session-Manager-Version': app.getVersion(),
+        'X-Userflex-Request-Id': operationId,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (cause) {
+    const error = new Error(cause?.name === 'TimeoutError'
+      ? 'El servidor tardó demasiado en responder.'
+      : `No se pudo conectar con userFLEX: ${cause?.message || 'error de red'}`);
+    error.code = cause?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR';
+    error.requestId = operationId;
+    throw error;
+  }
+
   const text = await response.text();
   let payload = null;
   try {
@@ -452,6 +469,7 @@ async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
     const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
     error.status = response.status;
     error.code = payload?.code || 'HTTP_ERROR';
+    error.requestId = response.headers.get('X-Userflex-Request-Id') || payload?.requestId || operationId;
     throw error;
   }
   return payload;
@@ -638,11 +656,14 @@ async function handleProtocolUrl(rawUrl) {
 
 function showFatalError(error) {
   const message = error instanceof Error ? error.message : String(error || 'Error inesperado.');
+  const code = String(error?.code || 'SESSION_MANAGER_ERROR');
+  const requestId = String(error?.requestId || '');
   const html = `<!doctype html><meta charset="utf-8"><title>userFLEX</title>
     <body style="font-family:system-ui;padding:28px;color:#0f172a">
-      <h2>No se pudo abrir el perfil</h2>
+      <h2>No se pudo completar la operación</h2>
       <p>${escapeHtml(message)}</p>
-      <p style="color:#64748b">Cierra esta ventana, corrige el problema indicado y vuelve a pulsar Cargar sesión en el panel.</p>
+      <p style="color:#64748b">Código: ${escapeHtml(code)}${requestId ? ` · Solicitud: ${escapeHtml(requestId)}` : ''}</p>
+      <p style="color:#64748b">Cierra esta ventana, corrige el problema indicado y vuelve a intentarlo desde el panel.</p>
     </body>`;
   const win = new BrowserWindow({
     width: 720,
@@ -651,6 +672,16 @@ function showFatalError(error) {
   });
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Session Manager unhandled rejection:', reason instanceof Error ? reason.stack || reason.message : String(reason));
+});
+process.on('uncaughtExceptionMonitor', (error) => {
+  console.error('Session Manager uncaught exception:', error?.stack || error?.message || error);
+});
+app.on('render-process-gone', (_event, _webContents, details) => {
+  console.error('Session Manager renderer stopped:', details?.reason || 'unknown', details?.exitCode ?? '');
+});
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

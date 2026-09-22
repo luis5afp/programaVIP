@@ -195,68 +195,134 @@ async function clearAuth() {
   }
 }
 
+const TRANSIENT_HTTP_STATUS = new Set([408, 425, 429, 502, 503, 504]);
+
+function clientRequestId() {
+  try { return crypto.randomUUID(); } catch { return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+}
+
+function waitForRetry(attempt) {
+  return new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+}
+
 async function apiRequest(pathName, options = {}) {
-  const headers = {
-    Accept: 'application/json',
-    'X-Userflow-Client-Version': app.getVersion(),
-    ...(options.headers || {}),
-  };
-  if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
-  let response;
-  try {
-    response = await fetch(`${API_ORIGIN}${pathName}`, {
-      method: options.method || 'GET',
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: AbortSignal.timeout(options.timeout || 20_000),
-    });
-  } catch (error) {
-    throw new UserflexError(`No se pudo conectar con userFLEX: ${error?.message || 'error de red'}`, 'NETWORK_ERROR');
+  const method = String(options.method || 'GET').toUpperCase();
+  const retryable = method === 'GET' || method === 'HEAD';
+  const maxAttempts = retryable ? 3 : 1;
+  const operationId = clientRequestId();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const headers = {
+      Accept: 'application/json',
+      'X-Userflow-Client-Version': app.getVersion(),
+      'X-Userflex-Request-Id': operationId,
+      ...(options.headers || {}),
+    };
+    if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+
+    let response;
+    try {
+      response = await fetch(`${API_ORIGIN}${pathName}`, {
+        method,
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: AbortSignal.timeout(options.timeout || 20_000),
+      });
+    } catch (error) {
+      if (retryable && attempt < maxAttempts) {
+        await waitForRetry(attempt);
+        continue;
+      }
+      const failure = new UserflexError(
+        `No se pudo conectar con userFLEX: ${error?.name === 'TimeoutError' ? 'tiempo de espera agotado' : error?.message || 'error de red'}`,
+        error?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+      );
+      failure.requestId = operationId;
+      throw failure;
+    }
+
+    const text = await response.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text }; }
+
+    if (!response.ok) {
+      if (retryable && TRANSIENT_HTTP_STATUS.has(response.status) && attempt < maxAttempts) {
+        await waitForRetry(attempt);
+        continue;
+      }
+      const failure = new UserflexError(
+        payload?.error || payload?.message || `HTTP ${response.status}`,
+        payload?.code || 'HTTP_ERROR',
+        response.status,
+      );
+      failure.requestId = response.headers.get('X-Userflex-Request-Id') || payload?.requestId || operationId;
+      throw failure;
+    }
+    return payload;
   }
 
-  const text = await response.text();
-  let payload = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = { error: text };
-  }
-  if (!response.ok) {
-    throw new UserflexError(payload?.error || `HTTP ${response.status}`, payload?.code || 'HTTP_ERROR', response.status);
-  }
-  return payload;
+  throw new UserflexError('No se pudo completar la solicitud.', 'REQUEST_FAILED');
 }
 
 async function apiBinaryRequest(pathName, options = {}) {
-  const headers = {
-    Accept: 'application/zip,application/octet-stream',
-    'X-Userflow-Client-Version': app.getVersion(),
-    ...(options.headers || {}),
-  };
-  if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  let response;
-  try {
-    response = await fetch(`${API_ORIGIN}${pathName}`, {
-      method: options.method || 'GET',
-      headers,
-      signal: AbortSignal.timeout(options.timeout || 30_000),
-    });
-  } catch (error) {
-    throw new UserflexError(`No se pudo descargar la extensión: ${error?.message || 'error de red'}`, 'EXTENSION_DOWNLOAD_FAILED');
+  const method = String(options.method || 'GET').toUpperCase();
+  const retryable = method === 'GET' || method === 'HEAD';
+  const maxAttempts = retryable ? 3 : 1;
+  const operationId = clientRequestId();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const headers = {
+      Accept: 'application/zip,application/octet-stream',
+      'X-Userflow-Client-Version': app.getVersion(),
+      'X-Userflex-Request-Id': operationId,
+      ...(options.headers || {}),
+    };
+    if (options.token !== false && accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+    let response;
+    try {
+      response = await fetch(`${API_ORIGIN}${pathName}`, {
+        method,
+        headers,
+        signal: AbortSignal.timeout(options.timeout || 30_000),
+      });
+    } catch (error) {
+      if (retryable && attempt < maxAttempts) {
+        await waitForRetry(attempt);
+        continue;
+      }
+      const failure = new UserflexError(
+        `No se pudo descargar la extensión: ${error?.name === 'TimeoutError' ? 'tiempo de espera agotado' : error?.message || 'error de red'}`,
+        error?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT' : 'EXTENSION_DOWNLOAD_FAILED',
+      );
+      failure.requestId = operationId;
+      throw failure;
+    }
+
+    if (!response.ok) {
+      if (retryable && TRANSIENT_HTTP_STATUS.has(response.status) && attempt < maxAttempts) {
+        await response.arrayBuffer().catch(() => null);
+        await waitForRetry(attempt);
+        continue;
+      }
+      const detail = await response.text().catch(() => '');
+      const failure = new UserflexError(detail || `HTTP ${response.status}`, 'EXTENSION_DOWNLOAD_FAILED', response.status);
+      failure.requestId = response.headers.get('X-Userflex-Request-Id') || operationId;
+      throw failure;
+    }
+
+    const maxBytes = Number(options.maxBytes || 20 * 1024 * 1024);
+    const advertised = Number(response.headers.get('content-length') || 0);
+    if (advertised > maxBytes) throw new UserflexError('El paquete de extensión supera el tamaño permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length < 1 || buffer.length > maxBytes) {
+      throw new UserflexError('El paquete de extensión tiene un tamaño no permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
+    }
+    return buffer;
   }
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new UserflexError(detail || `HTTP ${response.status}`, 'EXTENSION_DOWNLOAD_FAILED', response.status);
-  }
-  const maxBytes = Number(options.maxBytes || 20 * 1024 * 1024);
-  const advertised = Number(response.headers.get('content-length') || 0);
-  if (advertised > maxBytes) throw new UserflexError('El paquete de extensión supera el tamaño permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length < 1 || buffer.length > maxBytes) {
-    throw new UserflexError('El paquete de extensión tiene un tamaño no permitido.', 'EXTENSION_PACKAGE_TOO_LARGE');
-  }
-  return buffer;
+
+  throw new UserflexError('No se pudo descargar la extensión.', 'EXTENSION_DOWNLOAD_FAILED');
 }
 
 function safeManagedExtensionSegment(value, fallback = 'extension') {
@@ -457,6 +523,7 @@ function serializeError(error) {
     message: error?.message || 'Error inesperado.',
     code: error?.code || 'CLIENT_ERROR',
     status: Number(error?.status || 0),
+    requestId: error?.requestId || null,
   };
 }
 
@@ -2071,6 +2138,24 @@ ipcMain.handle('userflex:logout', async () => {
     await returnToLogin();
     return { ok: false, error: serializeError(error) };
   }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('userFLOW unhandled rejection:', reason instanceof Error ? reason.stack || reason.message : String(reason));
+});
+process.on('uncaughtExceptionMonitor', (error) => {
+  console.error('userFLOW uncaught exception:', error?.stack || error?.message || error);
+});
+app.on('render-process-gone', (_event, webContents, details) => {
+  console.error('userFLOW renderer stopped:', details?.reason || 'unknown', details?.exitCode ?? '');
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents === webContents) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) void mainWindow.webContents.reload();
+    }, 750);
+  }
+});
+app.on('child-process-gone', (_event, details) => {
+  console.error('userFLOW child process stopped:', details?.type || 'unknown', details?.reason || 'unknown', details?.exitCode ?? '');
 });
 
 app.on('before-quit', (event) => {

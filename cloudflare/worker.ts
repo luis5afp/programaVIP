@@ -23,7 +23,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.20';
+const APP_VERSION = '1.4.21';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -155,19 +155,31 @@ async function api(request: Request, env: Env): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const suppliedId = String(request.headers.get('X-Userflex-Request-Id') || '');
+    const requestId = /^[A-Za-z0-9._:-]{8,128}$/.test(suppliedId) ? suppliedId : crypto.randomUUID();
+    const withRequestId = (response: Response) => {
+      const headers = new Headers(response.headers);
+      headers.set('X-Userflex-Request-Id', requestId);
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    };
+
     try {
       const url = new URL(request.url);
-      if (url.pathname.startsWith('/api/')) return await api(request, env);
+      if (url.pathname.startsWith('/api/')) return withRequestId(await api(request, env));
       if (!env.ASSETS) {
-        return withSecurity(new Response('userFLEX Admin assets not configured', { status: 503 }));
+        return withRequestId(withSecurity(new Response('userFLEX Admin assets not configured', { status: 503 })));
       }
-      return withSecurity(await env.ASSETS.fetch(request));
+      return withRequestId(withSecurity(await env.ASSETS.fetch(request)));
     } catch (error) {
       if (error instanceof HttpError) {
-        return json({ ok: false, error: error.message, code: error.code }, error.status);
+        return withRequestId(json({ ok: false, error: error.message, code: error.code, requestId }, error.status));
       }
-      console.error('Unhandled userFLEX Worker error', error instanceof Error ? error.message : String(error));
-      return json({ ok: false, error: 'Error interno del servidor.', code: 'INTERNAL_ERROR' }, 500);
+      console.error('Unhandled userFLEX Worker error', requestId, error instanceof Error ? error.message : String(error));
+      return withRequestId(json({ ok: false, error: 'Error interno del servidor.', code: 'INTERNAL_ERROR', requestId }, 500));
     }
   },
 
