@@ -417,6 +417,24 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         }
       }
 
+      const normalizedTargetHost = target.hostname.replace(/^www\./i, '').toLowerCase();
+      const chatgptProfile = normalizedTargetHost === 'chatgpt.com'
+        || normalizedTargetHost.endsWith('.chatgpt.com')
+        || normalizedTargetHost === 'openai.com'
+        || normalizedTargetHost.endsWith('.openai.com');
+      if (chatgptProfile) {
+        try {
+          await probeKaizenProxyHttps(proxy, {
+            host: 'auth.openai.com',
+            port: 443,
+            path: '/',
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+          throw new Error(`El proxy del perfil puede abrir ChatGPT, pero no puede completar HTTPS con auth.openai.com. ${detail}`);
+        }
+      }
+
       verifiedPublicIp = await kaizenProxyPublicIp(proxy);
       if (!verifiedPublicIp) throw new Error('El proxy respondió, pero no se pudo verificar su IP pública.');
       if (proxy.publicIp && verifiedPublicIp !== proxy.publicIp) {
