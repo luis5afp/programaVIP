@@ -15,6 +15,8 @@ let pendingProtocolUrl = null;
 let protocolRegistered = false;
 let captureEngine = null;
 let activeCaptureToken = null;
+let captureStartState = null;
+let lastCompletedCapture = null;
 let quitAfterCleanup = false;
 let keeperTimer = null;
 let keeperRunning = false;
@@ -475,64 +477,137 @@ function sameCaptureToken(left, right) {
 
 async function startCapture(rawUrl) {
   const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'capture');
-  const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
-  const profile = bootstrap.profile;
-  const credentials = bootstrap.credentials;
-  const proxy = bootstrap.proxy || null;
 
-  if (!profile?.id || !profile?.url) {
-    throw new Error('La configuración de captura está incompleta.');
-  }
-  if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
-    throw new Error('El perfil híbrido necesita credenciales para la captura.');
-  }
-
-  if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
-
-  const result = await engine().launch({
-    profile,
-    credentials,
-    proxy,
-    onComplete: async ({ material, publicIp, diagnostics }) => {
-      const completed = await apiPost(endpoint, '/api/session-manager/complete', {
-        token,
-        publicIp,
-        material,
-      }, 90_000);
-      if (completed?.keeper_token) {
-        await saveKeeper(profile, completed.keeper_token);
-        configureKeeperStartup();
-        scheduleKeeper();
-        void connectKeeperRealtime();
-      }
-      if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
-      console.log(
-        `Session Manager KAIZEN saved profile ${profile.id} v${completed.version}: `
-        + `${diagnostics.cookieCount} cookies, ${diagnostics.indexedDbCount} IndexedDB databases.`,
-      );
-      return {
-        version: completed.version,
-        publicIp: completed.public_ip || publicIp || null,
-      };
-    },
-  });
-
+  // Mark the ticket before any network/browser work starts. The Admin can send
+  // the Save protocol almost immediately after the Capture protocol and both
+  // arrive as separate Windows protocol activations.
   activeCaptureToken = token;
-  console.log(
-    `Session Manager KAIZEN launched ${profile.name || profile.id} `
-    + `pid=${result.pid} debugPort=${result.debugPort} `
-    + `network=${proxy ? 'proxy' : 'direct'}.`,
-  );
-  return result;
+
+  const launchPromise = (async () => {
+    const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
+    const profile = bootstrap.profile;
+    const credentials = bootstrap.credentials;
+    const proxy = bootstrap.proxy || null;
+
+    if (!profile?.id || !profile?.url) {
+      throw new Error('La configuración de captura está incompleta.');
+    }
+    if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
+      throw new Error('El perfil híbrido necesita credenciales para la captura.');
+    }
+
+    if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
+
+    const result = await engine().launch({
+      profile,
+      credentials,
+      proxy,
+      onComplete: async ({ material, publicIp, diagnostics }) => {
+        const completed = await apiPost(endpoint, '/api/session-manager/complete', {
+          token,
+          publicIp,
+          material,
+        }, 90_000);
+        if (completed?.keeper_token) {
+          await saveKeeper(profile, completed.keeper_token);
+          configureKeeperStartup();
+          scheduleKeeper();
+          void connectKeeperRealtime();
+        }
+
+        const completedResult = {
+          ok: true,
+          version: completed.version,
+          publicIp: completed.public_ip || publicIp || null,
+          cookieCount: Number(diagnostics.cookieCount || 0),
+          indexedDbCount: Number(diagnostics.indexedDbCount || 0),
+          indexedDbBytes: Number(diagnostics.indexedDbBytes || 0),
+        };
+        lastCompletedCapture = {
+          token,
+          completedAt: Date.now(),
+          result: completedResult,
+        };
+        if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
+
+        console.log(
+          `Session Manager KAIZEN saved profile ${profile.id} v${completed.version}: `
+          + `${diagnostics.cookieCount} cookies, ${diagnostics.indexedDbCount} IndexedDB databases.`,
+        );
+        return {
+          version: completed.version,
+          publicIp: completedResult.publicIp,
+        };
+      },
+    });
+
+    console.log(
+      `Session Manager KAIZEN launched ${profile.name || profile.id} `
+      + `pid=${result.pid} debugPort=${result.debugPort} `
+      + `network=${proxy ? 'proxy' : 'direct'}.`,
+    );
+    return result;
+  })();
+
+  captureStartState = { token, promise: launchPromise };
+
+  try {
+    return await launchPromise;
+  } catch (error) {
+    if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
+    throw error;
+  } finally {
+    if (captureStartState?.promise === launchPromise) captureStartState = null;
+  }
+}
+
+async function waitForCaptureStart(token, timeoutMs = 25_000) {
+  const state = captureStartState;
+  if (!state || !sameCaptureToken(state.token, token)) return;
+  let timeout = null;
+  try {
+    await Promise.race([
+      state.promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Chromium todavía está iniciando. Espera unos segundos y vuelve a guardar.')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function completedCaptureFor(token) {
+  if (!lastCompletedCapture || !sameCaptureToken(lastCompletedCapture.token, token)) return null;
+  if (Date.now() - Number(lastCompletedCapture.completedAt || 0) > 15 * 60 * 1000) return null;
+  return lastCompletedCapture.result || null;
 }
 
 async function saveActiveCapture(rawUrl) {
   const { token } = assertSessionProtocolUrl(rawUrl, 'save');
-  if (!sameCaptureToken(activeCaptureToken, token)) {
-    throw new Error('Este botón Guardar sesión ya no corresponde a la captura activa. Genera una captura nueva desde el Administrador.');
+
+  // Saving from the Chromium overlay and then from the Admin should be
+  // idempotent. Return the already-created snapshot instead of opening an
+  // alarming stale-ticket error window.
+  const alreadyCompleted = completedCaptureFor(token);
+  if (alreadyCompleted) return alreadyCompleted;
+
+  if (sameCaptureToken(activeCaptureToken, token)) {
+    await waitForCaptureStart(token);
   }
+
+  const completedAfterWait = completedCaptureFor(token);
+  if (completedAfterWait) return completedAfterWait;
+
+  if (!sameCaptureToken(activeCaptureToken, token)) {
+    throw new Error('Esta captura ya no está activa. Si ya guardaste desde Chromium, vuelve al Administrador: el snapshot debe aparecer como guardado. Si no aparece, genera una captura nueva.');
+  }
+
   const result = await engine().saveActive();
-  activeCaptureToken = null;
+  if (sameCaptureToken(activeCaptureToken, token)) activeCaptureToken = null;
   console.log(
     `Session Manager KAIZEN saved active capture v${result.version || '?'}: `
     + `${result.cookieCount || 0} cookies, ${result.indexedDbCount || 0} IndexedDB databases.`,
