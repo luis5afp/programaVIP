@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.31/userFLEX-Session-Manager-0.3.31-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.32/userFLEX-Session-Manager-0.3.32-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -149,7 +149,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.31+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.32+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
@@ -209,7 +209,6 @@ export function ProfilesView() {
   const [editor, setEditor] = useState<Editor>(null);
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
   const [captureRetryReady, setCaptureRetryReady] = useState(false);
-  const [captureSaveBusy, setCaptureSaveBusy] = useState(false);
   const [captureSaveMessage, setCaptureSaveMessage] = useState<string | null>(null);
   const captureRetryInFlight = useRef(false);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
@@ -266,6 +265,43 @@ export function ProfilesView() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!captureLaunch) return;
+    let cancelled = false;
+    let checking = false;
+
+    const checkSavedSnapshot = async () => {
+      if (cancelled || checking) return;
+      checking = true;
+      try {
+        const rows = await api.profileSessions.list();
+        if (cancelled) return;
+        setSessionStates(rows);
+        const current = rows.find((item) => item.profile_id === captureLaunch.profileId);
+        if (current && current.status === 'active' && current.version > captureLaunch.baselineVersion) {
+          setCaptureSaveMessage(
+            `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
+          );
+          setSuccess('Sesión guardada correctamente. Session Keeper quedó registrado para mantenerla automáticamente.');
+          setCaptureRetryReady(false);
+          setCaptureLaunch(null);
+          await load();
+        }
+      } catch {
+        // El siguiente ciclo vuelve a consultar sin interrumpir la captura.
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkSavedSnapshot();
+    const timer = window.setInterval(() => void checkSavedSnapshot(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [captureLaunch?.profileId, captureLaunch?.baselineVersion]);
 
   useEffect(() => {
     return () => {
@@ -583,7 +619,7 @@ export function ProfilesView() {
         expiresAt: result.expires_at || null,
         baselineVersion: stateFor(profile.id)?.version || 0,
       });
-      setCaptureSaveMessage(null);
+      setCaptureSaveMessage('Esperando que completes el acceso. Cuando la sesión sea válida se guardará automáticamente.');
       setCaptureRetryReady(false);
       launchCustomProtocol(result.launch_url);
       window.setTimeout(() => setCaptureRetryReady(true), 6000);
@@ -610,7 +646,7 @@ export function ProfilesView() {
         expiresAt: result.expires_at || null,
         baselineVersion: stateFor(current.profileId)?.version || current.baselineVersion,
       } : current);
-      setCaptureSaveMessage(null);
+      setCaptureSaveMessage('Nuevo Chromium abierto. El guardado automático se activará cuando la sesión quede iniciada.');
       launchCustomProtocol(result.launch_url);
       window.setTimeout(() => setCaptureRetryReady(true), 6000);
       window.setTimeout(() => void load(), 2500);
@@ -620,54 +656,6 @@ export function ProfilesView() {
     } finally {
       captureRetryInFlight.current = false;
       setSessionAction(null);
-    }
-  }
-
-  async function saveCaptureFromAdmin() {
-    if (!captureLaunch || captureSaveBusy) return;
-    try {
-      setCaptureSaveBusy(true);
-      setError(null);
-
-      // The Chromium overlay may have already completed this same one-use
-      // capture. Check the server first so the Admin button is idempotent and
-      // does not send a stale Save protocol back to Session Manager.
-      const beforeSaveRows = await api.profileSessions.list();
-      setSessionStates(beforeSaveRows);
-      const alreadySaved = beforeSaveRows.find((item) => item.profile_id === captureLaunch.profileId);
-      if (alreadySaved && alreadySaved.status === 'active' && alreadySaved.version > captureLaunch.baselineVersion) {
-        setCaptureLaunch((value) => value ? { ...value, baselineVersion: alreadySaved.version } : value);
-        setCaptureSaveMessage(
-          `Sesión ya guardada correctamente · snapshot v${alreadySaved.version}${alreadySaved.public_ip ? ` · IP ${alreadySaved.public_ip}` : ''}.`,
-        );
-        setSuccess('Sesión guardada. Session Keeper quedó registrado para mantenerla automáticamente.');
-        return;
-      }
-
-      setCaptureSaveMessage('Solicitando a Session Manager que capture cookies y almacenamiento...');
-      launchCustomProtocol(captureLaunch.saveUrl);
-
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
-        const rows = await api.profileSessions.list();
-        setSessionStates(rows);
-        const current = rows.find((item) => item.profile_id === captureLaunch.profileId);
-        if (current && current.status === 'active' && current.version > captureLaunch.baselineVersion) {
-          setCaptureLaunch((value) => value ? { ...value, baselineVersion: current.version } : value);
-          setCaptureSaveMessage(
-            `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
-          );
-          setSuccess('Sesión guardada. Session Keeper quedó registrado para mantenerla automáticamente.');
-          return;
-        }
-      }
-
-      setCaptureSaveMessage('Session Manager recibió la orden, pero el Administrador todavía no confirmó el nuevo snapshot. Espera unos segundos y pulsa Validar.');
-    } catch (saveError: any) {
-      setError(saveError.message);
-      setCaptureSaveMessage('No se pudo confirmar el guardado de la sesión.');
-    } finally {
-      setCaptureSaveBusy(false);
     }
   }
 
@@ -1732,14 +1720,13 @@ export function ProfilesView() {
                 Si no se abre, usa el botón de reintento: generará un ticket nuevo en el servidor antes de volver a abrir la aplicación.
               </div>
             </div>
-            <button
-              className="button primary"
-              disabled={captureSaveBusy || sessionAction === captureLaunch.profileId}
-              onClick={() => void saveCaptureFromAdmin()}
-            >
-              <ShieldCheck size={14} />
-              {captureSaveBusy ? 'Guardando cookies y sesión...' : 'Guardar sesión / generar snapshot'}
-            </button>
+            <div style={{ padding: 12, border: '1px solid #c7d2fe', background: '#eef2ff', borderRadius: 10 }}>
+              <strong>Guardado automático activo</strong>
+              <div className="help" style={{ marginTop: 5 }}>
+                Cuando userFLEX detecte que la cuenta ya está iniciada, guardará el snapshot y cerrará Chromium automáticamente.
+                Si la detección automática no puede confirmarlo, usa el botón flotante “Guardar ahora” dentro de Chromium.
+              </div>
+            </div>
             {captureSaveMessage && (
               <div style={{ padding: 12, border: '1px solid #d1fae5', background: '#ecfdf5', borderRadius: 10 }}>
                 <strong>{captureSaveMessage}</strong>
@@ -1754,11 +1741,11 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.31 · userFLOW v0.3.31
+              Instalar / actualizar Session Manager v0.3.32 · userFLOW v0.3.32
             </a>
             <div className="help">
-              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, puedes guardar desde aquí o desde el panel flotante de Chromium.
-              Si una de las dos opciones ya guardó el snapshot, la otra lo detectará sin generar un error de ticket. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
+              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
+              Si no lo consigue, pulsa “Guardar ahora” en el panel flotante de Chromium. Después de un guardado correcto, Chromium se cerrará y volverás a este panel con la confirmación. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
               El enlace es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.
             </div>
           </div>
