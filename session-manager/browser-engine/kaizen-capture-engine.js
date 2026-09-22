@@ -555,6 +555,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+        if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
+        if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
+        entry.closed = true;
         try { entry.automation?.cleanup?.(); } catch {}
         void entry.browser?.disconnect?.().catch(() => null);
         void entry.control?.close().catch(() => null);
@@ -589,7 +592,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (!background) {
         entry.autoSaveTimer = setInterval(() => {
           if (active !== entry || entry.savePromise || entry.savedResult) return;
-          void inspectCaptureSession(debugPort, profile.url)
+          void inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false })
             .then((inspection) => {
               if (active !== entry || entry.savePromise || entry.savedResult) return;
               if (inspection?.authenticated === true) {
