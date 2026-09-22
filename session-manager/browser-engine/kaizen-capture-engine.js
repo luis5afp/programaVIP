@@ -453,25 +453,46 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
     const saveCapture = async () => {
       if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
-      const captured = await capturePortableSession({
-        debugPort,
-        profile,
-        networkMode: proxy ? 'proxy' : 'direct',
-      });
-      const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
-      const completed = await onComplete({
-        material: captured.material,
-        publicIp,
-        diagnostics: captured.diagnostics,
-      });
-      return {
-        ok: true,
-        version: completed.version,
-        publicIp: completed.publicIp || publicIp || null,
-        cookieCount: captured.diagnostics.cookieCount,
-        indexedDbCount: captured.diagnostics.indexedDbCount,
-        indexedDbBytes: captured.diagnostics.indexedDbBytes,
-      };
+      if (entry.savedResult) return entry.savedResult;
+      if (entry.savePromise) return entry.savePromise;
+
+      entry.savePromise = (async () => {
+        const captured = await capturePortableSession({
+          debugPort,
+          profile,
+          networkMode: proxy ? 'proxy' : 'direct',
+        });
+        const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
+        const completed = await onComplete({
+          material: captured.material,
+          publicIp,
+          diagnostics: captured.diagnostics,
+        });
+        const result = {
+          ok: true,
+          version: completed.version,
+          publicIp: completed.publicIp || publicIp || null,
+          cookieCount: captured.diagnostics.cookieCount,
+          indexedDbCount: captured.diagnostics.indexedDbCount,
+          indexedDbBytes: captured.diagnostics.indexedDbBytes,
+        };
+        entry.savedResult = result;
+        if (entry.autoSaveTimer) {
+          clearInterval(entry.autoSaveTimer);
+          entry.autoSaveTimer = null;
+        }
+        entry.autoSaveCloseTimer = setTimeout(() => {
+          if (active === entry) void close('capture_saved');
+        }, 450);
+        entry.autoSaveCloseTimer.unref?.();
+        return result;
+      })();
+
+      try {
+        return await entry.savePromise;
+      } finally {
+        entry.savePromise = null;
+      }
     };
 
     const control = await startControlServer({
@@ -512,6 +533,11 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       browser: null,
       automation: null,
       saveCapture,
+      savePromise: null,
+      savedResult: null,
+      autoSaveTimer: null,
+      autoSaveCloseTimer: null,
+      stableAuthChecks: 0,
       devtoolsTimer: null,
       closed: false,
     };
