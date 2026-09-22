@@ -13,17 +13,25 @@ assert.doesNotMatch(admin, /saveCaptureFromAdmin/, 'Admin must not send a second
 assert.match(admin, /Guardado automático activo/);
 assert.match(admin, /window\.setInterval\(\(\) => void checkSavedSnapshot\(\), 1200\)/);
 assert.match(admin, /setCaptureLaunch\(null\)/);
-assert.match(admin, /Sesión guardada correctamente\. Session Keeper quedó registrado/);
+assert.match(admin, /Sesión guardada y verificada correctamente/);
+assert.match(admin, /current\.validated_at/);
 
 assert.match(api, /save_url: string/, 'legacy save deep link stays compatible');
 assert.match(worker, /userflex-session:\/\/save\?endpoint=/, 'server keeps legacy save deep link');
 assert.match(manager, /url\.hostname === 'save'/, 'Session Manager keeps legacy save handling');
 assert.match(manager, /completedCaptureFor\(token\)/, 'legacy repeated save stays idempotent');
+assert.match(manager, /authenticated: authenticated === true/, 'Session Manager must report confirmed authentication to the backend');
+assert.match(manager, /queueKeeperCheck\(profile\.id, 'capture-complete'\)/, 'new captures must trigger the first Keeper check promptly');
+assert.match(worker, /validatedAt: authenticated \? now : null/, 'backend must persist a validation timestamp for confirmed captures');
+assert.match(worker, /validated: authenticated/, 'capture completion must report whether the new snapshot is already verified');
 
 assert.match(engine, /entry\.savedResult/);
 assert.match(engine, /entry\.savePromise/);
 assert.match(engine, /close\('capture_saved'\)/, 'Chromium must close after successful save');
 assert.match(engine, /entry\.stableAuthChecks < 2/, 'automatic save requires stable authentication twice');
+assert.match(engine, /confirmAuthenticatedSession/, 'manual fallback save must attempt authentication verification');
+assert.match(engine, /saveCapture\(\{ authenticated: true \}\)/, 'autosave must pass its stable authentication proof into the save pipeline');
+assert.match(engine, /authenticated,\s*\}\);/, 'capture completion must include the authentication result');
 assert.match(engine, /inspectCaptureSession\(debugPort, profile\.url, \{ navigateIfMissing: false \}\)/);
 assert.match(engine, /Guardar ahora/, 'Chromium must expose one fallback save button');
 
