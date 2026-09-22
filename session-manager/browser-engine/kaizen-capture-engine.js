@@ -156,6 +156,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
   const origin=String(location.origin||'').toLowerCase();
   const allowedOrigins=Array.isArray(CONFIG.allowedOrigins)?CONFIG.allowedOrigins.map((value)=>String(value||'').toLowerCase()):[];
   const googleAuthAllowed=allowedOrigins.includes('https://accounts.google.com')&&location.protocol==='https:'&&(host==='accounts.google.com'||/^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(host));
+  const openAIAuthFlow=host==='auth.openai.com'||(host==='chatgpt.com'&&/^\/auth(?:\/|$)/i.test(location.pathname||''));
   if(!(allowedOrigins.includes(origin)||googleAuthAllowed||host===root||host.endsWith('.'+root))) return;
 
   const stop=(event)=>{event.preventDefault();event.stopPropagation();};
@@ -200,6 +201,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     if(pass&&!pass.value) setNativeValue(pass,credentials.password||'');
   };
   const install=()=>{
+    if(openAIAuthFlow) return;
     if(document.getElementById('userflex-session-overlay')) return;
     const wrap=document.createElement('div');
     wrap.id='userflex-session-overlay';
@@ -413,6 +415,30 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
             throw new Error(`El proxy del perfil no puede completar HTTPS con ${authTarget.host}. ${detail}`);
+          }
+        }
+      }
+
+      const normalizedTargetHost = String(target.hostname || '').toLowerCase().replace(/^www\./, '');
+      const openAIProfile = normalizedTargetHost === 'chatgpt.com'
+        || normalizedTargetHost.endsWith('.chatgpt.com')
+        || normalizedTargetHost === 'openai.com'
+        || normalizedTargetHost.endsWith('.openai.com');
+      if (openAIProfile) {
+        const openAIAuthTargets = [
+          { host: 'auth.openai.com', path: '/log-in' },
+          { host: 'openai.com', path: '/' },
+        ];
+        for (const authTarget of openAIAuthTargets) {
+          try {
+            await probeKaizenProxyHttps(proxy, {
+              host: authTarget.host,
+              port: 443,
+              path: authTarget.path,
+            });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+            throw new Error(`El proxy del perfil no puede completar la autenticación de OpenAI con ${authTarget.host}. ${detail}`);
           }
         }
       }
