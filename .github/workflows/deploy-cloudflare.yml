@@ -44,6 +44,20 @@ jobs:
             fi
           done
 
+      - name: Validate Supabase service access
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --output /tmp/supabase-service-check.json --write-out '%{http_code}' \
+            --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            --header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            'https://lbvxnbbglkjnwphaomyx.supabase.co/rest/v1/vsixteen_users?select=id&limit=1')"
+          echo "Supabase service access HTTP $code"
+          if [ "$code" != "200" ]; then
+            cat /tmp/supabase-service-check.json
+            exit 1
+          fi
+
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=high
@@ -96,9 +110,11 @@ jobs:
           ready=0
           for attempt in $(seq 1 30); do
             health="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache' "$BASE/api/health" || true)"
+            echo "health=$health"
             if HEALTH="$health" EXPECTED_USERFLOW="$EXPECTED_USERFLOW" MIN_SESSION_MANAGER="$MIN_SESSION_MANAGER" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
           if (value.ok !== true) process.exit(1);
+          if (value.databaseReachable !== true) process.exit(1);
           if (value.minimumClientVersion !== process.env.EXPECTED_USERFLOW) process.exit(1);
           if (value.minimumSessionManagerVersion !== process.env.MIN_SESSION_MANAGER) process.exit(1);
           NODE

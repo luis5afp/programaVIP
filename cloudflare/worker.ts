@@ -18,12 +18,13 @@ import {
   Env,
   HttpError,
   json,
+  sb,
   requireSameOriginWrite,
   securityHeaders,
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.28';
+const APP_VERSION = '1.4.29';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -46,11 +47,21 @@ async function api(request: Request, env: Env): Promise<Response> {
   }
 
   if (path === '/api/health' && method === 'GET') {
+    let databaseReachable = false;
+    let databaseError: string | null = null;
+    try {
+      const probe = await sb(env, 'vsixteen_users?select=id&limit=1');
+      databaseReachable = Array.isArray(probe);
+    } catch (error) {
+      databaseError = error instanceof HttpError ? error.code : 'DATABASE_PROBE_FAILED';
+    }
     return json({
       ok: true,
       service: 'userFLEX Admin API',
       version: APP_VERSION,
       supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+      databaseReachable,
+      databaseError,
       proxyEncryptionConfigured: Boolean(env.USERFLEX_PROXY_MASTER_KEY),
       minimumClientVersion: MIN_USERFLOW_VERSION,
       minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
