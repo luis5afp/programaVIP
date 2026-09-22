@@ -942,7 +942,11 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
       || ((target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))
         && (path.startsWith('/login') || path.startsWith('/signup')));
 
-    const authenticated = !loginLikeUrl
+    const targetOriginMatched = current.origin === target.origin;
+    const authenticated = targetOriginMatched
+      && state.meaningfulContent === true
+      && state.readyState !== 'loading'
+      && !loginLikeUrl
       && state.usernameFieldVisible !== true
       && state.passwordFieldVisible !== true
       && state.loginActionVisible !== true;
@@ -950,6 +954,7 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
     return {
       ...state,
       loginLikeUrl,
+      targetOriginMatched,
       authenticated,
     };
   } finally {
