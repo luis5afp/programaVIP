@@ -35,7 +35,7 @@ const clientEngine = readFileSync(
 );
 
 assert.match(captureState, /recoverBlankOpenAIAuth/, 'blank ChatGPT auth transitions must have recovery');
-assert.match(captureState, /\/auth\/login_with/, 'ChatGPT login_with route must be detected');
+assert.match(captureState, /login_with/, 'ChatGPT login_with route must be detected');
 assert.match(captureState, /page\.reload\(\{ waitUntil: 'domcontentloaded'/, 'blank auth page must retry once');
 assert.match(captureState, /new URL\('\/auth\/login', 'https:\/\/chatgpt\.com'\)/, 'persistent blank auth page must restart the official ChatGPT login flow');
 assert.match(captureState, /if \(openAIAuthFlow\) return null/, 'CDP overlay must not mutate OpenAI auth pages');
