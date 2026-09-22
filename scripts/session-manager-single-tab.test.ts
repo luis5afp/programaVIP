@@ -14,8 +14,9 @@ const relay = readFileSync(
   'utf8',
 );
 
-assert.match(engine, /args\.push\('about:blank'\)/, 'capture browser must start with one blank tab');
-assert.doesNotMatch(engine, /args\.push\(profileUrl\)/, 'capture browser must not launch a second URL tab');
+assert.match(engine, /args\.push\(initialUrl \|\| 'about:blank'\)/, 'capture browser must start with exactly one explicit initial tab');
+assert.match(engine, /initialUrl: openAiCapture \? profile\.url : 'about:blank'/, 'OpenAI capture must start natively on the profile URL without creating a second tab');
+assert.doesNotMatch(engine, /args\.push\(profileUrl\)/, 'capture browser must not append a second profile URL tab');
 assert.match(engine, /--disable-session-crashed-bubble/, 'crash restore bubble must be disabled');
 assert.match(engine, /profile\.exit_type = 'Normal'/, 'profile exit state must be repaired before launch');
 assert.match(captureState, /await extra\.close\(\)/, 'extra visible tabs must be closed after navigation');
