@@ -204,7 +204,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const wrap=document.createElement('div');
     wrap.id='userflex-session-overlay';
     wrap.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:14px;padding:12px 14px;box-shadow:0 12px 35px rgba(0,0,0,.35);font:13px system-ui;max-width:340px';
-    wrap.innerHTML='<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura KAIZEN</div><div id="userflex-session-message" style="opacity:.82;margin-bottom:10px">Completa el acceso. Cuando la cuenta esté abierta, guarda el perfil completo.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar sesión</button>';
+    wrap.innerHTML='<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura KAIZEN</div><div id="userflex-session-message" style="opacity:.82;margin-bottom:10px">Guardado automático activo. Si Chromium no se cierra después de iniciar sesión, usa este botón.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar ahora</button>';
     (document.documentElement||document.body)?.appendChild(wrap);
     const button=wrap.querySelector('#userflex-session-save');
     const message=wrap.querySelector('#userflex-session-message');
@@ -216,7 +216,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         const idb=Number(result.indexedDbCount||0), cookies=Number(result.cookieCount||0);
         message.textContent='Perfil guardado: '+cookies+' cookies, '+idb+' bases IndexedDB.'+(result.publicIp?' IP: '+result.publicIp:'');
       }else{
-        button.disabled=false; button.textContent='Guardar sesión'; message.textContent=result.error||'No se pudo guardar la sesión.';
+        button.disabled=false; button.textContent='Guardar ahora'; message.textContent=result.error||'No se pudo guardar automáticamente. Puedes volver a intentarlo.';
       }
     });
   };
@@ -344,6 +344,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (!entry) return;
     active = null;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
+    if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
+    entry.closed = true;
     try { entry.automation?.cleanup?.(); } catch {}
     try { await entry.browser?.disconnect?.(); } catch {}
     try { await entry.control?.close(); } catch {}
@@ -451,25 +454,46 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
     const saveCapture = async () => {
       if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
-      const captured = await capturePortableSession({
-        debugPort,
-        profile,
-        networkMode: proxy ? 'proxy' : 'direct',
-      });
-      const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
-      const completed = await onComplete({
-        material: captured.material,
-        publicIp,
-        diagnostics: captured.diagnostics,
-      });
-      return {
-        ok: true,
-        version: completed.version,
-        publicIp: completed.publicIp || publicIp || null,
-        cookieCount: captured.diagnostics.cookieCount,
-        indexedDbCount: captured.diagnostics.indexedDbCount,
-        indexedDbBytes: captured.diagnostics.indexedDbBytes,
-      };
+      if (entry.savedResult) return entry.savedResult;
+      if (entry.savePromise) return entry.savePromise;
+
+      entry.savePromise = (async () => {
+        const captured = await capturePortableSession({
+          debugPort,
+          profile,
+          networkMode: proxy ? 'proxy' : 'direct',
+        });
+        const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
+        const completed = await onComplete({
+          material: captured.material,
+          publicIp,
+          diagnostics: captured.diagnostics,
+        });
+        const result = {
+          ok: true,
+          version: completed.version,
+          publicIp: completed.publicIp || publicIp || null,
+          cookieCount: captured.diagnostics.cookieCount,
+          indexedDbCount: captured.diagnostics.indexedDbCount,
+          indexedDbBytes: captured.diagnostics.indexedDbBytes,
+        };
+        entry.savedResult = result;
+        if (entry.autoSaveTimer) {
+          clearInterval(entry.autoSaveTimer);
+          entry.autoSaveTimer = null;
+        }
+        entry.autoSaveCloseTimer = setTimeout(() => {
+          if (active === entry) void close('capture_saved');
+        }, 450);
+        entry.autoSaveCloseTimer.unref?.();
+        return result;
+      })();
+
+      try {
+        return await entry.savePromise;
+      } finally {
+        entry.savePromise = null;
+      }
     };
 
     const control = await startControlServer({
@@ -510,6 +534,11 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       browser: null,
       automation: null,
       saveCapture,
+      savePromise: null,
+      savedResult: null,
+      autoSaveTimer: null,
+      autoSaveCloseTimer: null,
+      stableAuthChecks: 0,
       devtoolsTimer: null,
       closed: false,
     };
@@ -527,6 +556,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+        if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
+        if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
+        entry.closed = true;
         try { entry.automation?.cleanup?.(); } catch {}
         void entry.browser?.disconnect?.().catch(() => null);
         void entry.control?.close().catch(() => null);
@@ -557,6 +589,28 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       await navigateCaptureHome(debugPort, profile.url);
       entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
       entry.devtoolsTimer.unref?.();
+
+      if (!background) {
+        entry.autoSaveTimer = setInterval(() => {
+          if (active !== entry || entry.savePromise || entry.savedResult) return;
+          void inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false })
+            .then((inspection) => {
+              if (active !== entry || entry.savePromise || entry.savedResult) return;
+              if (inspection?.authenticated === true) entry.stableAuthChecks += 1;
+              else entry.stableAuthChecks = 0;
+              if (entry.stableAuthChecks < 2) return;
+              log.log?.(`Session Manager KAIZEN detected authenticated profile ${profile.name || profile.id}; saving automatically.`);
+              void saveCapture().catch((error) => {
+                entry.stableAuthChecks = 0;
+                log.warn?.('Session Manager automatic save failed:', error?.message || error);
+              });
+            })
+            .catch(() => {
+              if (active === entry) entry.stableAuthChecks = 0;
+            });
+        }, 2_000);
+        entry.autoSaveTimer.unref?.();
+      }
 
       return {
         ok: true,
