@@ -387,45 +387,10 @@ export async function installCaptureAutomation({
       }
     };
 
-    const actionLabel = (element) => String(
-      element?.textContent
-      || element?.value
-      || element?.getAttribute?.('aria-label')
-      || element?.getAttribute?.('title')
-      || '',
-    ).replace(/\s+/g, ' ').trim().toLowerCase();
-
-    const usernameContinueAction = (usernameInput) => {
-      const root = usernameInput?.form || document;
-      const actions = Array.from(root.querySelectorAll('button,input[type="submit"],[role="button"]'))
-        .filter((element) => visible(element) && !element.disabled);
-      return actions.find((element) => /^(continue|next|continuar|siguiente)$/.test(actionLabel(element)))
-        || actions.find((element) => element instanceof HTMLInputElement && element.type === 'submit')
-        || null;
-    };
-
-    const maybeAdvanceOpenAiUsername = (values) => {
-      if (!openAiLoginPage || !values?.usernameInput || values.passwordInput || !username) return false;
-      const currentValue = String(values.usernameInput.value || '').trim();
-      if (!currentValue || currentValue.toLowerCase() !== String(username).trim().toLowerCase()) return false;
-      const key = location.href + '|' + currentValue.toLowerCase();
-      if (globalThis.__userflexOpenAiUsernameAdvance === key) return false;
-      const action = usernameContinueAction(values.usernameInput);
-      if (!action) return false;
-      globalThis.__userflexOpenAiUsernameAdvance = key;
-      setTimeout(() => {
-        try {
-          if (document.contains(action) && visible(action) && !action.disabled) action.click();
-        } catch {}
-      }, 250);
-      return true;
-    };
-
     const fillAvailable = () => {
       const values = candidates();
       if (values.usernameInput && !values.usernameInput.value && username) setNativeValue(values.usernameInput, username);
       if (values.passwordInput && !values.passwordInput.value && password) setNativeValue(values.passwordInput, password);
-      maybeAdvanceOpenAiUsername(values);
       return values;
     };
 
@@ -568,7 +533,18 @@ export async function installCaptureAutomation({
     for (const delayMs of [80, 200, 500, 1000, 2000, 4000, 8000]) setTimeout(refresh, delayMs);
   };
 
-  const chatgptRecoveryPages = new WeakSet();
+  const chatgptRecoveryState = new WeakMap();
+  const chatgptAdvanceState = new WeakMap();
+
+  const openAiAuthPage = (rawUrl) => {
+    try {
+      const value = new URL(String(rawUrl || ''));
+      return (value.hostname === 'chatgpt.com' && value.pathname.startsWith('/auth/'))
+        || value.hostname === 'auth.openai.com';
+    } catch {
+      return false;
+    }
+  };
 
   const pageLooksLikeBlankChatgptAuth = async (page) => {
     try {
@@ -602,31 +578,149 @@ export async function installCaptureAutomation({
   };
 
   const recoverBlankChatgptAuth = async (page) => {
-    if (!page || chatgptRecoveryPages.has(page)) return;
+    if (!page) return;
     let current = null;
     try { current = new URL(page.url()); } catch { return; }
     if (current.hostname !== 'chatgpt.com' || current.pathname !== '/auth/login_with') return;
 
-    chatgptRecoveryPages.add(page);
-    await delay(6_000);
+    const previous = chatgptRecoveryState.get(page) || { href: '', attempts: 0, lastAttemptAt: 0 };
+    const sameHref = previous.href === current.href;
+    if (sameHref && previous.attempts >= 2) return;
+    if (Date.now() - Number(previous.lastAttemptAt || 0) < 2_500) return;
+
+    await delay(2_500);
     try {
       const afterWait = new URL(page.url());
       if (afterWait.hostname !== 'chatgpt.com' || afterWait.pathname !== '/auth/login_with') return;
+      current = afterWait;
     } catch { return; }
     if (!await pageLooksLikeBlankChatgptAuth(page)) return;
 
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
-    await delay(5_000);
-    try {
-      const afterReload = new URL(page.url());
-      if (afterReload.hostname !== 'chatgpt.com' || afterReload.pathname !== '/auth/login_with') return;
-    } catch { return; }
-    if (!await pageLooksLikeBlankChatgptAuth(page)) return;
+    const attempts = sameHref ? previous.attempts + 1 : 1;
+    chatgptRecoveryState.set(page, {
+      href: current.href,
+      attempts,
+      lastAttemptAt: Date.now(),
+    });
 
-    await page.goto('https://chatgpt.com/auth/login?callback_path=%2F', {
+    if (attempts === 1) {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+      return;
+    }
+
+    // Keep the username hint when falling back to the stable ChatGPT login
+    // entry point. The native advance helper below will press Continue again.
+    const loginHint = current.searchParams.get('login_hint') || String(payload.username || '').trim();
+    const fallback = new URL('https://chatgpt.com/auth/login');
+    fallback.searchParams.set('callback_path', current.searchParams.get('callback_path') || '/');
+    if (loginHint) fallback.searchParams.set('login_hint', loginHint);
+    await page.goto(fallback.toString(), {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
     }).catch(() => null);
+  };
+
+  const nativeAdvanceOpenAiUsername = async (page) => {
+    if (!page || !payload.username || !openAiAuthPage(page.url())) return false;
+
+    const href = page.url();
+    const previous = chatgptAdvanceState.get(page) || { key: '', attempts: 0, lastAttemptAt: 0 };
+    const key = href + '|' + String(payload.username).trim().toLowerCase();
+    if (previous.key === key && previous.attempts >= 3) return false;
+    if (previous.key === key && Date.now() - Number(previous.lastAttemptAt || 0) < 1_500) return false;
+
+    let actionHandle = null;
+    try {
+      actionHandle = await page.evaluateHandle((expectedUsername) => {
+        const visible = (element) => {
+          try {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && Number(style.opacity || 1) !== 0
+              && rect.width > 0
+              && rect.height > 0;
+          } catch {
+            return false;
+          }
+        };
+        const fieldKind = (element) => {
+          if (!(element instanceof HTMLInputElement)) return null;
+          const type = String(element.type || '').toLowerCase();
+          const hint = [
+            type,
+            element.name,
+            element.id,
+            element.autocomplete,
+            element.placeholder,
+            element.getAttribute('aria-label') || '',
+          ].join(' ').toLowerCase();
+          if (type === 'password' || /password|passwd|passcode|contrase/.test(hint)) return 'password';
+          if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
+          return null;
+        };
+
+        const inputs = Array.from(document.querySelectorAll('input'))
+          .filter((element) => visible(element) && !element.disabled && !element.readOnly);
+        const usernameInput = inputs.find((element) => fieldKind(element) === 'username') || null;
+        const passwordInput = inputs.find((element) => fieldKind(element) === 'password') || null;
+        if (!usernameInput || passwordInput) return null;
+        const currentValue = String(usernameInput.value || '').trim().toLowerCase();
+        if (!currentValue || currentValue !== String(expectedUsername || '').trim().toLowerCase()) return null;
+
+        const label = (element) => String(
+          element?.textContent
+          || element?.value
+          || element?.getAttribute?.('aria-label')
+          || element?.getAttribute?.('title')
+          || '',
+        ).replace(/\s+/g, ' ').trim().toLowerCase();
+        const root = usernameInput.form || document;
+        const actions = Array.from(root.querySelectorAll('button,input[type="submit"],[role="button"]'))
+          .filter((element) => visible(element) && !element.disabled);
+        return actions.find((element) => /^(continue|next|continuar|siguiente)$/.test(label(element)))
+          || actions.find((element) => element instanceof HTMLInputElement && element.type === 'submit')
+          || null;
+      }, payload.username);
+
+      const action = actionHandle?.asElement?.();
+      if (!action) return false;
+
+      const attempts = previous.key === key ? previous.attempts + 1 : 1;
+      chatgptAdvanceState.set(page, { key, attempts, lastAttemptAt: Date.now() });
+
+      await action.click({ delay: 80 }).catch(async () => {
+        await page.keyboard.press('Enter').catch(() => null);
+      });
+
+      await page.waitForFunction(
+        (startHref) => {
+          if (location.href !== startHref) return true;
+          const inputs = Array.from(document.querySelectorAll('input'));
+          return inputs.some((element) => {
+            const type = String(element.type || '').toLowerCase();
+            const hint = [
+              type,
+              element.name,
+              element.id,
+              element.autocomplete,
+              element.placeholder,
+              element.getAttribute('aria-label') || '',
+            ].join(' ').toLowerCase();
+            return type === 'password' || /password|passwd|passcode|contrase/.test(hint);
+          });
+        },
+        { timeout: 12_000 },
+        href,
+      ).catch(() => null);
+
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await actionHandle?.dispose?.().catch(() => null);
+    }
   };
 
   const prepared = new WeakSet();
@@ -647,7 +741,11 @@ export async function installCaptureAutomation({
       if (credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
         await page.evaluate(bootstrap, payload);
       }
-      void recoverBlankChatgptAuth(page);
+      if (openAiAuthPage(page.url())) {
+        void nativeAdvanceOpenAiUsername(page).finally(() => recoverBlankChatgptAuth(page));
+      } else {
+        void recoverBlankChatgptAuth(page);
+      }
     } catch {}
   };
 
