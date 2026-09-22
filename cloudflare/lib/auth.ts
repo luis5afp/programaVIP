@@ -181,8 +181,32 @@ export async function requireAdmin(request: Request, env: Env): Promise<AdminIde
 }
 
 async function directAdminLogin(request: Request, env: Env, user: any, password: string, guard: string) {
-  if (user.enabled !== true) throw new HttpError(403, 'ACCOUNT_DISABLED', 'La cuenta está deshabilitada.');
-  if (!(await verifyAdminPassword(env, user, password))) throw new HttpError(401, 'INVALID_CREDENTIALS');
+  if (user.enabled !== true) {
+    await audit(env, request, 'system', user.id, 'admin.login_failed', 'admin_user', user.id, { reason: 'ACCOUNT_DISABLED' }).catch(() => null);
+    throw new HttpError(403, 'ACCOUNT_DISABLED', 'La cuenta está deshabilitada.');
+  }
+
+  const verified = await verifyAdminPassword(env, user, password);
+  if (!verified) {
+    await audit(env, request, 'system', user.id, 'admin.login_failed', 'admin_user', user.id, {
+      reason: 'INVALID_CREDENTIALS',
+      hash_format: typeof user?.password_hash === 'string' && user.password_hash.startsWith('scrypt$') ? 'legacy_scrypt' : 'current',
+    }).catch(() => null);
+    throw new HttpError(401, 'INVALID_CREDENTIALS', 'Usuario o contraseña incorrectos.');
+  }
+
+  // Transparently migrate the original legacy scrypt owner credential to
+  // bcrypt after a successful login. The plaintext password exists only for
+  // this request and is never stored or logged.
+  if (typeof user?.password_hash === 'string' && user.password_hash.startsWith('scrypt$')) {
+    await sb(env, 'rpc/userflex_set_admin_password', {
+      method: 'POST',
+      body: JSON.stringify({ p_user_id: user.id, p_password: password }),
+    }).catch((error) => {
+      console.error('Legacy admin password upgrade failed', error instanceof Error ? error.message : String(error));
+    });
+  }
+
   const profile = await ensureAdminProfile(env, user);
   if (!profile) throw new HttpError(403, 'ADMIN_ACCESS_REVOKED', 'Esta cuenta no tiene acceso al panel userFLEX.');
   await resetGuard(env, guard);

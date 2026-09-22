@@ -53,12 +53,23 @@ export function withSecurity(response: Response): Response {
 export function requireSameOriginWrite(request: Request): void {
   const method = request.method.toUpperCase();
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return;
+
   const expected = new URL(request.url).origin;
   const origin = request.headers.get('origin');
-  if (!origin || origin !== expected) {
-    throw new HttpError(403, 'ORIGIN_REJECTED', 'La solicitud no proviene del panel userFLEX.');
+  const fetchSite = String(request.headers.get('sec-fetch-site') || '').toLowerCase();
+
+  // Normal browsers send Origin for state-changing fetches. Some privacy
+  // configurations (notably Brave shields/extensions) can omit Origin on a
+  // legitimate same-origin request while still preserving Sec-Fetch-Site.
+  // Accept that exact browser case, but never accept cross-site traffic.
+  if (origin) {
+    if (origin !== expected) {
+      throw new HttpError(403, 'ORIGIN_REJECTED', 'La solicitud no proviene del panel userFLEX.');
+    }
+  } else if (fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    throw new HttpError(403, 'ORIGIN_REJECTED', 'El navegador no pudo confirmar el origen seguro de la solicitud.');
   }
-  const fetchSite = request.headers.get('sec-fetch-site');
+
   if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
     throw new HttpError(403, 'ORIGIN_REJECTED', 'La solicitud no proviene del panel userFLEX.');
   }

@@ -25,6 +25,7 @@ import type {
 export class ApiError extends Error {
   status: number;
   code?: string;
+  requestId?: string;
 
   constructor(message: string, status: number, code?: string) {
     super(message);
@@ -98,7 +99,7 @@ async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
           response.status,
           payload?.code,
         );
-        (error as ApiError & { requestId?: string }).requestId =
+        error.requestId =
           response.headers.get('X-Userflex-Request-Id') || operationId;
         throw error;
       }
@@ -117,7 +118,7 @@ async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
         0,
         timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
       );
-      (failure as ApiError & { requestId?: string }).requestId = operationId;
+      failure.requestId = operationId;
       throw failure;
     } finally {
       window.clearTimeout(timer);
