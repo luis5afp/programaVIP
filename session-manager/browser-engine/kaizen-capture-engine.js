@@ -586,6 +586,38 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
       entry.devtoolsTimer.unref?.();
 
+      if (!background) {
+        entry.autoSaveTimer = setInterval(() => {
+          if (active !== entry || entry.savePromise || entry.savedResult) return;
+          void inspectCaptureSession(debugPort, profile.url)
+            .then((inspection) => {
+              if (active !== entry || entry.savePromise || entry.savedResult) return;
+              if (inspection?.authenticated === true) {
+                entry.stableAuthChecks += 1;
+              } else {
+                entry.stableAuthChecks = 0;
+              }
+              if (entry.stableAuthChecks < 2) return;
+              clearInterval(entry.autoSaveTimer);
+              entry.autoSaveTimer = null;
+              log.log?.(`Session Manager KAIZEN detected authenticated profile ${profile.name || profile.id}; saving automatically.`);
+              void saveCapture().catch((error) => {
+                entry.stableAuthChecks = 0;
+                log.warn?.('Session Manager automatic save failed:', error?.message || error);
+                if (active === entry && !entry.savedResult && !entry.autoSaveTimer) {
+                  entry.autoSaveTimer = setInterval(() => {}, 2_000);
+                  clearInterval(entry.autoSaveTimer);
+                  entry.autoSaveTimer = null;
+                }
+              });
+            })
+            .catch(() => {
+              if (active === entry) entry.stableAuthChecks = 0;
+            });
+        }, 2_000);
+        entry.autoSaveTimer.unref?.();
+      }
+
       return {
         ok: true,
         external: true,
