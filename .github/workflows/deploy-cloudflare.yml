@@ -44,6 +44,35 @@ jobs:
             fi
           done
 
+      - name: Reclaim obsolete updater storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(node - <<'NODE'
+          const versions = ['0.3.5','0.3.6','0.3.7','0.3.8','0.3.9'];
+          const prefixes = [];
+          for (const version of versions) {
+            prefixes.push(`versions/${version}/manifest.json`);
+            for (let i = 0; i <= 10; i += 1) {
+              prefixes.push(`versions/${version}/part-${String(i).padStart(3, '0')}.bin`);
+            }
+          }
+          process.stdout.write(JSON.stringify({ prefixes }));
+          NODE
+          )"
+          code="$(curl --silent --output /tmp/storage-cleanup.json --write-out '%{http_code}' \
+            --request DELETE \
+            --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            --header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            --header 'Content-Type: application/json' \
+            --data "$payload" \
+            'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-client-releases')"
+          echo "Supabase updater cleanup HTTP $code"
+          cat /tmp/storage-cleanup.json
+          if [ "$code" != "200" ]; then
+            exit 1
+          fi
+
       - name: Validate Supabase service access
         shell: bash
         run: |
