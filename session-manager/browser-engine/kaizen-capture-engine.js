@@ -344,6 +344,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (!entry) return;
     active = null;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
+    if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
     try { entry.automation?.cleanup?.(); } catch {}
     try { await entry.browser?.disconnect?.(); } catch {}
     try { await entry.control?.close(); } catch {}
