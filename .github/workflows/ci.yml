@@ -27,6 +27,8 @@ jobs:
         run: node --experimental-strip-types scripts/reliability-hardening.test.ts
       - name: Test independent desktop versioning
         run: node --experimental-strip-types scripts/independent-desktop-versioning.test.ts
+      - name: Test Cloudflare R2 updater migration
+        run: node --experimental-strip-types scripts/r2-updater-migration.test.ts
       - name: Test password security
         run: node --experimental-strip-types scripts/password-security.test.ts
       - name: Test Admin login compatibility

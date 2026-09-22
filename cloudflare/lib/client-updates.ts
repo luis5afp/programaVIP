@@ -1,60 +1,16 @@
-import { Env, HttpError } from './core';
+import { Env, HttpError, type R2BucketLike } from './core';
 
-const RELEASE_BUCKET = 'userflex-client-releases';
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const PART_RE = /^part-\d{3}\.bin$/;
 const MAX_CHUNK_BYTES = 25 * 1024 * 1024;
-const UPSTREAM_TIMEOUT_MS = 10_000;
-const UPSTREAM_ATTEMPTS = 3;
 const LATEST_MEMORY_TTL_MS = 30_000;
+const KEEP_RELEASE_VERSIONS = 3;
 
 let latestMemoryCache: { body: Uint8Array; contentType: string; expiresAt: number } | null = null;
 
-function storageUrl(env: Env, objectPath: string): string {
-  if (!env.SUPABASE_URL) throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE');
-  return `${env.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${RELEASE_BUCKET}/${objectPath}`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchUpstreamWithRetry(env: Env, objectPath: string): Promise<Response> {
-  let lastStatus = 0;
-  let lastError: unknown = null;
-
-  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
-    try {
-      const response = await fetch(storageUrl(env, objectPath), {
-        method: 'GET',
-        headers: { Accept: '*/*', 'Cache-Control': 'no-cache' },
-        signal: controller.signal,
-      });
-      lastStatus = response.status;
-      if (response.ok && response.body) return response;
-      if (response.status === 404) {
-        throw new HttpError(404, 'UPDATE_OBJECT_UNAVAILABLE');
-      }
-      lastError = new Error(`UPDATE_UPSTREAM_HTTP_${response.status}`);
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      lastError = error;
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (attempt < UPSTREAM_ATTEMPTS) await sleep(80 * attempt);
-  }
-
-  console.error(
-    'Updater upstream failed',
-    objectPath,
-    lastStatus || 'network',
-    lastError instanceof Error ? lastError.message : String(lastError || ''),
-  );
-  throw new HttpError(502, 'UPDATE_OBJECT_UNAVAILABLE');
+function releaseBucket(env: Env): R2BucketLike {
+  if (!env.CLIENT_RELEASES) throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE', 'Cloudflare R2 no está configurado.');
+  return env.CLIENT_RELEASES;
 }
 
 function responseHeaders(contentType: string, cacheControl: string, length: number, source: string) {
@@ -124,13 +80,12 @@ async function cachePut(request: Request, response: Response) {
     if (!cache?.put) return;
     const headers = new Headers(response.headers);
     headers.set('Cache-Control', 'public, max-age=30');
-    const cached = new Response(response.body, {
+    await cache.put(latestCacheKey(request), new Response(response.body, {
       status: response.status,
       headers,
-    });
-    await cache.put(latestCacheKey(request), cached);
+    }));
   } catch {
-    // Cache API is an optimization only. Updater delivery must keep working.
+    // Cache API is an optimization only.
   }
 }
 
@@ -143,7 +98,7 @@ async function latestManifest(request: Request, env: Env): Promise<Response> {
         latestMemoryCache.contentType,
         'no-store, max-age=0',
         latestMemoryCache.body.byteLength,
-        'memory-cache',
+        'r2-memory-cache',
       ),
     });
   }
@@ -159,59 +114,88 @@ async function latestManifest(request: Request, env: Env): Promise<Response> {
     };
     return new Response(body.slice(), {
       status: 200,
-      headers: responseHeaders(
-        latestMemoryCache.contentType,
-        'no-store, max-age=0',
-        body.byteLength,
-        'edge-cache',
-      ),
+      headers: responseHeaders('application/json', 'no-store, max-age=0', body.byteLength, 'r2-edge-cache'),
     });
   }
 
-  const upstream = await fetchUpstreamWithRetry(env, 'latest.json');
-  const body = new Uint8Array(await upstream.arrayBuffer());
+  const object = await releaseBucket(env).get('latest.json');
+  if (!object) throw new HttpError(404, 'UPDATE_OBJECT_UNAVAILABLE');
+  const body = new Uint8Array(await object.arrayBuffer());
   validateLatestManifest(body);
-  const contentType = upstream.headers.get('Content-Type') || 'application/json';
-  latestMemoryCache = {
-    body,
-    contentType,
-    expiresAt: now + LATEST_MEMORY_TTL_MS,
-  };
+  const contentType = object.httpMetadata?.contentType || 'application/json';
+  latestMemoryCache = { body, contentType, expiresAt: now + LATEST_MEMORY_TTL_MS };
 
-  const clientResponse = new Response(body.slice(), {
+  const response = new Response(body.slice(), {
     status: 200,
-    headers: responseHeaders(contentType, 'no-store, max-age=0', body.byteLength, 'supabase'),
+    headers: responseHeaders(contentType, 'no-store, max-age=0', body.byteLength, 'cloudflare-r2'),
   });
-  await cachePut(request, clientResponse.clone());
-  return clientResponse;
+  await cachePut(request, response.clone());
+  return response;
 }
 
 async function chunkResponse(env: Env, objectPath: string): Promise<Response> {
-  const upstream = await fetchUpstreamWithRetry(env, objectPath);
-  const advertised = Number(upstream.headers.get('Content-Length') || 0);
-  if (advertised > MAX_CHUNK_BYTES) throw new HttpError(502, 'UPDATE_CHUNK_TOO_LARGE');
+  const object = await releaseBucket(env).get(objectPath);
+  if (!object) throw new HttpError(404, 'UPDATE_OBJECT_UNAVAILABLE');
+  if (object.size < 1 || object.size > MAX_CHUNK_BYTES) throw new HttpError(502, 'UPDATE_CHUNK_TOO_LARGE');
 
-  // Buffer one updater chunk before replying. Legacy clients do not retry a
-  // partially streamed chunk; returning only after the upstream object is
-  // complete prevents a transient Supabase stream interruption from silently
-  // sending old userFLOW versions into their fail-open login path.
-  const body = new Uint8Array(await upstream.arrayBuffer());
-  if (body.byteLength < 1 || body.byteLength > MAX_CHUNK_BYTES) {
-    throw new HttpError(502, 'UPDATE_CHUNK_INVALID');
-  }
-  if (advertised && advertised !== body.byteLength) {
+  const body = new Uint8Array(await object.arrayBuffer());
+  if (body.byteLength !== object.size || body.byteLength > MAX_CHUNK_BYTES) {
     throw new HttpError(502, 'UPDATE_CHUNK_LENGTH_MISMATCH');
   }
 
   return new Response(body, {
     status: 200,
     headers: responseHeaders(
-      upstream.headers.get('Content-Type') || 'application/octet-stream',
+      object.httpMetadata?.contentType || 'application/octet-stream',
       'public, max-age=31536000, immutable',
       body.byteLength,
-      'supabase-buffered',
+      'cloudflare-r2',
     ),
   });
+}
+
+function versionParts(value: string) {
+  return value.split('-')[0].split('.').map((part) => Number(part) || 0);
+}
+
+function compareVersionsDesc(a: string, b: string) {
+  const av = versionParts(a);
+  const bv = versionParts(b);
+  for (let index = 0; index < 3; index += 1) {
+    if ((av[index] || 0) !== (bv[index] || 0)) return (bv[index] || 0) - (av[index] || 0);
+  }
+  return b.localeCompare(a);
+}
+
+export async function pruneClientReleaseStorage(env: Env, keep = KEEP_RELEASE_VERSIONS) {
+  const bucket = releaseBucket(env);
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix: 'versions/', limit: 1000, cursor });
+    keys.push(...page.objects.map((item) => item.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  const versions = Array.from(new Set(
+    keys
+      .map((key) => key.split('/')[1] || '')
+      .filter((version) => VERSION_RE.test(version)),
+  )).sort(compareVersionsDesc);
+
+  const removeVersions = versions.slice(Math.max(keep, 1));
+  const removeKeys = keys.filter((key) => removeVersions.includes(key.split('/')[1] || ''));
+
+  for (let index = 0; index < removeKeys.length; index += 1000) {
+    await bucket.delete(removeKeys.slice(index, index + 1000));
+  }
+
+  return {
+    storage: 'cloudflare-r2',
+    keepVersions: versions.slice(0, Math.max(keep, 1)),
+    removedVersions: removeVersions,
+    removedObjects: removeKeys.length,
+  };
 }
 
 export async function publicClientUpdateRoutes(request: Request, env: Env): Promise<Response | null> {

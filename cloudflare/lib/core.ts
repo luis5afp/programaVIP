@@ -1,5 +1,37 @@
+export interface R2ObjectBodyLike {
+  body: ReadableStream<Uint8Array> | null;
+  size: number;
+  httpMetadata?: { contentType?: string; cacheControl?: string };
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+}
+
+export interface R2ObjectLike {
+  key: string;
+  size: number;
+}
+
+export interface R2ObjectsLike {
+  objects: R2ObjectLike[];
+  truncated: boolean;
+  cursor?: string;
+}
+
+export interface R2BucketLike {
+  get(key: string): Promise<R2ObjectBodyLike | null>;
+  head(key: string): Promise<R2ObjectLike | null>;
+  put(
+    key: string,
+    value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
+    options?: { httpMetadata?: { contentType?: string; cacheControl?: string } },
+  ): Promise<unknown>;
+  delete(keys: string | string[]): Promise<void>;
+  list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<R2ObjectsLike>;
+}
+
 export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
+  CLIENT_RELEASES?: R2BucketLike;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;

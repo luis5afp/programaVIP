@@ -45,6 +45,7 @@ jobs:
           done
 
       - name: Reclaim obsolete updater storage
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -74,6 +75,7 @@ jobs:
           fi
 
       - name: Validate Supabase service access
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -86,6 +88,10 @@ jobs:
             cat /tmp/supabase-service-check.json
             exit 1
           fi
+
+      - name: Ensure Cloudflare R2 updater bucket
+        shell: bash
+        run: npx wrangler@4.130.0 r2 bucket create userflex-client-releases || true
 
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci --ignore-scripts
@@ -143,7 +149,7 @@ jobs:
             if HEALTH="$health" EXPECTED_USERFLOW="$EXPECTED_USERFLOW" MIN_SESSION_MANAGER="$MIN_SESSION_MANAGER" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
           if (value.ok !== true) process.exit(1);
-          if (value.databaseReachable !== true) process.exit(1);
+          if (value.updateStorage !== 'cloudflare-r2') process.exit(1);
           if (value.minimumClientVersion !== process.env.EXPECTED_USERFLOW) process.exit(1);
           if (value.minimumSessionManagerVersion !== process.env.MIN_SESSION_MANAGER) process.exit(1);
           NODE

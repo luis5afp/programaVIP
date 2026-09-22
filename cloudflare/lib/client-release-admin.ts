@@ -1,8 +1,7 @@
 import type { AdminIdentity } from './auth';
-import { Env, HttpError, audit, bodyJson, json } from './core';
+import { Env, HttpError, audit, bodyJson, json, type R2BucketLike } from './core';
 import { MIN_USERFLOW_VERSION, versionAtLeast } from './release-compat';
 
-const RELEASE_BUCKET = 'userflex-client-releases';
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 type ReleaseManifest = {
@@ -13,16 +12,11 @@ type ReleaseManifest = {
   publishedAt: string | null;
 };
 
-function storageBase(env: Env) {
-  const url = env.SUPABASE_URL?.replace(/\/$/, '');
-  const key = env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE', 'El almacenamiento de actualizaciones no está configurado.');
-  return { url, key };
-}
-
-function publicObjectUrl(env: Env, objectPath: string) {
-  const { url } = storageBase(env);
-  return `${url}/storage/v1/object/public/${RELEASE_BUCKET}/${objectPath}`;
+function releaseBucket(env: Env): R2BucketLike {
+  if (!env.CLIENT_RELEASES) {
+    throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE', 'Cloudflare R2 no está configurado.');
+  }
+  return env.CLIENT_RELEASES;
 }
 
 function validateManifest(value: any, expectedVersion?: string): ReleaseManifest {
@@ -57,16 +51,11 @@ function validateManifest(value: any, expectedVersion?: string): ReleaseManifest
 }
 
 async function fetchJsonObject(env: Env, objectPath: string, expectedVersion?: string) {
-  const response = await fetch(`${publicObjectUrl(env, objectPath)}?ts=${Date.now()}`, {
-    headers: { 'Cache-Control': 'no-cache' },
-  });
-  if (!response.ok) {
-    if (response.status === 404) return null;
-    throw new HttpError(502, 'UPDATE_STORAGE_READ_FAILED', 'No se pudo leer el manifiesto de actualizaciones.');
-  }
+  const object = await releaseBucket(env).get(objectPath);
+  if (!object) return null;
   let parsed: any;
   try {
-    parsed = await response.json();
+    parsed = JSON.parse(await object.text());
   } catch {
     throw new HttpError(409, 'RELEASE_MANIFEST_INVALID', 'El manifiesto de actualización no es JSON válido.');
   }
@@ -74,28 +63,18 @@ async function fetchJsonObject(env: Env, objectPath: string, expectedVersion?: s
 }
 
 async function listVersionFolders(env: Env): Promise<string[]> {
-  const { url, key } = storageBase(env);
-  const response = await fetch(`${url}/storage/v1/object/list/${RELEASE_BUCKET}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      apikey: key,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      prefix: 'versions',
-      limit: 1000,
-      offset: 0,
-      sortBy: { column: 'name', order: 'desc' },
-    }),
-  });
-  if (!response.ok) throw new HttpError(502, 'UPDATE_STORAGE_LIST_FAILED', 'No se pudieron listar las versiones publicadas.');
-  const rows: any[] = await response.json();
-  return Array.from(new Set(
-    rows
-      .map((row) => String(row?.name || '').trim())
-      .filter((name) => VERSION_RE.test(name)),
-  ));
+  const bucket = releaseBucket(env);
+  const versions = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix: 'versions/', limit: 1000, cursor });
+    for (const object of page.objects) {
+      const version = object.key.split('/')[1] || '';
+      if (VERSION_RE.test(version)) versions.add(version);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return Array.from(versions);
 }
 
 function versionParts(value: string) {
@@ -116,13 +95,7 @@ async function releaseStatus(env: Env) {
   const active = await fetchJsonObject(env, 'latest.json');
   if (!active) throw new HttpError(404, 'CLIENT_RELEASE_NOT_FOUND', 'No hay una versión activa del cliente.');
 
-  let folderVersions: string[] = [];
-  try {
-    folderVersions = await listVersionFolders(env);
-  } catch {
-    folderVersions = [];
-  }
-
+  const folderVersions = await listVersionFolders(env).catch(() => []);
   const candidates = Array.from(new Set([active.version, ...folderVersions]))
     .filter((version) => VERSION_RE.test(version))
     .sort(compareVersions);
@@ -135,6 +108,7 @@ async function releaseStatus(env: Env) {
 
   return {
     active,
+    storage: 'cloudflare-r2',
     minimumCompatibleVersion: MIN_USERFLOW_VERSION,
     activeCompatible: versionAtLeast(active.version, MIN_USERFLOW_VERSION),
     available: available.map((manifest) => ({
@@ -147,31 +121,15 @@ async function releaseStatus(env: Env) {
 }
 
 async function uploadLatest(env: Env, manifest: ReleaseManifest) {
-  const { url, key } = storageBase(env);
-  const response = await fetch(`${url}/storage/v1/object/${RELEASE_BUCKET}/latest.json`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      apikey: key,
-      'x-upsert': 'true',
-      'cache-control': 'max-age=0',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(manifest),
+  await releaseBucket(env).put('latest.json', JSON.stringify(manifest), {
+    httpMetadata: { contentType: 'application/json', cacheControl: 'no-store, max-age=0' },
   });
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    console.error('Release activation upload failed', response.status, detail);
-    throw new HttpError(502, 'CLIENT_RELEASE_ACTIVATION_FAILED', 'No se pudo activar la versión seleccionada.');
-  }
 }
 
 async function verifyChunks(env: Env, manifest: ReleaseManifest) {
-  const checks = await Promise.all(manifest.chunks.map(async (chunk) => {
-    const response = await fetch(publicObjectUrl(env, chunk.name), { method: 'HEAD' });
-    return response.ok;
-  }));
-  if (checks.some((ok) => !ok)) {
+  const bucket = releaseBucket(env);
+  const checks = await Promise.all(manifest.chunks.map((chunk) => bucket.head(chunk.name)));
+  if (checks.some((object) => !object)) {
     throw new HttpError(409, 'CLIENT_RELEASE_INCOMPLETE', 'La versión seleccionada no tiene todas sus partes publicadas.');
   }
 }
@@ -222,6 +180,7 @@ export async function adminClientReleaseRoutes(
       version,
       size: manifest.size,
       chunks: manifest.chunks.length,
+      storage: 'cloudflare-r2',
     });
 
     return json({ ok: true, changed: true, ...(await releaseStatus(env)) });

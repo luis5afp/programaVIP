@@ -3,7 +3,7 @@ import { adminRoutes } from './lib/admin';
 import { adminUserRoutes } from './lib/admin-users';
 import { clientCatalog, clientHeartbeat, clientLaunch, clientLogout, clientRequestSessionChecks, clientSessionFallback, clientSessionHealth } from './lib/client';
 import { adminProfileUsageRoutes, clientCloseProfileUsage } from './lib/profile-usage';
-import { publicClientUpdateRoutes } from './lib/client-updates';
+import { publicClientUpdateRoutes, pruneClientReleaseStorage } from './lib/client-updates';
 import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION, clientVersionFrom, versionAtLeast } from './lib/release-compat';
 import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
@@ -24,7 +24,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.29';
+const APP_VERSION = '1.4.30';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -62,6 +62,7 @@ async function api(request: Request, env: Env): Promise<Response> {
       supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
       databaseReachable,
       databaseError,
+      updateStorage: env.CLIENT_RELEASES ? 'cloudflare-r2' : 'missing',
       proxyEncryptionConfigured: Boolean(env.USERFLEX_PROXY_MASTER_KEY),
       minimumClientVersion: MIN_USERFLOW_VERSION,
       minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
@@ -197,7 +198,13 @@ export default {
   async scheduled(_controller: unknown, env: Env): Promise<void> {
     try {
       const result = await cleanupRuntimeState(env);
-      console.log('userFLEX runtime maintenance', JSON.stringify(result));
+      const releaseCleanup = env.CLIENT_RELEASES
+        ? await pruneClientReleaseStorage(env, 3).catch((error) => ({
+            storage: 'cloudflare-r2',
+            error: error instanceof Error ? error.message : String(error),
+          }))
+        : { storage: 'missing' };
+      console.log('userFLEX runtime maintenance', JSON.stringify({ ...result, releaseCleanup }));
     } catch (error) {
       console.error('userFLEX runtime maintenance failed', error instanceof Error ? error.message : String(error));
       throw error;

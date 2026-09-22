@@ -209,15 +209,24 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish automatic updater feed
+      - name: Publish automatic updater feed to Cloudflare R2
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
-          SUPABASE_URL: https://lbvxnbbglkjnwphaomyx.supabase.co
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not $env:SUPABASE_SERVICE_ROLE_KEY) { throw "SUPABASE_SERVICE_ROLE_KEY is required." }
+          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN is required for R2 publishing." }
+          if (-not $env:CLOUDFLARE_ACCOUNT_ID) { throw "CLOUDFLARE_ACCOUNT_ID is required for R2 publishing." }
+
+          $bucket = 'userflex-client-releases'
+          & npx wrangler@4.130.0 r2 bucket info $bucket --json --cwd .. *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Creating Cloudflare R2 bucket $bucket..."
+            & npx wrangler@4.130.0 r2 bucket create $bucket --cwd ..
+            if ($LASTEXITCODE -ne 0) { throw "Could not create R2 bucket $bucket." }
+          }
 
           $version = node -p "require('./package.json').version"
           $feedRoot = Join-Path $PWD 'dist\update-feed'
@@ -227,54 +236,26 @@ jobs:
 
           foreach ($file in $parts) {
             $objectName = "versions/$version/$($file.Name)"
-            $url = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/$objectName"
-            Write-Host "Publishing $objectName ($($file.Length) bytes)..."
-            & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 300 `
-              --request POST $url `
-              --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
-              --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
-              --header "x-upsert: true" `
-              --header "cache-control: max-age=31536000, immutable" `
-              --header "Content-Type: application/octet-stream" `
-              --data-binary "@$($file.FullName)"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to publish $objectName." }
+            Write-Host "Publishing R2 $objectName ($($file.Length) bytes)..."
+            & npx wrangler@4.130.0 r2 object put "$bucket/$objectName" --file "$($file.FullName)" --content-type "application/octet-stream" --cache-control "public, max-age=31536000, immutable" --remote --cwd ..
+            if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 object $objectName." }
           }
 
           $versionManifest = Get-Item -Path (Join-Path $versionRoot 'manifest.json')
-          $versionManifestUrl = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/versions/$version/manifest.json"
-          Write-Host "Publishing versions/$version/manifest.json..."
-          & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 60 `
-            --request POST $versionManifestUrl `
-            --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
-            --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
-            --header "x-upsert: true" `
-            --header "cache-control: max-age=31536000, immutable" `
-            --header "Content-Type: application/json" `
-            --data-binary "@$($versionManifest.FullName)"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish version manifest." }
+          & npx wrangler@4.130.0 r2 object put "$bucket/versions/$version/manifest.json" --file "$($versionManifest.FullName)" --content-type "application/json" --cache-control "public, max-age=31536000, immutable" --remote --cwd ..
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 version manifest." }
 
           $manifest = Get-Item -Path (Join-Path $feedRoot 'latest.json')
-          $manifestUrl = "$env:SUPABASE_URL/storage/v1/object/userflex-client-releases/latest.json"
-          Write-Host "Publishing latest.json last..."
-          & curl.exe --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 60 `
-            --request POST $manifestUrl `
-            --header "Authorization: Bearer $env:SUPABASE_SERVICE_ROLE_KEY" `
-            --header "apikey: $env:SUPABASE_SERVICE_ROLE_KEY" `
-            --header "x-upsert: true" `
-            --header "cache-control: max-age=0" `
-            --header "Content-Type: application/json" `
-            --data-binary "@$($manifest.FullName)"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish latest.json." }
+          & npx wrangler@4.130.0 r2 object put "$bucket/latest.json" --file "$($manifest.FullName)" --content-type "application/json" --cache-control "no-store, max-age=0" --remote --cwd ..
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 latest.json." }
 
-          $publicManifestUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/latest.json?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-          $published = Invoke-RestMethod -Uri $publicManifestUrl -Headers @{ 'Cache-Control' = 'no-cache' }
-          if ($published.version -ne $version) { throw "Published updater feed does not expose version $version." }
-          if (@($published.chunks).Count -ne $parts.Count) { throw "Published updater feed chunk count mismatch." }
-
-          $firstChunk = @($published.chunks)[0]
-          $firstChunkUrl = "$env:SUPABASE_URL/storage/v1/object/public/userflex-client-releases/$($firstChunk.name)?v=$version"
-          $response = Invoke-WebRequest -Uri $firstChunkUrl -Method Head -UseBasicParsing
-          if ($response.StatusCode -ne 200) { throw "Published updater chunk is not publicly readable." }
+          $verifyPath = Join-Path $env:RUNNER_TEMP 'userflex-r2-latest.json'
+          if (Test-Path $verifyPath) { Remove-Item $verifyPath -Force }
+          & npx wrangler@4.130.0 r2 object get "$bucket/latest.json" --file "$verifyPath" --remote --cwd ..
+          if ($LASTEXITCODE -ne 0) { throw "Failed to read R2 latest.json after publish." }
+          $published = Get-Content -Raw -Path $verifyPath | ConvertFrom-Json
+          if ($published.version -ne $version) { throw "R2 updater feed does not expose version $version." }
+          if (@($published.chunks).Count -ne $parts.Count) { throw "R2 updater feed chunk count mismatch." }
 
       - name: Publish Client release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
