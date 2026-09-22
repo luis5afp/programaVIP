@@ -304,6 +304,9 @@ export async function installCaptureAutomation({
 
   const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
     const currentHost = String(location.hostname || '').toLowerCase();
+    const currentPath = String(location.pathname || '').toLowerCase();
+    const openAiLoginPage = (currentHost === 'chatgpt.com' && currentPath.startsWith('/auth/'))
+      || currentHost === 'auth.openai.com';
     const googleAuthAllowed = Array.isArray(allowedOrigins)
       && allowedOrigins.includes('https://accounts.google.com')
       && location.protocol === 'https:'
@@ -384,10 +387,45 @@ export async function installCaptureAutomation({
       }
     };
 
+    const actionLabel = (element) => String(
+      element?.textContent
+      || element?.value
+      || element?.getAttribute?.('aria-label')
+      || element?.getAttribute?.('title')
+      || '',
+    ).replace(/\s+/g, ' ').trim().toLowerCase();
+
+    const usernameContinueAction = (usernameInput) => {
+      const root = usernameInput?.form || document;
+      const actions = Array.from(root.querySelectorAll('button,input[type="submit"],[role="button"]'))
+        .filter((element) => visible(element) && !element.disabled);
+      return actions.find((element) => /^(continue|next|continuar|siguiente)$/.test(actionLabel(element)))
+        || actions.find((element) => element instanceof HTMLInputElement && element.type === 'submit')
+        || null;
+    };
+
+    const maybeAdvanceOpenAiUsername = (values) => {
+      if (!openAiLoginPage || !values?.usernameInput || values.passwordInput || !username) return false;
+      const currentValue = String(values.usernameInput.value || '').trim();
+      if (!currentValue || currentValue.toLowerCase() !== String(username).trim().toLowerCase()) return false;
+      const key = location.href + '|' + currentValue.toLowerCase();
+      if (globalThis.__userflexOpenAiUsernameAdvance === key) return false;
+      const action = usernameContinueAction(values.usernameInput);
+      if (!action) return false;
+      globalThis.__userflexOpenAiUsernameAdvance = key;
+      setTimeout(() => {
+        try {
+          if (document.contains(action) && visible(action) && !action.disabled) action.click();
+        } catch {}
+      }, 250);
+      return true;
+    };
+
     const fillAvailable = () => {
       const values = candidates();
       if (values.usernameInput && !values.usernameInput.value && username) setNativeValue(values.usernameInput, username);
       if (values.passwordInput && !values.passwordInput.value && password) setNativeValue(values.passwordInput, password);
+      maybeAdvanceOpenAiUsername(values);
       return values;
     };
 
@@ -530,6 +568,67 @@ export async function installCaptureAutomation({
     for (const delayMs of [80, 200, 500, 1000, 2000, 4000, 8000]) setTimeout(refresh, delayMs);
   };
 
+  const chatgptRecoveryPages = new WeakSet();
+
+  const pageLooksLikeBlankChatgptAuth = async (page) => {
+    try {
+      return await page.evaluate(() => {
+        const overlay = document.getElementById('userflex-session-overlay');
+        const visible = (element) => {
+          try {
+            if (overlay && (element === overlay || overlay.contains(element))) return false;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && Number(style.opacity || 1) !== 0
+              && rect.width > 0
+              && rect.height > 0;
+          } catch {
+            return false;
+          }
+        };
+        const meaningful = Array.from(document.querySelectorAll(
+          'main,form,input,h1,h2,[role="main"],[role="dialog"],button,a',
+        )).some((element) => visible(element));
+        const bodyText = String(document.body?.innerText || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return !meaningful && bodyText.length < 16;
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  const recoverBlankChatgptAuth = async (page) => {
+    if (!page || chatgptRecoveryPages.has(page)) return;
+    let current = null;
+    try { current = new URL(page.url()); } catch { return; }
+    if (current.hostname !== 'chatgpt.com' || current.pathname !== '/auth/login_with') return;
+
+    chatgptRecoveryPages.add(page);
+    await delay(6_000);
+    try {
+      const afterWait = new URL(page.url());
+      if (afterWait.hostname !== 'chatgpt.com' || afterWait.pathname !== '/auth/login_with') return;
+    } catch { return; }
+    if (!await pageLooksLikeBlankChatgptAuth(page)) return;
+
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+    await delay(5_000);
+    try {
+      const afterReload = new URL(page.url());
+      if (afterReload.hostname !== 'chatgpt.com' || afterReload.pathname !== '/auth/login_with') return;
+    } catch { return; }
+    if (!await pageLooksLikeBlankChatgptAuth(page)) return;
+
+    await page.goto('https://chatgpt.com/auth/login?callback_path=%2F', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000,
+    }).catch(() => null);
+  };
+
   const prepared = new WeakSet();
   const instrument = async (page) => {
     if (!page) return;
@@ -548,6 +647,7 @@ export async function installCaptureAutomation({
       if (credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
         await page.evaluate(bootstrap, payload);
       }
+      void recoverBlankChatgptAuth(page);
     } catch {}
   };
 
