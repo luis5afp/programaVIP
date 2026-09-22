@@ -719,7 +719,9 @@ export async function installCaptureAutomation({
     } catch {
       return false;
     } finally {
-      await actionHandle?.dispose?.().catch(() => null);
+      if (actionHandle && typeof actionHandle.dispose === 'function') {
+        await actionHandle.dispose().catch(() => null);
+      }
     }
   };
 
