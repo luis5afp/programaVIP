@@ -429,6 +429,30 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         }
       }
 
+      const normalizedTargetHost = String(target.hostname || '').toLowerCase().replace(/^www\./, '');
+      const openAIProfile = normalizedTargetHost === 'chatgpt.com'
+        || normalizedTargetHost.endsWith('.chatgpt.com')
+        || normalizedTargetHost === 'openai.com'
+        || normalizedTargetHost.endsWith('.openai.com');
+      if (openAIProfile) {
+        const openAIAuthTargets = [
+          { host: 'auth.openai.com', path: '/log-in' },
+          { host: 'openai.com', path: '/' },
+        ];
+        for (const authTarget of openAIAuthTargets) {
+          try {
+            await probeKaizenProxyHttps(connection.proxy, {
+              host: authTarget.host,
+              port: 443,
+              path: authTarget.path,
+            });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+            throw new Error(`El proxy del perfil no puede completar la autenticación de OpenAI con ${authTarget.host}. ${detail}`);
+          }
+        }
+      }
+
       verifiedPublicIp = await kaizenProxyPublicIp(connection.proxy);
       if (!verifiedPublicIp) throw new Error('El proxy respondió, pero no se pudo verificar su IP pública.');
       const expectedIp = delivery?.expectedPublicIp || (connection?.locked ? connection?.proxy?.publicIp : null);
