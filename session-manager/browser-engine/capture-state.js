@@ -838,7 +838,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
   }
 }
 
-export async function inspectCaptureSession(debugPort, profileUrl) {
+export async function inspectCaptureSession(debugPort, profileUrl, options = {}) {
   const browser = await connectCaptureBrowser(debugPort);
   try {
     const target = new URL(profileUrl);
@@ -859,6 +859,21 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
     }
 
     if (!page) {
+      if (options?.navigateIfMissing === false) {
+        return {
+          href: pages[0]?.url?.() || '',
+          hostname: '',
+          pathname: '',
+          usernameFieldVisible: false,
+          passwordFieldVisible: false,
+          loginActionVisible: false,
+          meaningfulContent: false,
+          readyState: 'loading',
+          loginLikeUrl: true,
+          targetOriginMatched: false,
+          authenticated: false,
+        };
+      }
       page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
       await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => null);
       await new Promise((resolve) => setTimeout(resolve, 1500));
