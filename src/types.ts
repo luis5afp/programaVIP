@@ -176,6 +176,8 @@ export interface ProfileSessionState {
     last_check_at: string | null;
     last_refresh_at: string | null;
     last_error: string | null;
+    session_manager_version: string | null;
+    session_manager_version_seen_at: string | null;
   } | null;
 }
 
@@ -302,6 +304,8 @@ export interface Device {
   status: DeviceStatus;
   last_ip: string | null;
   last_seen_at: string | null;
+  userflow_version: string | null;
+  userflow_version_seen_at: string | null;
   created_at: string;
   client?: Pick<Client, 'id' | 'name' | 'email'>;
 }

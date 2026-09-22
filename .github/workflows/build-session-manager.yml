@@ -28,16 +28,6 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate userFLOW version parity
-        shell: pwsh
-        run: |
-          $sessionVersion = node -p "require('./package.json').version"
-          $clientVersion = node -p "require('../client-app/package.json').version"
-          Write-Host "Session Manager: $sessionVersion · userFLOW: $clientVersion"
-          if ($sessionVersion -ne $clientVersion) {
-            throw "Session Manager and userFLOW must use the same version."
-          }
-
       - name: Install Session Manager dependencies
         run: npm install
 

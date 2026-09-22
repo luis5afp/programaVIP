@@ -72,6 +72,8 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
       last_check_at: keeper.last_check_at || null,
       last_refresh_at: keeper.last_refresh_at || null,
       last_error: keeper.last_error || null,
+      session_manager_version: keeper.session_manager_version || null,
+      session_manager_version_seen_at: keeper.session_manager_version_seen_at || null,
     } : null,
   };
 }
@@ -182,14 +184,14 @@ async function keeperRow(env: Env, rawToken: string) {
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
   const rows = await sb(
     env,
-    `userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_check_at,last_refresh_at&token_hash=eq.${tokenHash}&limit=1`,
+    `userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_check_at,last_refresh_at,session_manager_version,session_manager_version_seen_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const keeper = rows?.[0];
   if (!keeper || keeper.enabled !== true) throw new HttpError(401, 'KEEPER_TOKEN_INVALID');
   return keeper;
 }
 
-async function registerSessionKeeper(env: Env, profileId: string) {
+async function registerSessionKeeper(env: Env, profileId: string, sessionManagerVersion: string) {
   const rawToken = token(32);
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
   const now = new Date().toISOString();
@@ -202,6 +204,8 @@ async function registerSessionKeeper(env: Env, profileId: string) {
       enabled: true,
       last_status: 'registered',
       last_error: null,
+      session_manager_version: sessionManagerVersion,
+      session_manager_version_seen_at: now,
       updated_at: now,
     }),
   });
@@ -705,7 +709,7 @@ export async function adminProfileSessionRoutes(
     const [credentials, sessions, keepers] = await Promise.all([
       sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
       sb(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
-      sb(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,updated_at'),
+      sb(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,session_manager_version,session_manager_version_seen_at,updated_at'),
     ]);
     const profileIds = new Set<string>();
     for (const row of credentials || []) profileIds.add(row.profile_id);
@@ -1242,6 +1246,11 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const job = await captureJob(env, rawToken, 'bootstrap');
+    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ session_manager_version: sessionManagerVersion }),
+    }).catch(() => null);
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await captureProxyForProfile(env, profile);
@@ -1290,7 +1299,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/session-manager/complete' && method === 'POST') {
-    assertSessionManagerVersion(request);
+    const sessionManagerVersion = assertSessionManagerVersion(request);
     const body = await bodyJson(request, 10_000_000);
     const rawToken = text(body.token, 'token', 128);
     const job = await captureJob(env, rawToken, 'complete');
@@ -1302,7 +1311,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       publicIp,
       validatedAt: authenticated ? now : null,
     });
-    const keeperToken = await registerSessionKeeper(env, job.profile_id);
+    const keeperToken = await registerSessionKeeper(env, job.profile_id, sessionManagerVersion);
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
@@ -1324,6 +1333,17 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const keeper = await keeperRow(env, rawToken);
+    const now = new Date().toISOString();
+    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        session_manager_version: sessionManagerVersion,
+        session_manager_version_seen_at: now,
+        last_seen_at: now,
+        updated_at: now,
+      }),
+    }).catch(() => null);
     return json({
       ok: true,
       minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
@@ -1357,10 +1377,16 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       }).catch(() => null);
       throw new HttpError(401, 'KEEPER_DISABLED', 'Este perfil ya no necesita Session Keeper.');
     }
+    const keeperSeenAt = new Date().toISOString();
     await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+      body: JSON.stringify({
+        last_seen_at: keeperSeenAt,
+        session_manager_version: sessionManagerVersion,
+        session_manager_version_seen_at: keeperSeenAt,
+        updated_at: keeperSeenAt,
+      }),
     }).catch(() => null);
     return json({
       ok: true,
@@ -1397,7 +1423,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   }
 
   if (path === '/api/session-keeper/complete' && method === 'POST') {
-    assertSessionManagerVersion(request);
+    const sessionManagerVersion = assertSessionManagerVersion(request);
     const body = await bodyJson(request, 10_000_000);
     const rawToken = text(body.token, 'token', 128);
     const keeper = await keeperRow(env, rawToken);
@@ -1415,6 +1441,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
             last_check_at: now,
             last_status: 'needs_admin',
             last_error: error || 'La web solicita iniciar sesión nuevamente.',
+            session_manager_version: sessionManagerVersion,
+            session_manager_version_seen_at: now,
             updated_at: now,
           }),
         }),
@@ -1449,6 +1477,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         last_refresh_at: now,
         last_status: 'healthy',
         last_error: null,
+        session_manager_version: sessionManagerVersion,
+        session_manager_version_seen_at: now,
         updated_at: now,
       }),
     });

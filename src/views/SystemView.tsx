@@ -95,7 +95,9 @@ export function SystemView({ session }: { session: AdminSession }) {
             <Badge tone="neutral">userFLOW ≥ {health?.minimumClientVersion || '—'}</Badge>
             <Badge tone="neutral">Session Manager ≥ {health?.minimumSessionManagerVersion || '—'}</Badge>
           </div>
-          <p className="muted" style={{ fontSize: 11 }}>Cloudflare Worker + Supabase, sin servidor Express duplicado.</p>
+          <p className="muted" style={{ fontSize: 11 }}>
+            userFLOW y Session Manager tienen versiones independientes. Actualizar uno no modifica el otro mientras ambos cumplan su versión mínima compatible.
+          </p>
         </Card>
       </div>
 
@@ -105,7 +107,7 @@ export function SystemView({ session }: { session: AdminSession }) {
             <PackageCheck size={22} />
             <h3 style={{ marginBottom: 4 }}>Versión de userFLOW para clientes</h3>
             <p className="muted" style={{ marginTop: 0 }}>
-              Esta es la misma versión que devuelve <span className="mono">/api/client-update/latest</span> al actualizador automático.
+              Esta es solo la versión de userFLOW que devuelve <span className="mono">/api/client-update/latest</span>. No instala ni actualiza Session Manager.
             </p>
           </div>
           <button className="button secondary small" disabled={loadingRelease} onClick={() => void loadRelease()}>

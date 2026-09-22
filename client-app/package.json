@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.3.35",
+  "version": "0.3.36",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -57,10 +57,6 @@
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "build/session-manager/userFLEX-Session-Manager-Setup.exe",
-        "to": "session-manager/userFLEX-Session-Manager-Setup.exe"
-      },
       {
         "from": "browser-engine/extension",
         "to": "browser-engine/extension"

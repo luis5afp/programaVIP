@@ -983,6 +983,9 @@ export function ProfilesView() {
                             const keeper = keeperBadge(session);
                             return <Badge tone={keeper.tone}>{keeper.detail}</Badge>;
                           })()}
+                          {snapshotManaged && session?.keeper?.session_manager_version && (
+                            <Badge tone="neutral">Session Manager: v{session.keeper.session_manager_version}</Badge>
+                          )}
                           {credentialHelperSupported && (
                             <Badge tone={credentialHelperConfigured ? 'ok' : credentialManaged ? 'bad' : 'warn'}>
                               {profileAuth === 'cookie-snapshot'
@@ -1748,7 +1751,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.35 · userFLOW v0.3.35
+              Instalar / actualizar Session Manager v0.3.35
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.

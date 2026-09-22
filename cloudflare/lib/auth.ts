@@ -20,6 +20,7 @@ import {
   text,
   token,
 } from './core';
+import { clientVersionFrom } from './release-compat';
 
 export type AdminRole = 'owner' | 'admin';
 export type AdminIdentity = {
@@ -38,6 +39,11 @@ export type ClientIdentity = {
   plan: any;
   subscription: any;
 };
+
+function observedUserflowVersion(request: Request): string | null {
+  const version = clientVersionFrom(request);
+  return /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(version) ? version : null;
+}
 
 type AdminProfile = {
   user_id: string;
@@ -319,10 +325,15 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ last_seen_at: stamp }),
   }).catch(() => {});
+  const userflowVersion = observedUserflowVersion(request);
   void sb(env, `userflex_devices?id=eq.${session.device_id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ last_seen_at: stamp, ...(clientIp ? { last_ip: clientIp } : {}) }),
+    body: JSON.stringify({
+      last_seen_at: stamp,
+      ...(clientIp ? { last_ip: clientIp } : {}),
+      ...(userflowVersion ? { userflow_version: userflowVersion, userflow_version_seen_at: stamp } : {}),
+    }),
   }).catch(() => {});
   return {
     clientId: session.client_id,
@@ -387,13 +398,17 @@ export async function clientLogin(request: Request, env: Env) {
     throw new HttpError(403, 'DEVICE_LIMIT_REACHED', 'Se alcanzó el máximo de dispositivos permitido para este cliente.');
   }
   const clientIp = request.headers.get('cf-connecting-ip');
-  if (clientIp) {
-    await sb(env, `userflex_devices?id=eq.${device.id}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ last_ip: clientIp, last_seen_at: new Date().toISOString() }),
-    });
-  }
+  const loginStamp = new Date().toISOString();
+  const userflowVersion = observedUserflowVersion(request);
+  await sb(env, `userflex_devices?id=eq.${device.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      last_seen_at: loginStamp,
+      ...(clientIp ? { last_ip: clientIp } : {}),
+      ...(userflowVersion ? { userflow_version: userflowVersion, userflow_version_seen_at: loginStamp } : {}),
+    }),
+  });
   const raw = token();
   const hash = await sha(raw);
   const expiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();

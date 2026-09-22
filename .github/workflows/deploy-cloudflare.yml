@@ -54,22 +54,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED="$(node -p "require('./client-app/package.json').version")"
+          EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
+          MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
           BASE="https://userflex-admin.luis5afp.workers.dev"
-          echo "Waiting for userFLOW/Session Manager v$EXPECTED before server activation..."
+          echo "Waiting for userFLOW v$EXPECTED_USERFLOW and compatible Session Manager >= v$MIN_SESSION_MANAGER..."
 
           for attempt in $(seq 1 90); do
             current="$(curl --silent --show-error "$BASE/api/client-update/latest" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version||'')}catch{console.log('')}})")"
             sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}' \
               --header "Authorization: Bearer ${{ github.token }}" \
               --header 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$EXPECTED")"
-            if [ "$current" = "$EXPECTED" ] && [ "$sm_code" = "200" ]; then
-              echo "Paired desktop release v$EXPECTED is ready."
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
+            if [ "$current" = "$EXPECTED_USERFLOW" ] && [ "$sm_code" = "200" ]; then
+              echo "Independent desktop releases are ready: userFLOW v$EXPECTED_USERFLOW · Session Manager minimum v$MIN_SESSION_MANAGER."
               break
             fi
             if [ "$attempt" = "90" ]; then
-              echo "Timed out waiting for paired desktop release. updater=$current session-manager-http=$sm_code" >&2
+              echo "Timed out waiting for independent desktop releases. userFLOW=$current expected=$EXPECTED_USERFLOW session-manager-min=$MIN_SESSION_MANAGER http=$sm_code" >&2
               exit 1
             fi
             sleep 10
@@ -92,28 +93,28 @@ jobs:
           set -euo pipefail
           BASE="https://userflex-admin.luis5afp.workers.dev"
           TOKEN="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-          EXPECTED="$(node -p "require('./client-app/package.json').version")"
+          EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
+          MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
 
           ready=0
           for attempt in $(seq 1 30); do
             health="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache' "$BASE/api/health" || true)"
-            if HEALTH="$health" EXPECTED="$EXPECTED" node - <<'NODE'
+            if HEALTH="$health" EXPECTED_USERFLOW="$EXPECTED_USERFLOW" MIN_SESSION_MANAGER="$MIN_SESSION_MANAGER" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
-          const expected = process.env.EXPECTED;
           if (value.ok !== true) process.exit(1);
-          if (value.minimumClientVersion !== expected) process.exit(1);
-          if (value.minimumSessionManagerVersion !== expected) process.exit(1);
+          if (value.minimumClientVersion !== process.env.EXPECTED_USERFLOW) process.exit(1);
+          if (value.minimumSessionManagerVersion !== process.env.MIN_SESSION_MANAGER) process.exit(1);
           NODE
             then
               ready=1
-              echo "Production Worker v$EXPECTED is active after propagation attempt $attempt."
+              echo "Production Worker is active with userFLOW >= v$EXPECTED_USERFLOW and Session Manager >= v$MIN_SESSION_MANAGER after propagation attempt $attempt."
               break
             fi
             echo "Waiting for Cloudflare propagation ($attempt/30)..."
             sleep 5
           done
           if [ "$ready" != "1" ]; then
-            echo "Production Worker did not expose expected version v$EXPECTED after propagation window." >&2
+            echo "Production Worker did not expose expected desktop compatibility after propagation window." >&2
             exit 1
           fi
 
@@ -151,13 +152,13 @@ jobs:
           code="$(curl --silent --output /tmp/sm.json --write-out '%{http_code}' \
             --request POST "$BASE/api/session-manager/bootstrap" \
             --header 'content-type: application/json' \
-            --header "X-Userflex-Session-Manager-Version: $EXPECTED" \
+            --header "X-Userflex-Session-Manager-Version: $MIN_SESSION_MANAGER" \
             --data "{\"token\":\"$TOKEN\"}")"
           test "$code" = "401"
 
           code="$(curl --silent --output /tmp/test.json --write-out '%{http_code}' \
             --request POST "$BASE/api/client-test/bootstrap" \
             --header 'content-type: application/json' \
-            --header "X-Userflow-Client-Version: $EXPECTED" \
+            --header "X-Userflow-Client-Version: $EXPECTED_USERFLOW" \
             --data "{\"token\":\"$TOKEN\"}")"
           test "$code" = "401"

@@ -65,6 +65,7 @@ export function DevicesView() {
         item.client?.name || '',
         item.client?.email || '',
         item.os || '',
+        item.userflow_version || '',
         item.last_ip || '',
         item.status,
         item.status === 'active' ? 'activo' : 'revocado',
@@ -109,6 +110,7 @@ export function DevicesView() {
                   <th>Dispositivo</th>
                   <th>Cliente</th>
                   <th>Sistema</th>
+                  <th>userFLOW</th>
                   <th>Última IP</th>
                   <th>Última conexión</th>
                   <th>Estado</th>
@@ -127,6 +129,11 @@ export function DevicesView() {
                       {item.client?.email && <div className="table-secondary">{item.client.email}</div>}
                     </td>
                     <td>{item.os || '—'}</td>
+                    <td>
+                      {item.userflow_version
+                        ? <Badge tone="neutral">v{item.userflow_version}</Badge>
+                        : <span className="muted">No reportada</span>}
+                    </td>
                     <td className="mono">{item.last_ip || '—'}</td>
                     <td>{item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : 'Nunca'}</td>
                     <td><Badge tone={item.status === 'active' ? 'ok' : 'bad'}>{item.status === 'active' ? 'Activo' : 'Revocado'}</Badge></td>
