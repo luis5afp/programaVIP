@@ -70,8 +70,8 @@ assert.match(engine, /function isOpenAiAuthFlowUrl/);
 assert.match(engine, /function isOpenAiAppUrl/);
 assert.match(
   engine,
-  /authFlowActive[\s\S]{0,220}return null;/,
-  'Session Manager must remain detached while OpenAI/Cloudflare authentication is active',
+  /const authStates = states\.filter[\s\S]{0,260}const challengeActive = authStates\.some\(isOpenAiChallengeState\)/,
+  'Session Manager must identify OpenAI auth pages and distinguish the Cloudflare challenge before attaching',
 );
 assert.match(
   engine,
