@@ -22,21 +22,29 @@ assert.match(
   'ChatGPT profiles must authorize autofill on auth.openai.com',
 );
 
-assert.match(captureState, /const openAiLoginPage =/);
-assert.match(captureState, /usernameContinueAction/);
-assert.match(captureState, /maybeAdvanceOpenAiUsername/);
+assert.match(captureState, /const nativeAdvanceOpenAiUsername = async/);
 assert.match(
   captureState,
-  /!values\?\.usernameInput \|\| values\.passwordInput/,
-  'automatic Continue must only happen before the password step',
+  /await action\.click\(\{ delay: 80 \}\)/,
+  'ChatGPT Continue must use a native Puppeteer click instead of a synthetic DOM click',
+);
+assert.match(
+  captureState,
+  /page\.waitForFunction\([\s\S]{0,700}type === 'password'/,
+  'native Continue must wait for URL change or password field',
 );
 assert.match(captureState, /recoverBlankChatgptAuth/);
 assert.match(captureState, /current\.pathname !== '\/auth\/login_with'/);
 assert.match(captureState, /page\.reload\(\{ waitUntil: 'domcontentloaded'/);
 assert.match(
   captureState,
-  /https:\/\/chatgpt\.com\/auth\/login\?callback_path=%2F/,
-  'blank ChatGPT login_with must fall back to the clean login route',
+  /fallback\.searchParams\.set\('login_hint', loginHint\)/,
+  'blank ChatGPT login_with recovery must preserve the username hint',
+);
+assert.doesNotMatch(
+  captureState,
+  /maybeAdvanceOpenAiUsername/,
+  'page-injected automation must not synthetically advance ChatGPT login',
 );
 
 assert.match(
@@ -44,7 +52,10 @@ assert.match(
   /host: 'auth\.openai\.com',[\s\S]{0,160}path: '\/'/,
   'managed proxies must preflight OpenAI authentication host',
 );
-assert.match(engine, /openAiLoginPage=/);
-assert.match(engine, /maybeAdvanceOpenAiUsername/);
+assert.doesNotMatch(
+  engine,
+  /maybeAdvanceOpenAiUsername/,
+  'temporary capture extension must not compete with native ChatGPT navigation',
+);
 
 console.log('ChatGPT auth recovery regression: OK');

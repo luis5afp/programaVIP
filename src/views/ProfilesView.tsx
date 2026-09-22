@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.30/userFLEX-Session-Manager-0.3.30-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.31/userFLEX-Session-Manager-0.3.31-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -149,7 +149,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.30+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.31+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
@@ -628,6 +628,22 @@ export function ProfilesView() {
     try {
       setCaptureSaveBusy(true);
       setError(null);
+
+      // The Chromium overlay may have already completed this same one-use
+      // capture. Check the server first so the Admin button is idempotent and
+      // does not send a stale Save protocol back to Session Manager.
+      const beforeSaveRows = await api.profileSessions.list();
+      setSessionStates(beforeSaveRows);
+      const alreadySaved = beforeSaveRows.find((item) => item.profile_id === captureLaunch.profileId);
+      if (alreadySaved && alreadySaved.status === 'active' && alreadySaved.version > captureLaunch.baselineVersion) {
+        setCaptureLaunch((value) => value ? { ...value, baselineVersion: alreadySaved.version } : value);
+        setCaptureSaveMessage(
+          `Sesión ya guardada correctamente · snapshot v${alreadySaved.version}${alreadySaved.public_ip ? ` · IP ${alreadySaved.public_ip}` : ''}.`,
+        );
+        setSuccess('Sesión guardada. Session Keeper quedó registrado para mantenerla automáticamente.');
+        return;
+      }
+
       setCaptureSaveMessage('Solicitando a Session Manager que capture cookies y almacenamiento...');
       launchCustomProtocol(captureLaunch.saveUrl);
 
@@ -1738,11 +1754,11 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.30 · userFLOW v0.3.30
+              Instalar / actualizar Session Manager v0.3.31 · userFLOW v0.3.31
             </a>
             <div className="help">
-              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, vuelve aquí y pulsa <b>Guardar sesión / generar snapshot</b>.
-              También puedes usar el botón Guardar sesión del panel flotante dentro de Chromium. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
+              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium y, cuando ya estés dentro de la cuenta, puedes guardar desde aquí o desde el panel flotante de Chromium.
+              Si una de las dos opciones ya guardó el snapshot, la otra lo detectará sin generar un error de ticket. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
               El enlace es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.
             </div>
           </div>
