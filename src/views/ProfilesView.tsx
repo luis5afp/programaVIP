@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.32/userFLEX-Session-Manager-0.3.32-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.33/userFLEX-Session-Manager-0.3.33-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -280,10 +280,17 @@ export function ProfilesView() {
         setSessionStates(rows);
         const current = rows.find((item) => item.profile_id === captureLaunch.profileId);
         if (current && current.status === 'active' && current.version > captureLaunch.baselineVersion) {
+          const verified = Boolean(current.validated_at);
           setCaptureSaveMessage(
-            `Sesión guardada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
+            verified
+              ? `Sesión guardada y verificada correctamente · snapshot v${current.version}${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`
+              : `Sesión guardada correctamente · snapshot v${current.version} · pendiente de verificación${current.public_ip ? ` · IP ${current.public_ip}` : ''}.`,
           );
-          setSuccess('Sesión guardada correctamente. Session Keeper quedó registrado para mantenerla automáticamente.');
+          setSuccess(
+            verified
+              ? 'Sesión guardada y verificada correctamente. Session Keeper quedó registrado para mantenerla automáticamente.'
+              : 'Sesión guardada correctamente. Session Keeper quedó registrado y completará la verificación automática.',
+          );
           setCaptureRetryReady(false);
           setCaptureLaunch(null);
           await load();
@@ -1741,7 +1748,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.32 · userFLOW v0.3.32
+              Instalar / actualizar Session Manager v0.3.33 · userFLOW v0.3.33
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
