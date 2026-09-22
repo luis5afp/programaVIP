@@ -929,6 +929,8 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       loginActionVisible: false,
+      meaningfulContent: false,
+      readyState: 'loading',
     }));
 
     let current;
