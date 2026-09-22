@@ -1,5 +1,5 @@
 export const MIN_USERFLOW_VERSION = '0.3.36';
-export const MIN_SESSION_MANAGER_VERSION = '0.3.36';
+export const MIN_SESSION_MANAGER_VERSION = '0.3.37';
 
 function versionParts(value: string) {
   const match = String(value || '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);

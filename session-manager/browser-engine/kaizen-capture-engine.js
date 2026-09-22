@@ -347,9 +347,13 @@ async function waitForProcessExit(proc, timeoutMs = 3000) {
 }
 
 async function closeBrowserGracefully(entry) {
-  if (!entry?.browser || typeof entry.browser.close !== 'function') return false;
+  let browser = entry?.browser || null;
+  if (!browser && entry?.debugPort) {
+    browser = await connectCaptureBrowser(entry.debugPort).catch(() => null);
+  }
+  if (!browser || typeof browser.close !== 'function') return false;
   const closePromise = Promise.resolve()
-    .then(() => entry.browser.close())
+    .then(() => browser.close())
     .catch(() => null);
   const exited = await waitForProcessExit(entry.process, 3000);
   await Promise.race([
@@ -359,7 +363,49 @@ async function closeBrowserGracefully(entry) {
   return exited || entry.process?.exitCode !== null;
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, background = false }) {
+async function devtoolsPageUrls(debugPort) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, {
+      signal: AbortSignal.timeout(1_500),
+      cache: 'no-store',
+    });
+    if (!response.ok) return [];
+    const targets = await response.json();
+    return Array.isArray(targets)
+      ? targets
+        .filter((target) => target?.type === 'page' && typeof target?.url === 'string')
+        .map((target) => String(target.url))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function isOpenAiAuthFlowUrl(rawUrl) {
+  try {
+    const value = new URL(String(rawUrl || ''));
+    const host = value.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host === 'auth.openai.com' || host.endsWith('.auth.openai.com')) return true;
+    if (host === 'challenges.cloudflare.com' || host.endsWith('.challenges.cloudflare.com')) return true;
+    return (host === 'chatgpt.com' || host.endsWith('.chatgpt.com'))
+      && value.pathname.toLowerCase().startsWith('/auth/');
+  } catch {
+    return false;
+  }
+}
+
+function isOpenAiAppUrl(rawUrl) {
+  try {
+    const value = new URL(String(rawUrl || ''));
+    const host = value.hostname.replace(/^www\./i, '').toLowerCase();
+    return (host === 'chatgpt.com' || host.endsWith('.chatgpt.com'))
+      && !value.pathname.toLowerCase().startsWith('/auth/');
+  } catch {
+    return false;
+  }
+}
+
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, background = false, initialUrl = 'about:blank' }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -382,7 +428,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
     ] : []),
   ];
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
-  args.push('about:blank');
+  args.push(initialUrl || 'about:blank');
   return args;
 }
 
@@ -594,6 +640,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       proxyRules,
       extensionDir,
       background,
+      initialUrl: openAiCapture ? profile.url : 'about:blank',
     }), {
       detached: false,
       windowsHide: false,
@@ -618,6 +665,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       autoSaveTimer: null,
       autoSaveCloseTimer: null,
       stableAuthChecks: 0,
+      openAiAuthFlowSeen: false,
+      openAiInitialInspectionDone: false,
       devtoolsTimer: null,
       closed: false,
     };
@@ -649,32 +698,63 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     });
 
     try {
-      const browser = await connectCaptureBrowser(debugPort);
-      entry.browser = browser;
-      entry.automation = await installCaptureAutomation({
-        browser,
-        profileUrl: profile.url,
-        credentials,
-        extensionStrategy: profile.extensionStrategy || 'custom',
-        controlPort: control.port,
-        controlSecret: secret,
-        onSave: saveCapture,
-      });
+      if (!openAiCapture || background) {
+        const browser = await connectCaptureBrowser(debugPort);
+        entry.browser = browser;
+        entry.automation = await installCaptureAutomation({
+          browser,
+          profileUrl: profile.url,
+          credentials,
+          extensionStrategy: profile.extensionStrategy || 'custom',
+          controlPort: control.port,
+          controlSecret: secret,
+          onSave: saveCapture,
+        });
+        await navigateCaptureHome(debugPort, profile.url);
+        entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
+        entry.devtoolsTimer.unref?.();
+      } else {
+        log.log?.('Session Manager OpenAI safe-auth mode: no CDP/Puppeteer attachment while the authentication challenge is active.');
+      }
 
       if (proxy) {
         entry.publicIp = verifiedPublicIp || proxy.publicIp || null;
       }
 
-      await navigateCaptureHome(debugPort, profile.url);
-      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
-      entry.devtoolsTimer.unref?.();
-
       if (!background) {
         entry.autoSaveTimer = setInterval(() => {
           if (active !== entry || entry.savePromise || entry.savedResult) return;
-          void inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false })
+
+          const inspect = async () => {
+            if (openAiCapture) {
+              const urls = await devtoolsPageUrls(debugPort);
+              const authFlowActive = urls.some(isOpenAiAuthFlowUrl);
+              if (authFlowActive) {
+                entry.openAiAuthFlowSeen = true;
+                entry.stableAuthChecks = 0;
+                return null;
+              }
+
+              const appActive = urls.some(isOpenAiAppUrl);
+              if (!appActive) {
+                entry.stableAuthChecks = 0;
+                return null;
+              }
+
+              // Before the user enters OpenAI auth, inspect the landing page only once.
+              // If it is not already authenticated, remain detached until the auth flow
+              // has been observed and the browser returns to chatgpt.com.
+              if (!entry.openAiAuthFlowSeen && entry.openAiInitialInspectionDone) return null;
+            }
+
+            const inspection = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false });
+            if (openAiCapture) entry.openAiInitialInspectionDone = true;
+            return inspection;
+          };
+
+          void inspect()
             .then((inspection) => {
-              if (active !== entry || entry.savePromise || entry.savedResult) return;
+              if (active !== entry || entry.savePromise || entry.savedResult || !inspection) return;
               if (inspection?.authenticated === true) entry.stableAuthChecks += 1;
               else entry.stableAuthChecks = 0;
               if (entry.stableAuthChecks < 2) return;

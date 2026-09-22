@@ -64,4 +64,24 @@ assert.match(
   'temporary extension must defensively exclude OpenAI/Cloudflare security pages',
 );
 
+
+assert.match(engine, /async function devtoolsPageUrls/);
+assert.match(engine, /function isOpenAiAuthFlowUrl/);
+assert.match(engine, /function isOpenAiAppUrl/);
+assert.match(
+  engine,
+  /authFlowActive[\s\S]{0,220}return null;/,
+  'Session Manager must remain detached while OpenAI/Cloudflare authentication is active',
+);
+assert.match(
+  engine,
+  /no CDP\/Puppeteer attachment while the authentication challenge is active/,
+  'interactive OpenAI capture must not attach Puppeteer before authentication completes',
+);
+assert.match(
+  engine,
+  /initialUrl: openAiCapture \? profile\.url : 'about:blank'/,
+  'OpenAI capture must let Chrome navigate natively instead of using Puppeteer for the initial page',
+);
+
 console.log('ChatGPT security-challenge compatibility regression: OK');
