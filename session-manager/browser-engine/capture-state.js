@@ -433,7 +433,7 @@ export async function installCaptureAutomation({
       } catch (error) {
         if (button) {
           button.disabled = false;
-          button.textContent = 'Guardar sesión';
+          button.textContent = 'Guardar ahora';
         }
         if (message) message.textContent = error?.message || String(error || 'No se pudo guardar la sesión.');
       }
@@ -479,9 +479,9 @@ export async function installCaptureAutomation({
           <div class="row">
             <button type="button" data-kind="username" class="secondary">Email</button>
             <button type="button" data-kind="password" class="secondary">Password</button>
-            <button type="button" data-kind="save">Guardar sesión</button>
+            <button type="button" data-kind="save">Guardar ahora</button>
           </div>
-          <div class="msg">El autofill está activo. Completa cualquier 2FA/CAPTCHA manualmente.</div>
+          <div class="msg">Guardado automático activo. Completa cualquier 2FA/CAPTCHA; si Chromium no se cierra, pulsa Guardar ahora.</div>
         </div>
       `;
       document.documentElement.appendChild(host);
@@ -838,7 +838,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
   }
 }
 
-export async function inspectCaptureSession(debugPort, profileUrl) {
+export async function inspectCaptureSession(debugPort, profileUrl, options = {}) {
   const browser = await connectCaptureBrowser(debugPort);
   try {
     const target = new URL(profileUrl);
@@ -859,6 +859,21 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
     }
 
     if (!page) {
+      if (options?.navigateIfMissing === false) {
+        return {
+          href: pages[0]?.url?.() || '',
+          hostname: '',
+          pathname: '',
+          usernameFieldVisible: false,
+          passwordFieldVisible: false,
+          loginActionVisible: false,
+          meaningfulContent: false,
+          readyState: 'loading',
+          loginLikeUrl: true,
+          targetOriginMatched: false,
+          authenticated: false,
+        };
+      }
       page = pages.find((item) => item.url() === 'about:blank') || pages[0] || await browser.newPage();
       await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => null);
       await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -912,6 +927,10 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
           ).replace(/\s+/g, ' ').trim().toLowerCase();
           return /^(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)$/.test(label);
         });
+      const bodyText = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+      const meaningfulContent = bodyText.length >= 24
+        || Array.from(document.querySelectorAll('main,[role="main"],article,section,nav'))
+          .some((element) => visible(element));
       return {
         href: location.href,
         hostname: location.hostname,
@@ -919,6 +938,8 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
         usernameFieldVisible,
         passwordFieldVisible,
         loginActionVisible,
+        meaningfulContent,
+        readyState: document.readyState,
       };
     }).catch(() => ({
       href: page.url(),
@@ -927,6 +948,8 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       loginActionVisible: false,
+      meaningfulContent: false,
+      readyState: 'loading',
     }));
 
     let current;
@@ -938,7 +961,11 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
       || ((target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com'))
         && (path.startsWith('/login') || path.startsWith('/signup')));
 
-    const authenticated = !loginLikeUrl
+    const targetOriginMatched = current.origin === target.origin;
+    const authenticated = targetOriginMatched
+      && state.meaningfulContent === true
+      && state.readyState !== 'loading'
+      && !loginLikeUrl
       && state.usernameFieldVisible !== true
       && state.passwordFieldVisible !== true
       && state.loginActionVisible !== true;
@@ -946,6 +973,7 @@ export async function inspectCaptureSession(debugPort, profileUrl) {
     return {
       ...state,
       loginLikeUrl,
+      targetOriginMatched,
       authenticated,
     };
   } finally {
