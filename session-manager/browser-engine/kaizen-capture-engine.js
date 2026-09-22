@@ -204,7 +204,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const wrap=document.createElement('div');
     wrap.id='userflex-session-overlay';
     wrap.style.cssText='position:fixed;right:18px;bottom:18px;z-index:2147483647;background:#0f172a;color:#fff;border:1px solid #334155;border-radius:14px;padding:12px 14px;box-shadow:0 12px 35px rgba(0,0,0,.35);font:13px system-ui;max-width:340px';
-    wrap.innerHTML='<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura KAIZEN</div><div id="userflex-session-message" style="opacity:.82;margin-bottom:10px">Completa el acceso. Cuando la cuenta esté abierta, guarda el perfil completo.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar sesión</button>';
+    wrap.innerHTML='<div style="font-weight:800;margin-bottom:8px">userFLEX · Captura KAIZEN</div><div id="userflex-session-message" style="opacity:.82;margin-bottom:10px">Guardado automático activo. Si Chromium no se cierra después de iniciar sesión, usa este botón.</div><button id="userflex-session-save" style="border:0;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer">Guardar ahora</button>';
     (document.documentElement||document.body)?.appendChild(wrap);
     const button=wrap.querySelector('#userflex-session-save');
     const message=wrap.querySelector('#userflex-session-message');
@@ -216,7 +216,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         const idb=Number(result.indexedDbCount||0), cookies=Number(result.cookieCount||0);
         message.textContent='Perfil guardado: '+cookies+' cookies, '+idb+' bases IndexedDB.'+(result.publicIp?' IP: '+result.publicIp:'');
       }else{
-        button.disabled=false; button.textContent='Guardar sesión'; message.textContent=result.error||'No se pudo guardar la sesión.';
+        button.disabled=false; button.textContent='Guardar ahora'; message.textContent=result.error||'No se pudo guardar la sesión automáticamente. Puedes volver a intentarlo.';
       }
     });
   };
