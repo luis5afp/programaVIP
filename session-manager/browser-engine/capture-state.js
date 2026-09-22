@@ -333,8 +333,12 @@ export async function installCaptureAutomation({
   const bootstrap = ({ allowedOrigins, username, password, controlUrl, controlSecret, saveBinding }) => {
     const currentHost = String(location.hostname || '').toLowerCase();
     const currentPath = String(location.pathname || '').toLowerCase();
-    const openAiLoginPage = (currentHost === 'chatgpt.com' && currentPath.startsWith('/auth/'))
-      || currentHost === 'auth.openai.com';
+    const openAiSecurityHost = currentHost === 'auth.openai.com'
+      || currentHost.endsWith('.auth.openai.com')
+      || currentHost === 'challenges.cloudflare.com'
+      || currentHost.endsWith('.challenges.cloudflare.com');
+    const openAiLoginPage = currentHost === 'chatgpt.com' && currentPath.startsWith('/auth/');
+    if (openAiSecurityHost || openAiLoginPage) return;
     const googleAuthAllowed = Array.isArray(allowedOrigins)
       && allowedOrigins.includes('https://accounts.google.com')
       && location.protocol === 'https:'
@@ -649,7 +653,59 @@ export async function installCaptureAutomation({
   };
 
   const nativeAdvanceOpenAiUsername = async (page) => {
-    if (!page || !payload.username || !openAiAuthPage(page.url())) return false;
+    if (!page || !openAiAuthPage(page.url())) return false;
+
+    const fillVisiblePassword = async () => {
+      if (!payload.password) return false;
+      let passwordHandle = null;
+      try {
+        passwordHandle = await page.evaluateHandle(() => {
+          const visible = (element) => {
+            try {
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              return style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && Number(style.opacity || 1) !== 0
+                && rect.width > 0
+                && rect.height > 0;
+            } catch {
+              return false;
+            }
+          };
+          return Array.from(document.querySelectorAll('input')).find((element) => {
+            if (!visible(element) || element.disabled || element.readOnly) return false;
+            const type = String(element.type || '').toLowerCase();
+            const hint = [
+              type,
+              element.name,
+              element.id,
+              element.autocomplete,
+              element.placeholder,
+              element.getAttribute('aria-label') || '',
+            ].join(' ').toLowerCase();
+            return type === 'password' || /password|passwd|passcode|contrase/.test(hint);
+          }) || null;
+        });
+        const passwordInput = passwordHandle?.asElement?.();
+        if (!passwordInput) return false;
+        const currentValue = await passwordInput.evaluate((element) => String(element.value || ''));
+        if (currentValue) return true;
+        await passwordInput.click({ clickCount: 3 }).catch(() => null);
+        await page.keyboard.press('Control+A').catch(() => null);
+        await page.keyboard.type(String(payload.password), { delay: 24 });
+        return true;
+      } catch {
+        return false;
+      } finally {
+        if (passwordHandle && typeof passwordHandle.dispose === 'function') {
+          await passwordHandle.dispose().catch(() => null);
+        }
+      }
+    };
+
+    if (await fillVisiblePassword()) return true;
+    if (!payload.username) return false;
 
     const href = page.url();
     const previous = chatgptAdvanceState.get(page) || { key: '', attempts: 0, lastAttemptAt: 0 };
@@ -657,9 +713,10 @@ export async function installCaptureAutomation({
     if (previous.key === key && previous.attempts >= 3) return false;
     if (previous.key === key && Date.now() - Number(previous.lastAttemptAt || 0) < 1_500) return false;
 
+    let usernameHandle = null;
     let actionHandle = null;
     try {
-      actionHandle = await page.evaluateHandle((expectedUsername) => {
+      usernameHandle = await page.evaluateHandle(() => {
         const visible = (element) => {
           try {
             const style = getComputedStyle(element);
@@ -673,8 +730,8 @@ export async function installCaptureAutomation({
             return false;
           }
         };
-        const fieldKind = (element) => {
-          if (!(element instanceof HTMLInputElement)) return null;
+        return Array.from(document.querySelectorAll('input')).find((element) => {
+          if (!visible(element) || element.disabled || element.readOnly) return false;
           const type = String(element.type || '').toLowerCase();
           const hint = [
             type,
@@ -684,19 +741,35 @@ export async function installCaptureAutomation({
             element.placeholder,
             element.getAttribute('aria-label') || '',
           ].join(' ').toLowerCase();
-          if (type === 'password' || /password|passwd|passcode|contrase/.test(hint)) return 'password';
-          if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
-          return null;
+          return type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint);
+        }) || null;
+      });
+
+      const usernameInput = usernameHandle?.asElement?.();
+      if (!usernameInput) return false;
+      let currentValue = await usernameInput.evaluate((element) => String(element.value || '').trim());
+      if (!currentValue) {
+        await usernameInput.click({ clickCount: 3 }).catch(() => null);
+        await page.keyboard.press('Control+A').catch(() => null);
+        await page.keyboard.type(String(payload.username), { delay: 24 });
+        currentValue = String(payload.username).trim();
+      }
+      if (currentValue.toLowerCase() !== String(payload.username).trim().toLowerCase()) return false;
+
+      actionHandle = await page.evaluateHandle((usernameElement) => {
+        const visible = (element) => {
+          try {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && Number(style.opacity || 1) !== 0
+              && rect.width > 0
+              && rect.height > 0;
+          } catch {
+            return false;
+          }
         };
-
-        const inputs = Array.from(document.querySelectorAll('input'))
-          .filter((element) => visible(element) && !element.disabled && !element.readOnly);
-        const usernameInput = inputs.find((element) => fieldKind(element) === 'username') || null;
-        const passwordInput = inputs.find((element) => fieldKind(element) === 'password') || null;
-        if (!usernameInput || passwordInput) return null;
-        const currentValue = String(usernameInput.value || '').trim().toLowerCase();
-        if (!currentValue || currentValue !== String(expectedUsername || '').trim().toLowerCase()) return null;
-
         const label = (element) => String(
           element?.textContent
           || element?.value
@@ -704,13 +777,13 @@ export async function installCaptureAutomation({
           || element?.getAttribute?.('title')
           || '',
         ).replace(/\s+/g, ' ').trim().toLowerCase();
-        const root = usernameInput.form || document;
+        const root = usernameElement?.form || document;
         const actions = Array.from(root.querySelectorAll('button,input[type="submit"],[role="button"]'))
           .filter((element) => visible(element) && !element.disabled);
         return actions.find((element) => /^(continue|next|continuar|siguiente)$/.test(label(element)))
           || actions.find((element) => element instanceof HTMLInputElement && element.type === 'submit')
           || null;
-      }, payload.username);
+      }, usernameInput);
 
       const action = actionHandle?.asElement?.();
       if (!action) return false;
@@ -725,8 +798,7 @@ export async function installCaptureAutomation({
       await page.waitForFunction(
         (startHref) => {
           if (location.href !== startHref) return true;
-          const inputs = Array.from(document.querySelectorAll('input'));
-          return inputs.some((element) => {
+          return Array.from(document.querySelectorAll('input')).some((element) => {
             const type = String(element.type || '').toLowerCase();
             const hint = [
               type,
@@ -743,10 +815,14 @@ export async function installCaptureAutomation({
         href,
       ).catch(() => null);
 
+      await fillVisiblePassword();
       return true;
     } catch {
       return false;
     } finally {
+      if (usernameHandle && typeof usernameHandle.dispose === 'function') {
+        await usernameHandle.dispose().catch(() => null);
+      }
       if (actionHandle && typeof actionHandle.dispose === 'function') {
         await actionHandle.dispose().catch(() => null);
       }
@@ -768,10 +844,11 @@ export async function installCaptureAutomation({
         }
         await page.evaluateOnNewDocument(bootstrap, payload);
       }
-      if (credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
+      const openAiAuth = openAiAuthPage(page.url());
+      if (!openAiAuth && credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
         await page.evaluate(bootstrap, payload);
       }
-      if (openAiAuthPage(page.url())) {
+      if (openAiAuth) {
         void nativeAdvanceOpenAiUsername(page).finally(() => recoverBlankChatgptAuth(page));
       } else {
         void recoverBlankChatgptAuth(page);

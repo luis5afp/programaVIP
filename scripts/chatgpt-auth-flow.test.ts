@@ -19,10 +19,20 @@ assert.match(policy, /isOpenAiServiceHost/);
 assert.match(
   policy,
   /isOpenAiServiceHost\(target\.hostname\)[\s\S]{0,160}origins\.add\(OPENAI_AUTH_ORIGIN\)/,
-  'ChatGPT profiles must authorize autofill on auth.openai.com',
+  'ChatGPT profiles must recognize auth.openai.com as an authentication origin',
 );
 
+assert.match(captureState, /openAiSecurityHost/);
+assert.match(captureState, /currentHost === 'auth\.openai\.com'/);
+assert.match(captureState, /currentHost === 'challenges\.cloudflare\.com'/);
+assert.match(
+  captureState,
+  /if \(openAiSecurityHost \|\| openAiLoginPage\) return;/,
+  'OpenAI/Cloudflare authentication pages must not receive the persistent DOM overlay or MutationObserver',
+);
 assert.match(captureState, /const nativeAdvanceOpenAiUsername = async/);
+assert.match(captureState, /page\.keyboard\.type\(String\(payload\.username\)/);
+assert.match(captureState, /page\.keyboard\.type\(String\(payload\.password\)/);
 assert.match(
   captureState,
   /await action\.click\(\{ delay: 80 \}\)/,
@@ -30,32 +40,28 @@ assert.match(
 );
 assert.match(
   captureState,
-  /page\.waitForFunction\([\s\S]{0,700}type === 'password'/,
-  'native Continue must wait for URL change or password field',
+  /const openAiAuth = openAiAuthPage\(page\.url\(\)\);[\s\S]{0,260}!openAiAuth && credentialAutofillAllowsUrl/,
+  'OpenAI auth pages must skip injected autofill/overlay code and use the native fallback only',
 );
 assert.match(captureState, /recoverBlankChatgptAuth/);
-assert.match(captureState, /current\.pathname !== '\/auth\/login_with'/);
-assert.match(captureState, /page\.reload\(\{ waitUntil: 'domcontentloaded'/);
-assert.match(
-  captureState,
-  /fallback\.searchParams\.set\('login_hint', loginHint\)/,
-  'blank ChatGPT login_with recovery must preserve the username hint',
-);
-assert.doesNotMatch(
-  captureState,
-  /maybeAdvanceOpenAiUsername/,
-  'page-injected automation must not synthetically advance ChatGPT login',
-);
 
+assert.match(engine, /function isOpenAiProfileUrl/);
 assert.match(
   engine,
-  /host: 'auth\.openai\.com',[\s\S]{0,160}path: '\/'/,
-  'managed proxies must preflight OpenAI authentication host',
+  /const extensionDir = openAiCapture[\s\S]{0,100}\? null/,
+  'ChatGPT/OpenAI capture must launch without the temporary userFLEX Chrome extension',
 );
-assert.doesNotMatch(
+assert.match(engine, /--disable-translate/);
+assert.match(engine, /Translate,TranslateUI/);
+assert.match(
   engine,
-  /maybeAdvanceOpenAiUsername/,
-  'temporary capture extension must not compete with native ChatGPT navigation',
+  /host: 'auth\.openai\.com'[\s\S]{0,220}host: 'challenges\.cloudflare\.com'/,
+  'managed proxies must preflight both OpenAI auth and the Cloudflare challenge host',
+);
+assert.match(
+  engine,
+  /exclude_matches:[\s\S]{0,260}challenges\.cloudflare\.com/,
+  'temporary extension must defensively exclude OpenAI/Cloudflare security pages',
 );
 
-console.log('ChatGPT auth recovery regression: OK');
+console.log('ChatGPT security-challenge compatibility regression: OK');

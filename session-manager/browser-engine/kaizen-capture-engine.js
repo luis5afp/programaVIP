@@ -103,6 +103,18 @@ async function killProcessTree(proc) {
   try { proc.kill('SIGTERM'); } catch {}
 }
 
+function isOpenAiProfileUrl(profileUrl) {
+  try {
+    const host = new URL(String(profileUrl || '')).hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'chatgpt.com'
+      || host.endsWith('.chatgpt.com')
+      || host === 'openai.com'
+      || host.endsWith('.openai.com');
+  } catch {
+    return false;
+  }
+}
+
 function extensionFiles({ port, secret, profileUrl, extensionStrategy = 'custom' }) {
   const target = new URL(profileUrl);
   const rootHost = target.hostname.replace(/^www\./i, '');
@@ -119,6 +131,12 @@ function extensionFiles({ port, secret, profileUrl, extensionStrategy = 'custom'
     background: { service_worker: 'background.js' },
     content_scripts: [{
       matches: ['http://*/*', 'https://*/*'],
+      exclude_matches: [
+        'https://auth.openai.com/*',
+        'https://*.auth.openai.com/*',
+        'https://challenges.cloudflare.com/*',
+        'https://*.challenges.cloudflare.com/*',
+      ],
       run_at: 'document_start',
       js: ['content.js'],
     }],
@@ -349,7 +367,8 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
     '--no-first-run',
     '--no-default-browser-check',
     ...(background ? ['--window-position=-32000,-32000', '--window-size=1200,900'] : ['--start-maximized']),
-    '--disable-features=SignInProfileCreation,SigninConsistency',
+    '--disable-features=SignInProfileCreation,SigninConsistency,Translate,TranslateUI',
+    '--disable-translate',
     '--disable-password-saving',
     '--disable-save-password-bubble',
     '--disable-session-crashed-bubble',
@@ -357,8 +376,10 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
     '--disable-sync',
     '--allow-browser-signin=false',
     '--lang=es-ES',
-    `--disable-extensions-except=${extensionDir}`,
-    `--load-extension=${extensionDir}`,
+    ...(extensionDir ? [
+      `--disable-extensions-except=${extensionDir}`,
+      `--load-extension=${extensionDir}`,
+    ] : []),
   ];
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
   args.push('about:blank');
@@ -410,7 +431,10 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     }
 
     const userDataDir = path.join(app.getPath('userData'), 'browserProfilesData', safeSegment(profile.id));
-    const extensionDir = path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
+    const openAiCapture = isOpenAiProfileUrl(profile.url);
+    const extensionDir = openAiCapture
+      ? null
+      : path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
     await fsp.mkdir(userDataDir, { recursive: true });
     await killStrayProfileProcesses(userDataDir);
     await markProfileExitedCleanly(userDataDir);
@@ -454,21 +478,24 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         }
       }
 
-      const normalizedTargetHost = target.hostname.replace(/^www\./i, '').toLowerCase();
-      const chatgptProfile = normalizedTargetHost === 'chatgpt.com'
-        || normalizedTargetHost.endsWith('.chatgpt.com')
-        || normalizedTargetHost === 'openai.com'
-        || normalizedTargetHost.endsWith('.openai.com');
-      if (chatgptProfile) {
-        try {
-          await probeKaizenProxyHttps(proxy, {
-            host: 'auth.openai.com',
-            port: 443,
-            path: '/',
-          });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
-          throw new Error(`El proxy del perfil puede abrir ChatGPT, pero no puede completar HTTPS con auth.openai.com. ${detail}`);
+      if (openAiCapture) {
+        const requiredAuthHosts = [
+          { host: 'auth.openai.com', path: '/' },
+          { host: 'challenges.cloudflare.com', path: '/' },
+        ];
+        for (const authTarget of requiredAuthHosts) {
+          try {
+            await probeKaizenProxyHttps(proxy, {
+              host: authTarget.host,
+              port: 443,
+              path: authTarget.path,
+            });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+            throw new Error(
+              `El proxy del perfil no puede completar la verificación segura de ChatGPT con ${authTarget.host}. ${detail}`,
+            );
+          }
         }
       }
 
@@ -550,12 +577,16 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       onSave: saveCapture,
     });
 
-    await prepareCaptureExtension(extensionDir, {
-      port: control.port,
-      secret,
-      profileUrl: profile.url,
-      extensionStrategy: profile.extensionStrategy || 'custom',
-    });
+    if (extensionDir) {
+      await prepareCaptureExtension(extensionDir, {
+        port: control.port,
+        secret,
+        profileUrl: profile.url,
+        extensionStrategy: profile.extensionStrategy || 'custom',
+      });
+    } else {
+      log.log?.('Session Manager OpenAI safe-auth mode: capture extension disabled for security challenge compatibility.');
+    }
 
     const proc = spawn(executable, chromeArgs({
       userDataDir,
