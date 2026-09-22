@@ -1296,7 +1296,12 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const job = await captureJob(env, rawToken, 'complete');
     const profile = await profileRow(env, job.profile_id);
     const publicIp = optional(body.publicIp, 64);
-    const stored = await storeSessionSnapshot(env, profile, body.material, { publicIp });
+    const authenticated = body.authenticated === true;
+    const now = new Date().toISOString();
+    const stored = await storeSessionSnapshot(env, profile, body.material, {
+      publicIp,
+      validatedAt: authenticated ? now : null,
+    });
     const keeperToken = await registerSessionKeeper(env, job.profile_id);
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
@@ -1308,6 +1313,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       profile_id: job.profile_id,
       version: stored.version,
       public_ip: publicIp,
+      validated: authenticated,
+      validated_at: authenticated ? now : null,
       keeper_token: keeperToken,
     });
   }

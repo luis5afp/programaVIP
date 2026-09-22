@@ -452,12 +452,23 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const secret = crypto.randomBytes(32).toString('base64url');
     let entry = null;
 
-    const saveCapture = async () => {
+    const confirmAuthenticatedSession = async () => {
+      const first = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      if (first?.authenticated !== true) return false;
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const second = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      return second?.authenticated === true;
+    };
+
+    const saveCapture = async ({ authenticated: preverifiedAuthenticated = false } = {}) => {
       if (!entry || active !== entry) throw new Error('La captura ya no está activa.');
       if (entry.savedResult) return entry.savedResult;
       if (entry.savePromise) return entry.savePromise;
 
       entry.savePromise = (async () => {
+        const authenticated = preverifiedAuthenticated === true
+          ? true
+          : await confirmAuthenticatedSession();
         const captured = await capturePortableSession({
           debugPort,
           profile,
@@ -468,6 +479,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           material: captured.material,
           publicIp,
           diagnostics: captured.diagnostics,
+          authenticated,
         });
         const result = {
           ok: true,
@@ -476,6 +488,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           cookieCount: captured.diagnostics.cookieCount,
           indexedDbCount: captured.diagnostics.indexedDbCount,
           indexedDbBytes: captured.diagnostics.indexedDbBytes,
+          authenticated,
+          validated: completed.validated === true,
         };
         entry.savedResult = result;
         if (entry.autoSaveTimer) {
@@ -600,7 +614,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
               else entry.stableAuthChecks = 0;
               if (entry.stableAuthChecks < 2) return;
               log.log?.(`Session Manager KAIZEN detected authenticated profile ${profile.name || profile.id}; saving automatically.`);
-              void saveCapture().catch((error) => {
+              void saveCapture({ authenticated: true }).catch((error) => {
                 entry.stableAuthChecks = 0;
                 log.warn?.('Session Manager automatic save failed:', error?.message || error);
               });

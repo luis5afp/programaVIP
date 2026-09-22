@@ -99,7 +99,7 @@ function scheduleRequestedKeeperChecks(delayMs = 250) {
 function queueKeeperCheck(profileId, reason = 'event') {
   if (!/^[0-9a-f-]{36}$/i.test(String(profileId || ''))) return;
   const last = Number(keeperLastEventCheck.get(profileId) || 0);
-  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update';
+  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update' || reason === 'capture-complete';
   if (!bypassCooldown && Date.now() - last < KEEPER_EVENT_COOLDOWN_MS) return;
   keeperRequestedProfiles.set(profileId, reason);
   scheduleRequestedKeeperChecks();
@@ -502,17 +502,22 @@ async function startCapture(rawUrl) {
       profile,
       credentials,
       proxy,
-      onComplete: async ({ material, publicIp, diagnostics }) => {
+      onComplete: async ({ material, publicIp, diagnostics, authenticated }) => {
         const completed = await apiPost(endpoint, '/api/session-manager/complete', {
           token,
           publicIp,
           material,
+          authenticated: authenticated === true,
         }, 90_000);
         if (completed?.keeper_token) {
           await saveKeeper(profile, completed.keeper_token);
           configureKeeperStartup();
           scheduleKeeper();
           void connectKeeperRealtime();
+          const firstKeeperCheck = setTimeout(() => {
+            queueKeeperCheck(profile.id, 'capture-complete');
+          }, 1500);
+          firstKeeperCheck.unref?.();
         }
 
         const completedResult = {
@@ -522,6 +527,8 @@ async function startCapture(rawUrl) {
           cookieCount: Number(diagnostics.cookieCount || 0),
           indexedDbCount: Number(diagnostics.indexedDbCount || 0),
           indexedDbBytes: Number(diagnostics.indexedDbBytes || 0),
+          authenticated: authenticated === true,
+          validated: completed?.validated === true,
         };
         lastCompletedCapture = {
           token,
