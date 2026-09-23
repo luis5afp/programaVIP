@@ -7,6 +7,12 @@ const worker = readFileSync(new URL('../cloudflare/lib/profile-sessions.ts', imp
 const manager = readFileSync(new URL('../session-manager/main.js', import.meta.url), 'utf8');
 const engine = readFileSync(new URL('../session-manager/browser-engine/kaizen-capture-engine.js', import.meta.url), 'utf8');
 const captureState = readFileSync(new URL('../session-manager/browser-engine/capture-state.js', import.meta.url), 'utf8');
+const cloudflareWorker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
+const clientApi = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
+const profileImages = readFileSync(new URL('../cloudflare/lib/profile-images.ts', import.meta.url), 'utf8');
+const clientRenderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
+const clientStyles = readFileSync(new URL('../client-app/styles.css', import.meta.url), 'utf8');
+const adminStyles = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
 assert.doesNotMatch(admin, /Guardar sesión \/ generar snapshot/, 'Admin must not expose a second save button');
 assert.doesNotMatch(admin, /saveCaptureFromAdmin/, 'Admin must not send a second save command for the active ticket');
@@ -41,9 +47,9 @@ assert.match(admin, /network_strategy === 'assigned-proxy'/, 'direct client acti
 assert.match(admin, /Laptop size=\{15\}/, 'compact profile row must show the client-open icon before maintenance actions');
 
 assert.match(admin, /Abrir como invitado/, 'profile cards must expose the guest launch action');
-assert.match(admin, /GUEST_MIN_SESSION_MANAGER_VERSION = '0\.3\.43'/);
-assert.match(admin, /Este perfil reporta v\$\{observedVersion\}/, 'guest action must stop before launching an unsupported Session Manager version');
-assert.match(admin, /Solicitud enviada a Session Manager/, 'Admin must not claim guest Chrome opened before the protocol handler succeeds');
+assert.doesNotMatch(admin, /GUEST_MIN_SESSION_MANAGER_VERSION/, 'stale Keeper version must not block guest launch');
+assert.doesNotMatch(admin, /Este perfil reporta v\$\{observedVersion\}/, 'stale Keeper version must remain informational only');
+assert.match(admin, /La versión guardada por Keeper es informativa y puede estar atrasada/, 'guest launch must explain stale Keeper metadata without blocking');
 assert.match(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'guest action must request a one-time Session Manager link');
 assert.match(api, /\/guest-launch/, 'Admin API must expose guest launch');
 assert.match(worker, /userflex-session-guest:/, 'guest links must use a separate one-time token namespace');
@@ -55,6 +61,17 @@ assert.match(engine, /'--guest'/, 'guest Chromium must use the browser guest mod
 assert.match(engine, /temporaryProfile: true/, 'guest Chromium must use disposable profile storage');
 assert.match(engine, /app\.getPath\('temp'\)/, 'guest data must live under temporary storage');
 assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated guest launcher');
+
+assert.match(cloudflareWorker, /\/api\/profile-images\//, 'Worker must expose same-origin profile images');
+assert.match(profileImages, /serveProfileImage/, 'profile image proxy must be implemented');
+assert.match(clientApi, /profileImageUrl\(request, profile\)/, 'userFLOW catalog must receive Worker-hosted image URLs');
+assert.match(admin, /profileImageSrc\(profile\)/, 'Admin must use Worker-hosted profile image URLs');
+assert.match(clientRenderer, /profile-image-fallback/, 'userFLOW must show a clean fallback when a logo cannot load');
+assert.match(clientRenderer, /img\.addEventListener\('error'/, 'broken remote logos must not render the browser broken-image glyph');
+assert.match(clientStyles, /width: 64px;[\s\S]{0,80}height: 64px;/, 'userFLOW profile logos must be enlarged');
+assert.match(clientStyles, /object-position: center/, 'userFLOW profile logos must stay centered');
+assert.match(adminStyles, /profile-image-compact \{ width:56px; height:56px;/, 'Admin profile logos must be enlarged');
+assert.match(adminStyles, /object-position:center/, 'Admin profile logos must stay centered');
 
 assert.match(engine, /entry\.savedResult/);
 assert.match(engine, /entry\.savePromise/);
