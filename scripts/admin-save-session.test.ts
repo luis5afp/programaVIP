@@ -11,6 +11,7 @@ const cloudflareWorker = readFileSync(new URL('../cloudflare/worker.ts', import.
 const clientApi = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 const profileImages = readFileSync(new URL('../cloudflare/lib/profile-images.ts', import.meta.url), 'utf8');
 const clientRenderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
+const clientMain = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const clientStyles = readFileSync(new URL('../client-app/styles.css', import.meta.url), 'utf8');
 const adminStyles = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
@@ -62,10 +63,17 @@ assert.match(engine, /temporaryProfile: true/, 'guest Chromium must use disposab
 assert.match(engine, /app\.getPath\('temp'\)/, 'guest data must live under temporary storage');
 assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated guest launcher');
 
-assert.match(cloudflareWorker, /profile-images/, 'Worker must expose same-origin profile images');
-assert.match(profileImages, /serveProfileImage/, 'profile image proxy must be implemented');
-assert.match(clientApi, /profileImageUrl\(request, profile\)/, 'userFLOW catalog must receive Worker-hosted image URLs');
-assert.match(admin, /profileImageSrc\(profile\)/, 'Admin must use Worker-hosted profile image URLs');
+assert.match(cloudflareWorker, /profile-images/, 'legacy same-origin image route stays available for compatibility');
+assert.match(profileImages, /serveProfileImage/, 'legacy profile image proxy must stay available');
+assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must receive the original stored profile image URL');
+assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
+assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
+assert.match(admin, /La imagen fue subida, pero el perfil no confirmó el nuevo image_url/, 'Admin must verify that an edited image was persisted');
+assert.match(admin, /closeEditor\(\);\s*await load\(\);/, 'Admin must await refreshed profile data after saving an image');
+assert.match(clientMain, /async function profileImageDataUrl/, 'userFLOW main process must download profile images itself');
+assert.match(clientMain, /data:\$\{mime\};base64/, 'userFLOW must inline downloaded profile images as local data URLs');
+assert.match(clientMain, /cache: 'no-store'/, 'userFLOW image refresh must bypass stale HTTP cache');
+assert.match(clientMain, /hydrateCatalogProfileImages/, 'userFLOW catalog must hydrate local profile images before rendering');
 assert.match(clientRenderer, /profile-image-fallback/, 'userFLOW must show a clean fallback when a logo cannot load');
 assert.match(clientRenderer, /img\.addEventListener\('error'/, 'broken remote logos must not render the browser broken-image glyph');
 assert.match(clientStyles, /width: 64px;[\s\S]{0,80}height: 64px;/, 'userFLOW profile logos must be enlarged');

@@ -25,9 +25,10 @@ function inetHost(value: unknown): string | null {
   return raw.split('/')[0] || null;
 }
 
-function profileImageUrl(request: Request, profile: any) {
-  if (!profile?.image_url || !profile?.id) return null;
-  return `${new URL(request.url).origin}/api/profile-images/${profile.id}`;
+function profileImageUrl(profile: any) {
+  return typeof profile?.image_url === 'string' && profile.image_url.trim()
+    ? profile.image_url.trim()
+    : null;
 }
 
 export async function clientCatalog(request: Request, env: Env, id: ClientIdentity) {
@@ -55,7 +56,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
   const [profiles, defaults, sessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
     sb(
       env,
-      `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=in.(${ids})&enabled=eq.true`,
+      `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=in.(${ids})&enabled=eq.true`,
     ),
     sb(
       env,
@@ -136,7 +137,8 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
         name: profile.name,
         url: profile.url,
         platform: profile.platform,
-        imageUrl: profileImageUrl(request, profile),
+        imageUrl: profileImageUrl(profile),
+        imageVersion: profile.updated_at || null,
         tags: profile.tags || [],
         managedConnection: networkUsesProxy,
         sessionMode: profile.session_mode,
@@ -210,7 +212,7 @@ export async function clientLaunch(
     ),
     sb(
       env,
-      `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&enabled=eq.true&limit=1`,
+      `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=eq.${profileId}&enabled=eq.true&limit=1`,
     ),
     sb(
       env,
@@ -373,7 +375,8 @@ export async function clientLaunch(
       name: profile.name,
       url: profile.url,
       platform: profile.platform,
-      imageUrl: profileImageUrl(request, profile),
+      imageUrl: profileImageUrl(profile),
+      imageVersion: profile.updated_at || null,
       tags: profile.tags || [],
       sessionMode: profile.session_mode,
       sessionReady: true,
