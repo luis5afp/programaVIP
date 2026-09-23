@@ -23,13 +23,36 @@ export default function App() {
   const [sessionAlerts, setSessionAlerts] = useState<SessionAlertSummary | null>(null);
 
   useEffect(() => {
+    const expireSession = () => {
+      setSession(null);
+      setView('dashboard');
+    };
+    window.addEventListener('userflex:admin-session-expired', expireSession);
     api.session()
       .then((result) => setSession(result.user))
       .catch((error: ApiError) => {
         if (error.status === 401) setSession(null);
         else setSession(null);
       });
+    return () => window.removeEventListener('userflex:admin-session-expired', expireSession);
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const refreshSession = async () => {
+      try {
+        const result = await api.session();
+        setSession(result.user);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          setSession(null);
+          setView('dashboard');
+        }
+      }
+    };
+    const timer = window.setInterval(() => void refreshSession(), 2 * 60 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [session?.id]);
 
   useEffect(() => {
     if (!session) {
