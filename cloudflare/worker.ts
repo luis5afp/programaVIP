@@ -24,7 +24,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.33';
+const APP_VERSION = '1.4.34';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
