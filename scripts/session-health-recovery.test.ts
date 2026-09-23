@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const engine = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
 const state = readFileSync(new URL('../client-app/browser-engine/session-state.js', import.meta.url), 'utf8');
+const capture = readFileSync(new URL('../session-manager/browser-engine/capture-state.js', import.meta.url), 'utf8');
 const sessions = readFileSync(new URL('../cloudflare/lib/profile-sessions.ts', import.meta.url), 'utf8');
 const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
@@ -53,6 +54,36 @@ assert.match(
   engine,
   /const sessionVersionMatches = !forceRestore/,
   'forced restore must bypass the local generation reuse check',
+);
+assert.match(
+  engine,
+  /const sessionVersionMatches = !forceRestore[\s\S]{0,260}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
+  'a local managed profile must only reuse the exact central snapshot generation',
+);
+assert.match(
+  engine,
+  /const generationMatches = \(!snapshotManaged[\s\S]{0,180}Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
+  'an already-open managed browser must also be replaced when the central snapshot generation changes',
+);
+assert.match(
+  state,
+  /flowSignedOut/,
+  'runtime inspection must explicitly recognize signed-out Google Flow state',
+);
+assert.match(
+  state,
+  /servicelogin/,
+  'runtime inspection must recognize Google ServiceLogin redirects',
+);
+assert.match(
+  capture,
+  /cookieRelevantToTarget/,
+  'Flow capture must include Google Accounts host cookies in addition to flow.google.com cookies',
+);
+assert.match(
+  capture,
+  /Google Flow todavía no expuso cookies de autenticación activas/,
+  'Flow capture must reject snapshots without active Google authentication cookies',
 );
 assert.match(
   worker,

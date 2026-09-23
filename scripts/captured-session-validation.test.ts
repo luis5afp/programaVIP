@@ -57,4 +57,49 @@ assert.doesNotThrow(() => validateCapturedMaterialData(
   },
 ));
 
+const flowProfile = { id: profile.id, url: 'https://flow.google.com/?utm_source=flow' };
+const flowValid = {
+  format: 'userflex-browser-session-v2',
+  profileId: profile.id,
+  allowedOrigin: 'https://flow.google.com',
+  capturedUrl: 'https://flow.google.com/?utm_source=flow',
+  cookies: [
+    { name: 'SID', value: 'google-session', domain: '.google.com', expirationDate: expires },
+    { name: 'ACCOUNT_CHOOSER', value: 'account-host-cookie', domain: 'accounts.google.com', hostOnly: true, expirationDate: expires },
+  ],
+  storage: { origin: 'https://flow.google.com' },
+};
+assert.doesNotThrow(
+  () => validateCapturedMaterialData(flowProfile, flowValid),
+  'Flow must accept both parent-domain and accounts.google.com host cookies',
+);
+assert.equal(
+  (() => {
+    try {
+      validateCapturedMaterialData(flowProfile, {
+        ...flowValid,
+        cookies: flowValid.cookies.filter((cookie) => cookie.name !== 'SID'),
+      });
+      return null;
+    } catch (error: any) {
+      return error?.code || error?.message;
+    }
+  })(),
+  'GOOGLE_FLOW_AUTH_COOKIES_INVALID',
+);
+assert.equal(
+  (() => {
+    try {
+      validateCapturedMaterialData(flowProfile, {
+        ...flowValid,
+        cookies: [...flowValid.cookies, { name: 'foreign', value: 'x', domain: '.example.com' }],
+      });
+      return null;
+    } catch (error: any) {
+      return error?.code || error?.message;
+    }
+  })(),
+  'SESSION_COOKIE_DOMAIN_MISMATCH',
+);
+
 console.log('Captured session validation: OK');

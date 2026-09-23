@@ -20,6 +20,25 @@ function cookieMatchesHost(cookie: any, hostname: string) {
   return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
 }
 
+function isGoogleFlowHost(hostname: string) {
+  return String(hostname || '').toLowerCase() === 'flow.google.com';
+}
+
+function isGoogleAccountsDomain(value: unknown) {
+  const hostname = String(value || '').replace(/^\./, '').toLowerCase();
+  return hostname === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(hostname);
+}
+
+function isGoogleAuthCookieName(name: unknown) {
+  return /^(?:SID|HSID|SSID|APISID|SAPISID|__Secure-(?:1P|3P)?SID|__Secure-(?:1P|3P)?APISID)$/i
+    .test(String(name || ''));
+}
+
+function cookieRelatedToProfile(cookie: any, hostname: string) {
+  if (cookieMatchesHost(cookie, hostname)) return true;
+  return isGoogleFlowHost(hostname) && isGoogleAccountsDomain(cookie?.domain);
+}
+
 export function validateCapturedMaterialData(profile: any, material: any) {
   if (!material || typeof material !== 'object' || Array.isArray(material)) {
     fail(400, 'INVALID_SESSION_MATERIAL', 'El material de sesión no es válido.');
@@ -63,7 +82,7 @@ export function validateCapturedMaterialData(profile: any, material: any) {
   }
 
   const hostname = target.hostname.toLowerCase();
-  const unrelatedCookies = cookies.filter((cookie: any) => !cookieMatchesHost(cookie, hostname));
+  const unrelatedCookies = cookies.filter((cookie: any) => !cookieRelatedToProfile(cookie, hostname));
   if (unrelatedCookies.length) {
     fail(409, 'SESSION_COOKIE_DOMAIN_MISMATCH', 'La sesión contiene cookies que no pertenecen a la web del perfil.');
   }
@@ -89,6 +108,23 @@ export function validateCapturedMaterialData(profile: any, material: any) {
         409,
         'NETFLIX_AUTH_COOKIES_INVALID',
         `La captura de Netflix no contiene cookies de autenticación activas: ${missing.join(', ')}.`,
+      );
+    }
+  }
+
+  if (isGoogleFlowHost(hostname)) {
+    const nowSeconds = Date.now() / 1000;
+    const hasActiveGoogleAuth = cookies.some((cookie: any) => {
+      if (!cookieRelatedToProfile(cookie, hostname) || !isGoogleAuthCookieName(cookie?.name)) return false;
+      if (!String(cookie?.value ?? '')) return false;
+      const expiry = Number(cookie.expirationDate ?? cookie.expires ?? 0);
+      return !(Number.isFinite(expiry) && expiry > 0 && expiry <= nowSeconds);
+    });
+    if (!hasActiveGoogleAuth) {
+      fail(
+        409,
+        'GOOGLE_FLOW_AUTH_COOKIES_INVALID',
+        'La captura de Google Flow no contiene cookies activas de la cuenta de Google.',
       );
     }
   }
@@ -244,6 +280,7 @@ function targetInfo(targetUrl: string) {
 function cookieAppliesToHost(cookie: ImportedCookie, hostname: string) {
   const domain = cookie.domain.replace(/^\./, '').toLowerCase();
   const host = hostname.toLowerCase();
+  if (isGoogleFlowHost(host) && isGoogleAccountsDomain(domain)) return true;
   if (cookie.hostOnly === true) return host === domain;
   return host === domain || host.endsWith(`.${domain}`);
 }
@@ -286,7 +323,9 @@ export function inspectCookieImport(targetUrl: string, jsonValue: any) {
     .map(([domain, count]) => ({
       domain,
       count,
-      matchesProfile: target.hostname === domain || target.hostname.endsWith(`.${domain}`),
+      matchesProfile: target.hostname === domain
+        || target.hostname.endsWith(`.${domain}`)
+        || (isGoogleFlowHost(target.hostname) && isGoogleAccountsDomain(domain)),
     }))
     .sort((a, b) => Number(b.matchesProfile) - Number(a.matchesProfile) || b.count - a.count || a.domain.localeCompare(b.domain))
     .slice(0, 50);

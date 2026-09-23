@@ -336,7 +336,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
-      const generationMatches = (!snapshotManaged || Number(existing.sessionVersion || 0) > 0)
+      const generationMatches = (!snapshotManaged
+        || (desiredSessionVersion > 0 && Number(existing.sessionVersion || 0) === desiredSessionVersion))
         && String(existing.credentialRevision || '') === desiredCredentialRevision
         && String(existing.runtimeKey || '') === desiredRuntimeKey
         && String(existing.extensionKey || '') === desiredExtensionKey;
@@ -372,14 +373,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    // A newer central snapshot is a recovery source, not a reason to destroy a
-    // local Chromium profile that may still have a perfectly valid rolling
-    // session. Reuse the local profile first and only force-restore the newest
-    // server snapshot when the live health check detects a login state.
+    // Managed snapshots are versioned contracts. A local Chromium profile may
+    // keep rolling state only while it represents the exact central generation.
+    // When an administrator renews vN -> vN+1, every client must adopt vN+1
+    // instead of silently reusing stale Google/Flow cookies from an older marker.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
       && desiredSessionVersion > 0
-      && Number(sessionMarker?.version || 0) > 0
+      && Number(sessionMarker?.version || 0) === desiredSessionVersion
       && sessionMarker?.profileId === profile.id
       && restorePolicyMatches;
 
