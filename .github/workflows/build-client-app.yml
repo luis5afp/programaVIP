@@ -17,9 +17,15 @@ on:
 permissions:
   contents: write
 
+
+concurrency:
+  group: userflex-client-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 25
     environment: production
     defaults:
       run:
