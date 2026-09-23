@@ -578,6 +578,19 @@ export async function installCaptureAutomation({
     }
   };
 
+  const openAiManualVerificationPage = (rawUrl) => {
+    try {
+      const value = new URL(String(rawUrl || ''));
+      const host = value.hostname.toLowerCase();
+      const pathname = value.pathname.toLowerCase();
+      if (host !== 'auth.openai.com' && !host.endsWith('.auth.openai.com')) return false;
+      if (pathname.startsWith('/api/accounts/authorize')) return true;
+      return /(?:^|\/)(?:email-verification|verification|verify|challenge|mfa|otp|one-time|code)(?:\/|$)/i.test(pathname);
+    } catch {
+      return false;
+    }
+  };
+
   const pageLooksLikeBlankChatgptAuth = async (page) => {
     try {
       return await page.evaluate(() => {
@@ -845,10 +858,11 @@ export async function installCaptureAutomation({
         await page.evaluateOnNewDocument(bootstrap, payload);
       }
       const openAiAuth = openAiAuthPage(page.url());
+      const openAiManualVerification = openAiManualVerificationPage(page.url());
       if (!openAiAuth && credentialAutofillAllowsUrl(page.url(), allowedOrigins)) {
         await page.evaluate(bootstrap, payload);
       }
-      if (openAiAuth) {
+      if (openAiAuth && !openAiManualVerification) {
         void nativeAdvanceOpenAiUsername(page).finally(() => recoverBlankChatgptAuth(page));
       } else {
         void recoverBlankChatgptAuth(page);
