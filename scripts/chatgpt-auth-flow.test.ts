@@ -95,8 +95,8 @@ assert.match(engine, /async function activateOpenAiAutomation/);
 assert.match(engine, /async function deactivateOpenAiAutomation/);
 assert.match(
   engine,
-  /challengeActive[\s\S]{0,420}deactivateOpenAiAutomation\(entry\)[\s\S]{0,220}return null;/,
-  'Cloudflare challenge must keep Puppeteer detached even if autofill had already been activated',
+  /if \(challengeActive \|\| manualVerificationActive\)[\s\S]{0,760}deactivateOpenAiAutomation\(entry\)[\s\S]{0,420}return null;/,
+  'Cloudflare and OpenAI verification pages must keep Puppeteer detached',
 );
 assert.match(engine, /function isOpenAiManualVerificationState/);
 assert.match(engine, /email-verification\|verification\|verify\|challenge\|mfa\|otp\|one-time\|code/);
