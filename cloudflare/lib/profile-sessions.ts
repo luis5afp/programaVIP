@@ -23,7 +23,6 @@ import {
 } from './session-material';
 import { managedSessionHealth } from './session-health-policy';
 import {
-  keeperRealtimeConfig,
   requestAllKeeperChecks,
   requestKeeperChecks,
 } from './keeper-revalidation';
@@ -1467,7 +1466,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
       sessionManagerVersion,
       profileId: keeper.profile_id,
-      realtime: await keeperRealtimeConfig(env, keeper.profile_id),
+      realtime: null,
     });
   }
 
@@ -1521,7 +1520,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         extensionStrategy: profile.extension_strategy || 'custom',
       },
       currentVersion: Number(session?.session_version || 0),
-      realtime: await keeperRealtimeConfig(env, keeper.profile_id),
+      realtime: null,
       credentials: credentials ? {
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
