@@ -94,8 +94,17 @@ async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
           await retryDelay(attempt);
           continue;
         }
+        const adminSessionExpired =
+          response.status === 401
+          && payload?.code === 'UNAUTHENTICATED'
+          && path !== '/api/auth/login';
+        if (adminSessionExpired) {
+          window.dispatchEvent(new CustomEvent('userflex:admin-session-expired'));
+        }
         const error = new ApiError(
-          payload?.message || payload?.error || `HTTP ${response.status}`,
+          adminSessionExpired
+            ? 'Tu sesión de administrador venció. Inicia sesión nuevamente.'
+            : payload?.message || payload?.error || `HTTP ${response.status}`,
           response.status,
           payload?.code,
         );
