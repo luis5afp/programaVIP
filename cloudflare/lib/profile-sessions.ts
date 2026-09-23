@@ -191,7 +191,12 @@ async function keeperRow(env: Env, rawToken: string) {
   return keeper;
 }
 
-async function registerSessionKeeper(env: Env, profileId: string, sessionManagerVersion: string) {
+async function registerSessionKeeper(
+  env: Env,
+  profileId: string,
+  sessionManagerVersion: string,
+  authenticated: boolean,
+) {
   const rawToken = token(32);
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
   const now = new Date().toISOString();
@@ -202,8 +207,13 @@ async function registerSessionKeeper(env: Env, profileId: string, sessionManager
       profile_id: profileId,
       token_hash: tokenHash,
       enabled: true,
-      last_status: 'registered',
+      last_status: authenticated ? 'healthy' : 'registered',
       last_error: null,
+      last_seen_at: now,
+      ...(authenticated ? {
+        last_check_at: now,
+        last_refresh_at: now,
+      } : {}),
       session_manager_version: sessionManagerVersion,
       session_manager_version_seen_at: now,
       updated_at: now,
@@ -1311,7 +1321,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       publicIp,
       validatedAt: authenticated ? now : null,
     });
-    const keeperToken = await registerSessionKeeper(env, job.profile_id, sessionManagerVersion);
+    const keeperToken = await registerSessionKeeper(env, job.profile_id, sessionManagerVersion, authenticated);
     await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
