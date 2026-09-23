@@ -13,6 +13,10 @@ const engine = readFileSync(
   new URL('../session-manager/browser-engine/kaizen-capture-engine.js', import.meta.url),
   'utf8',
 );
+const runtime = readFileSync(
+  new URL('../cloudflare/lib/profile-runtime.ts', import.meta.url),
+  'utf8',
+);
 
 assert.match(policy, /OPENAI_AUTH_ORIGIN = 'https:\/\/auth\.openai\.com'/);
 assert.match(policy, /isOpenAiServiceHost/);
@@ -98,6 +102,22 @@ assert.match(
   engine,
   /activateOpenAiAutomation\(entry,[\s\S]{0,520}OpenAI autofill activated after the Cloudflare challenge completed/,
   'autofill must activate only after auth.openai.com leaves the challenge state',
+);
+assert.match(engine, /function openAiRouteErrorText/);
+assert.match(engine, /async function recoverOpenAiRouteError/);
+assert.match(engine, /Route Error 500/);
+assert.match(engine, /setBypassServiceWorker\(true\)/);
+assert.match(engine, /setCacheEnabled\(false\)/);
+assert.match(
+  engine,
+  /const routeRecovered = await recoverOpenAiRouteError\(entry, profile\.url, log\);[\s\S]{0,80}if \(routeRecovered\) return null;/,
+  'OpenAI Route Error 500 must be recovered before autofill/inspection continues',
+);
+assert.match(runtime, /function isOpenAiProfile/);
+assert.match(
+  runtime,
+  /openAiSnapshot[\s\S]{0,260}storageStrategy: openAiSnapshot \? 'cookies-only' : requestedStorage/,
+  'ChatGPT/OpenAI snapshot profiles must restore cookies only',
 );
 
 console.log('ChatGPT security-challenge compatibility regression: OK');

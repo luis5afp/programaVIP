@@ -434,6 +434,59 @@ async function deactivateOpenAiAutomation(entry) {
   entry.openAiAutomationActivated = false;
 }
 
+function openAiRouteErrorText(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!text) return false;
+  return (/route error/.test(text) && /500(?: internal server error)?/.test(text))
+    || /["']?istrusted["']?\s*:\s*true/.test(text)
+    || (/se ha producido un error|something went wrong/.test(text) && /500/.test(text));
+}
+
+async function recoverOpenAiRouteError(entry, profileUrl, log = console) {
+  if (!entry || entry.closed || Number(entry.openAiRouteRecoveryAttempts || 0) >= 2) return false;
+
+  const borrowedBrowser = Boolean(entry.browser);
+  const browser = entry.browser || await connectCaptureBrowser(entry.debugPort);
+  try {
+    const pages = await browser.pages();
+    const page = pages.find((item) => {
+      const url = item.url();
+      return isOpenAiAppUrl(url) || isOpenAiAuthFlowUrl(url);
+    });
+    if (!page) return false;
+
+    const diagnostic = await page.evaluate(() => ({
+      title: String(document.title || ''),
+      body: String(document.body?.innerText || '').slice(0, 12_000),
+    })).catch(() => null);
+    if (!openAiRouteErrorText(`${diagnostic?.title || ''}\n${diagnostic?.body || ''}`)) return false;
+
+    entry.openAiRouteRecoveryAttempts = Number(entry.openAiRouteRecoveryAttempts || 0) + 1;
+    entry.stableAuthChecks = 0;
+    entry.openAiAuthFlowSeen = false;
+    entry.openAiInitialInspectionDone = false;
+    log.warn?.(
+      `Session Manager OpenAI route recovery ${entry.openAiRouteRecoveryAttempts}/2: detected Route Error 500; reloading ChatGPT without cache/service worker.`,
+    );
+
+    try { await page.setBypassServiceWorker(true); } catch {}
+    try { await page.setCacheEnabled(false); } catch {}
+    try {
+      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    } catch {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => null);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    try { await page.setCacheEnabled(true); } catch {}
+    try { await page.setBypassServiceWorker(false); } catch {}
+    return true;
+  } finally {
+    if (!borrowedBrowser) {
+      try { await browser.disconnect(); } catch {}
+    }
+  }
+}
+
 async function activateOpenAiAutomation(entry, { profileUrl, credentials, extensionStrategy, controlPort, controlSecret, onSave }) {
   if (!entry || entry.closed || entry.openAiAutomationActivated) return;
   if (entry.openAiAutomationPromise) return entry.openAiAutomationPromise;
@@ -724,6 +777,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       openAiInitialInspectionDone: false,
       openAiAutomationActivated: false,
       openAiAutomationPromise: null,
+      openAiRouteRecoveryAttempts: 0,
       devtoolsTimer: null,
       closed: false,
     };
@@ -799,6 +853,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
                   return null;
                 }
 
+                const routeRecovered = await recoverOpenAiRouteError(entry, profile.url, log);
+                if (routeRecovered) return null;
+
                 await activateOpenAiAutomation(entry, {
                   profileUrl: profile.url,
                   credentials,
@@ -816,6 +873,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
                 entry.stableAuthChecks = 0;
                 return null;
               }
+
+              const routeRecovered = await recoverOpenAiRouteError(entry, profile.url, log);
+              if (routeRecovered) return null;
 
               if (!entry.openAiAutomationActivated) {
                 await activateOpenAiAutomation(entry, {

@@ -25,16 +25,31 @@ export type NetworkPolicy = {
   locked: boolean;
 };
 
+function isOpenAiProfile(profile: any) {
+  try {
+    const host = new URL(String(profile?.url || '')).hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'chatgpt.com'
+      || host.endsWith('.chatgpt.com')
+      || host === 'openai.com'
+      || host.endsWith('.openai.com');
+  } catch {
+    return false;
+  }
+}
+
 export function runtimeForProfile(profile: any): ProfileRuntime {
   const authStrategy = (profile?.auth_strategy
     || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual')) as AuthStrategy;
+  const requestedStorage = (profile?.storage_strategy
+    || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
+      ? 'local-persistent'
+      : 'portable-first-party')) as StorageStrategy;
+  const openAiSnapshot = isOpenAiProfile(profile)
+    && (authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid');
   return {
     browserEngine: (profile?.browser_engine || 'chrome-native') as BrowserEngine,
     authStrategy,
-    storageStrategy: (profile?.storage_strategy
-      || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
-        ? 'local-persistent'
-        : 'portable-first-party')) as StorageStrategy,
+    storageStrategy: openAiSnapshot ? 'cookies-only' : requestedStorage,
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
