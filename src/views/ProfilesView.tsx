@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.38/userFLEX-Session-Manager-0.3.38-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.39/userFLEX-Session-Manager-0.3.39-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -149,7 +149,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.38+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.39+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
@@ -522,6 +522,7 @@ export function ProfilesView() {
     try {
       setSaving(true);
       setError(null);
+      setSuccess(null);
       const credentialsRequired = authStrategy === 'credential-autofill' || authStrategy === 'hybrid';
       if (credentialsRequired) {
         if (!loginUsername) throw new Error('Ingresa el correo o usuario para el autocompletado.');
@@ -574,16 +575,19 @@ export function ProfilesView() {
         : await api.profiles.create(input);
 
       if (editor === 'new') setEditor(savedProfile);
-      await api.profilePlans.set(savedProfile.id, selectedPlanIds);
-      await api.profileExtensions.set(savedProfile.id, selectedExtensionIds);
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
-      await api.profileProxyDefaults.set(savedProfile.id, profileProxyId);
       const shouldSaveCredentials = authStrategy === 'credential-autofill'
         || authStrategy === 'hybrid'
         || (authStrategy === 'cookie-snapshot' && Boolean(loginUsername));
-      if (shouldSaveCredentials) {
-        await api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined);
-      }
+
+      await Promise.all([
+        api.profilePlans.set(savedProfile.id, selectedPlanIds),
+        api.profileExtensions.set(savedProfile.id, selectedExtensionIds),
+        api.profileProxyDefaults.set(savedProfile.id, profileProxyId),
+        shouldSaveCredentials
+          ? api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined)
+          : Promise.resolve(),
+      ]);
       let importedCookies: { version: number; inspection: CookieImportInspection } | null = null;
       if (cookieFile) {
         const imported = await api.profileSessions.importCookies(savedProfile.id, cookieFile);
@@ -593,18 +597,18 @@ export function ProfilesView() {
         };
       }
       const wasEditing = Boolean(editor && editor !== 'new');
+      const confirmation = importedCookies
+        ? (() => {
+            const ignored = importedCookies.inspection.ignored_cookies
+              + importedCookies.inspection.expired_cookies
+              + importedCookies.inspection.invalid_cookies;
+            return `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} correctamente · snapshot v${importedCookies.version} · ${importedCookies.inspection.matching_cookies} cookies de ${importedCookies.inspection.target_host} importadas${ignored ? ` · ${ignored} cookies de otras webs/expiradas/invalidas ignoradas` : ''}.`;
+          })()
+        : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
+
+      setSuccess(confirmation);
       closeEditor();
-      if (importedCookies) {
-        const ignored = importedCookies.inspection.ignored_cookies
-          + importedCookies.inspection.expired_cookies
-          + importedCookies.inspection.invalid_cookies;
-        setSuccess(
-          `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} · snapshot v${importedCookies.version} · ${importedCookies.inspection.matching_cookies} cookies de ${importedCookies.inspection.target_host} importadas${ignored ? ` · ${ignored} cookies de otras webs/expiradas/invalidas ignoradas` : ''}.`,
-        );
-      } else {
-        setSuccess(wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
-      }
-      await load();
+      void load();
     } catch (submitError: any) {
       setError(submitError.message);
     } finally {
@@ -1246,12 +1250,14 @@ export function ProfilesView() {
         <Modal
           title={current ? `Editar perfil · ${profileLabel(current)}` : 'Nuevo perfil / web'}
           error={error}
-          onClose={closeEditor}
+          onClose={() => {
+            if (!saving) closeEditor();
+          }}
           actions={
             <>
               <button className="button secondary" onClick={closeEditor} disabled={saving}>Cancelar</button>
               <button className="button primary" form="profile-form" type="submit" disabled={saving}>
-                {saving ? 'Guardando...' : 'Guardar'}
+                {saving ? 'Guardando...' : 'Guardar y cerrar'}
               </button>
             </>
           }
@@ -1751,7 +1757,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.38
+              Instalar / actualizar Session Manager v0.3.39
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.

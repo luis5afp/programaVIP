@@ -31,6 +31,8 @@ jobs:
         run: node --experimental-strip-types scripts/r2-updater-migration.test.ts
       - name: Test Neon database adapter
         run: node --experimental-strip-types scripts/neon-database-adapter.test.ts
+      - name: Test profile editor save flow
+        run: node --experimental-strip-types scripts/profile-editor-save-flow.test.ts
       - name: Test password security
         run: node --experimental-strip-types scripts/password-security.test.ts
       - name: Test Admin login compatibility
