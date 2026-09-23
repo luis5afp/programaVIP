@@ -6,61 +6,38 @@ const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.u
 const revalidation = readFileSync(new URL('../cloudflare/lib/client-revalidation.ts', import.meta.url), 'utf8');
 const admin = readFileSync(new URL('../cloudflare/lib/admin.ts', import.meta.url), 'utf8');
 const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+const clientPackage = JSON.parse(readFileSync(new URL('../client-app/package.json', import.meta.url), 'utf8'));
 
 assert.match(
   main,
   /const HEARTBEAT_MS = 12 \* 60 \* 60 \* 1000/,
-  'normal client heartbeat fallback must be 12 hours',
+  'normal client safety heartbeat must remain low-frequency at 12 hours',
 );
-assert.doesNotMatch(
-  main,
-  /setInterval\(\(\) => void runHeartbeat\('60s'\)/,
-  'the old one-minute heartbeat loop must be removed',
-);
+assert.doesNotMatch(main, /@supabase\/realtime-js|RealtimeClient|supabase\.co/i);
+assert.equal(clientPackage.dependencies?.['@supabase/realtime-js'], undefined);
+assert.doesNotMatch(client, /clientRealtimeConfig|realtime[,\s]/);
+assert.doesNotMatch(revalidation, /supabase|realtime|broadcast/i);
+assert.doesNotMatch(wrangler, /SUPABASE_|supabase\.co/i);
+
 assert.match(
   main,
-  /import \{ RealtimeClient \} from '@supabase\/realtime-js'/,
-  'desktop client must use the supported Supabase Realtime client',
-);
-assert.match(
-  main,
-  /\.on\('broadcast', \{ event: config\.event \},[\s\S]{0,300}runHeartbeat\('config-event'\)/,
-  'a server configuration event must trigger immediate revalidation',
+  /syncClientConfiguration\(launch, 'profile-launch'\)/,
+  'opening a profile must revalidate current server configuration',
 );
 assert.match(
   main,
   /scheduleHeartbeat\(HEARTBEAT_MS, '12h'\)/,
-  'userFLOW must retain a 12-hour safety validation',
-);
-assert.doesNotMatch(
-  main,
-  /void runHeartbeat\('startup'\)/,
-  'bootstrap catalog validation must not be followed by a duplicate startup heartbeat',
-);
-assert.match(
-  client,
-  /realtime[,\s]*minimumClientVersion/,
-  'catalog response must include per-client Realtime metadata',
+  'userFLOW must retain a low-frequency server safety validation',
 );
 assert.match(
   revalidation,
-  /\/realtime\/v1\/api\/broadcast/,
-  'admin changes must use Realtime Broadcast instead of polling all clients',
-);
-assert.match(
-  revalidation,
-  /userflex-config:\$\{digest\}/,
-  'client notification topics must be unguessable per-client topics',
+  /body: JSON\.stringify\(\{ updated_at: revision \}\)/,
+  'admin changes must still advance the client configuration revision in Neon',
 );
 assert.match(
   admin,
   /touchClientConfig\(env, clientId\)/,
   'assignment and client changes must advance client configuration revision',
 );
-assert.match(
-  wrangler,
-  /SUPABASE_PUBLISHABLE_KEY = "sb_publishable_/,
-  'desktop Realtime subscriptions require the public Supabase key',
-);
 
-console.log('Event-driven client heartbeat: OK');
+console.log('Neon-only low-frequency client revalidation: OK');
