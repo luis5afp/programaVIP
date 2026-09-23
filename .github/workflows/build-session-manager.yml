@@ -15,9 +15,15 @@ on:
 permissions:
   contents: write
 
+
+concurrency:
+  group: userflex-session-manager-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: session-manager
