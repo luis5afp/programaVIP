@@ -106,7 +106,7 @@ function scheduleRequestedKeeperChecks(delayMs = 250) {
 function queueKeeperCheck(profileId, reason = 'event') {
   if (!/^[0-9a-f-]{36}$/i.test(String(profileId || ''))) return;
   const last = Number(keeperLastEventCheck.get(profileId) || 0);
-  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update' || reason === 'capture-complete';
+  const bypassCooldown = reason === 'profile-update' || reason === 'credentials-update';
   if (!bypassCooldown && Date.now() - last < KEEPER_EVENT_COOLDOWN_MS) return;
   keeperRequestedProfiles.set(profileId, reason);
   scheduleRequestedKeeperChecks();
