@@ -7,8 +7,10 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 
 assert.equal(typeof pkg.dependencies['@neondatabase/serverless'], 'string');
 assert.match(core, /NEON_DATABASE_URL\?: string/);
-assert.match(core, /if \(env\.NEON_DATABASE_URL\)/);
+assert.match(core, /if \(!env\.NEON_DATABASE_URL\)/);
 assert.match(core, /import\('\.\/neon-rest'\)/);
+assert.doesNotMatch(core, /SUPABASE_/);
+assert.doesNotMatch(core, /supabase/i);
 assert.match(adapter, /sql\.query|client\(env\)\.query/);
 assert.match(adapter, /DATABASE_UNBOUNDED_WRITE/);
 assert.match(adapter, /on_conflict/);
