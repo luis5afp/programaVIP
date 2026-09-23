@@ -23,7 +23,8 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.42/userFLEX-Session-Manager-0.3.42-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.43/userFLEX-Session-Manager-0.3.43-Setup.exe';
+const GUEST_MIN_SESSION_MANAGER_VERSION = '0.3.43';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -101,6 +102,20 @@ function normalizeSearchValue(value: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase('es');
+}
+
+function versionAtLeast(value: string | null | undefined, minimum: string) {
+  const parse = (input: string | null | undefined) => {
+    const match = String(input || '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const current = parse(value);
+  const required = parse(minimum);
+  if (!current || !required) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (current[index] !== required[index]) return current[index] > required[index];
+  }
+  return true;
 }
 
 const SNAPSHOT_VALIDATION_WARNING_MS = 12 * 60 * 60 * 1000;
@@ -617,6 +632,16 @@ export function ProfilesView() {
   }
 
   async function openGuest(profile: Profile) {
+    const observedVersion = stateFor(profile.id)?.keeper?.session_manager_version || null;
+    if (observedVersion && !versionAtLeast(observedVersion, GUEST_MIN_SESSION_MANAGER_VERSION)) {
+      setSuccess(null);
+      setError(
+        `Abrir como invitado requiere Session Manager v${GUEST_MIN_SESSION_MANAGER_VERSION} o posterior. `
+        + `Este perfil reporta v${observedVersion}. Cierra Session Manager, instala la versión nueva y vuelve a intentarlo.`,
+      );
+      return;
+    }
+
     try {
       setSessionAction(profile.id);
       setError(null);
@@ -624,7 +649,8 @@ export function ProfilesView() {
       const result = await api.profileSessions.guest(profile.id);
       launchCustomProtocol(result.launch_url);
       setSuccess(
-        `${profileLabel(profile)} abierto como invitado. Es una ventana temporal: no carga el snapshot ni guarda cambios de sesión.`,
+        `Solicitud enviada a Session Manager para abrir ${profileLabel(profile)} como invitado. `
+        + 'Si no aparece Chrome, verifica que Session Manager esté actualizado y vuelve a intentarlo.',
       );
     } catch (guestError: any) {
       setError(guestError.message);
