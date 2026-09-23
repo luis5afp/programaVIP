@@ -28,10 +28,20 @@ function selectedColumns(value: string | null) {
   return parts.map(ident).join(', ');
 }
 
+function normalizeDatabaseValue(value: any): any {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeDatabaseValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, normalizeDatabaseValue(item)]),
+    );
+  }
+  return value;
+}
+
 function runRows(result: any): any[] {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.rows)) return result.rows;
-  return [];
+  const rows = Array.isArray(result) ? result : (Array.isArray(result?.rows) ? result.rows : []);
+  return rows.map((row: any) => normalizeDatabaseValue(row));
 }
 
 function pushParam(values: any[], value: any) {

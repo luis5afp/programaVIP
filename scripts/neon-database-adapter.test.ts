@@ -17,5 +17,7 @@ assert.match(adapter, /resolution=ignore-duplicates/);
 assert.match(adapter, /not\.is\.null/);
 assert.match(adapter, /IN \(/);
 assert.match(adapter, /NULLS LAST/);
+assert.match(adapter, /value instanceof Date/);
+assert.match(adapter, /toISOString\(\)/);
 
 console.log('Neon database adapter compatibility: OK');

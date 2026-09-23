@@ -57,7 +57,7 @@ export function Layout({
       </aside>
       <section className="main">
         <header className="topbar">
-          <div><h1>{active.label}</h1><p>Cloudflare Worker + Supabase CREATORTOOLS LAB</p></div>
+          <div><h1>{active.label}</h1><p>Cloudflare Worker + Neon PostgreSQL + R2</p></div>
           <div className="connection"><span className="connection-dot" /><Activity size={14} />Servidor</div>
         </header>
         {sessionAlerts && sessionAlerts.count > 0 && (
