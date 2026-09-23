@@ -17,6 +17,7 @@ import { adminExtensionRoutes, clientExtensionPackage, publicExtensionTestRoutes
 import {
   Env,
   HttpError,
+  adminCookie,
   json,
   sb,
   requireSameOriginWrite,
@@ -149,6 +150,8 @@ async function api(request: Request, env: Env): Promise<Response> {
         email: admin.email,
         role: admin.role,
       },
+    }, 200, {
+      'Set-Cookie': adminCookie(admin.sessionToken),
     });
   }
 
