@@ -322,7 +322,9 @@ async function runRequestedKeeperChecks() {
         if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN', 'KEEPER_DISABLED'].includes(String(error?.code || ''))) {
           await removeKeeper(profileId);
         }
-        await engine().close('keeper_event_error').catch(() => null);
+        if (!manualCaptureBusy()) {
+          await engine().close('keeper_event_error').catch(() => null);
+        }
       }
     }
   } finally {
