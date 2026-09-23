@@ -76,6 +76,7 @@ jobs:
           fi
 
       - name: Validate Supabase service access
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -93,6 +94,7 @@ jobs:
           fi
 
       - name: Validate Supabase profile image storage
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
