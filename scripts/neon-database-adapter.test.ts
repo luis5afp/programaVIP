@@ -12,7 +12,7 @@ assert.match(core, /import\('\.\/neon-rest'\)/);
 assert.match(adapter, /sql\.query|client\(env\)\.query/);
 assert.match(adapter, /DATABASE_UNBOUNDED_WRITE/);
 assert.match(adapter, /on_conflict/);
-assert.match(adapter, /resolution=merge-duplicates/);
+assert.match(adapter, /DO UPDATE SET/);
 assert.match(adapter, /resolution=ignore-duplicates/);
 assert.match(adapter, /not\.is\.null/);
 assert.match(adapter, /IN \(/);
