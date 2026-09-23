@@ -515,7 +515,8 @@ async function apiPost(endpoint, pathName, body, timeoutMs = 45_000) {
 function assertSessionProtocolUrl(rawUrl, action) {
   const url = new URL(rawUrl);
   if (url.protocol !== 'userflex-session:' || url.hostname !== action) {
-    throw new Error(action === 'save' ? 'Enlace de guardado inválido.' : 'Enlace de captura inválido.');
+    const label = action === 'save' ? 'guardado' : action === 'guest' ? 'invitado' : 'captura';
+    throw new Error(`Enlace de ${label} inválido.`);
   }
   const endpoint = url.searchParams.get('endpoint') || '';
   const token = url.searchParams.get('token') || '';
@@ -523,7 +524,9 @@ function assertSessionProtocolUrl(rawUrl, action) {
   if (endpointUrl.origin !== API_ORIGIN) {
     throw new Error('El enlace no pertenece al servidor oficial de userFLEX.');
   }
-  if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new Error('Token de captura inválido.');
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) {
+    throw new Error(action === 'guest' ? 'Token de invitado inválido.' : 'Token de captura inválido.');
+  }
   return { endpoint: API_ORIGIN, token };
 }
 
@@ -534,6 +537,33 @@ function sameCaptureToken(left, right) {
     diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return diff === 0;
+}
+
+async function startGuest(rawUrl) {
+  const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'guest');
+
+  // Guest is a manual action and therefore takes priority over any automatic
+  // Keeper activity. It never loads or saves the managed snapshot.
+  manualCaptureGeneration += 1;
+  if (engine().active) {
+    await engine().close('manual_guest_priority').catch(() => null);
+  }
+
+  const bootstrap = await apiPost(endpoint, '/api/session-manager/guest-bootstrap', { token });
+  const profile = bootstrap.profile;
+  const proxy = bootstrap.proxy || null;
+  if (!profile?.id || !profile?.url) {
+    throw new Error('La configuración de invitado está incompleta.');
+  }
+
+  if (readyWindow && !readyWindow.isDestroyed()) readyWindow.close();
+
+  const result = await engine().launchGuest({ profile, proxy });
+  console.log(
+    `Session Manager Guest launched ${profile.name || profile.id} `
+    + `pid=${result.pid} network=${proxy ? 'proxy' : 'direct'}.`,
+  );
+  return result;
 }
 
 async function startCapture(rawUrl) {
@@ -689,6 +719,7 @@ async function saveActiveCapture(rawUrl) {
 async function handleProtocolUrl(rawUrl) {
   const url = new URL(rawUrl);
   if (url.protocol !== 'userflex-session:') throw new Error('Enlace de Session Manager inválido.');
+  if (url.hostname === 'guest') return startGuest(rawUrl);
   if (url.hostname === 'capture') return startCapture(rawUrl);
   if (url.hostname === 'save') return saveActiveCapture(rawUrl);
   throw new Error('Acción de Session Manager no compatible.');
