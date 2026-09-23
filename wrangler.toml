@@ -20,6 +20,10 @@ enabled = true
 binding = "CLIENT_RELEASES"
 bucket_name = "userflex-client-releases"
 
+[[r2_buckets]]
+binding = "PROFILE_IMAGES"
+bucket_name = "userflex-profile-images"
+
 [vars]
 SUPABASE_URL = "https://lbvxnbbglkjnwphaomyx.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_k4CmF4ly7coIrowfQpqkrw_r_dEjwXR"
