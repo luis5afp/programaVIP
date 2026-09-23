@@ -551,6 +551,12 @@ export function ProfilesView() {
         throw new Error('Para importar cookies JSON usa autenticación Snapshot de sesión o Híbrido.');
       }
 
+      // "Guardar y cerrar" debe cerrar el editor en cuanto la validación local
+      // termina. Las operaciones de red continúan con los valores capturados
+      // por este submit; cualquier fallo posterior se muestra en la lista.
+      closeEditor();
+      setSuccess(wasEditing ? 'Guardando cambios…' : 'Creando perfil…');
+
       const profileUrlValue = String(form.get('url') || '').trim();
       if (cookieFile) {
         const checked = await api.profileSessions.inspectCookies(cookieFile, profileUrlValue);
@@ -594,11 +600,9 @@ export function ProfilesView() {
         throw new Error('La imagen fue subida, pero el perfil no confirmó el nuevo image_url. Vuelve a intentarlo.');
       }
 
-      // The primary profile is already persisted at this point. Close the
-      // editor immediately instead of keeping the user trapped behind the
-      // remaining plan/extension/proxy/credential synchronization.
+      // The primary profile is already persisted. The editor was already
+      // closed before the network work started, so only update the status.
       profileSaved = true;
-      closeEditor();
       setSuccess(wasEditing
         ? 'Perfil actualizado. Finalizando configuración…'
         : 'Perfil creado. Finalizando configuración…');
