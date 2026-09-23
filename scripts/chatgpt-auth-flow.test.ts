@@ -52,7 +52,7 @@ assert.match(captureState, /recoverBlankChatgptAuth/);
 assert.match(engine, /function isOpenAiProfileUrl/);
 assert.match(
   engine,
-  /const extensionDir = openAiCapture[\s\S]{0,100}\? null/,
+  /const extensionDir = guest \|\| openAiCapture[\s\S]{0,100}\? null/,
   'ChatGPT/OpenAI capture must launch without the temporary userFLEX Chrome extension',
 );
 assert.match(engine, /--disable-translate/);
