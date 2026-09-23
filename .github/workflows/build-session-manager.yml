@@ -94,11 +94,17 @@ jobs:
           $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
           $releases = @(
             $raw |
-              Where-Object { $_.tagName -match '^session-manager-v(\d+\.\d+\.\d+) } |
+              Where-Object { $_.tagName.StartsWith('session-manager-v') } |
               ForEach-Object {
+                $versionText = $_.tagName.Substring('session-manager-v'.Length)
+                try {
+                  $parsedVersion = [version]$versionText
+                } catch {
+                  return
+                }
                 [pscustomobject]@{
                   Tag = $_.tagName
-                  Version = [version]$Matches[1]
+                  Version = $parsedVersion
                 }
               } |
               Sort-Object Version -Descending
