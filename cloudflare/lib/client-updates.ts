@@ -4,7 +4,7 @@ const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const PART_RE = /^part-\d{3}\.bin$/;
 const MAX_CHUNK_BYTES = 25 * 1024 * 1024;
 const LATEST_MEMORY_TTL_MS = 30_000;
-const KEEP_RELEASE_VERSIONS = 3;
+const KEEP_RELEASE_VERSIONS = 2;
 
 let latestMemoryCache: { body: Uint8Array; contentType: string; expiresAt: number } | null = null;
 

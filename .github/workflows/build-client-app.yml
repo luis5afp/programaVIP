@@ -17,9 +17,15 @@ on:
 permissions:
   contents: write
 
+
+concurrency:
+  group: userflex-client-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 25
     environment: production
     defaults:
       run:
@@ -112,6 +118,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows installer
+        if: github.event_name != 'pull_request'
         env:
           USERFLOW_VMP_REQUIRED: ${{ steps.vmp.outputs.enabled == 'true' && '1' || '0' }}
           EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
@@ -120,6 +127,7 @@ jobs:
         run: npm run dist:win
 
       - name: Build chunked updater feed
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -199,6 +207,7 @@ jobs:
           if (@($parsed.chunks).Count -lt 1) { throw "Updater manifest contains no chunks." }
 
       - name: Upload installer artifact
+        if: github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -207,7 +216,7 @@ jobs:
             client-app/dist/*.exe
             client-app/dist/update-feed/latest.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
       - name: Publish automatic updater feed to Cloudflare R2
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -273,4 +282,79 @@ jobs:
             gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
           } else {
             gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX. userFLOW se actualiza de forma independiente y no instala ni modifica userFLEX Session Manager. La firma VMP de producción se aplica cuando las credenciales EVS están disponibles, pero nunca bloquea la publicación de actualizaciones automáticas."
+          }
+
+      - name: Prune old Client updater versions from Cloudflare R2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bucket = 'userflex-client-releases'
+          $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          $clientReleases = @(
+            $raw |
+              Where-Object { $_.tagName -match '^client-v(\d+\.\d+\.\d+) } |
+              ForEach-Object {
+                [pscustomobject]@{
+                  Tag = $_.tagName
+                  Version = [version]$Matches[1]
+                  VersionText = $Matches[1]
+                }
+              } |
+              Sort-Object Version -Descending
+          )
+          $stale = @($clientReleases | Select-Object -Skip 2)
+
+          foreach ($release in $stale) {
+            $manifestPath = Join-Path $env:RUNNER_TEMP ("r2-" + $release.VersionText + "-manifest.json")
+            if (Test-Path $manifestPath) { Remove-Item $manifestPath -Force }
+
+            & npx wrangler@4.130.0 r2 object get "$bucket/versions/$($release.VersionText)/manifest.json" --file "$manifestPath" --remote --cwd .. *> $null
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $manifestPath)) {
+              try {
+                $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
+                foreach ($chunk in @($manifest.chunks)) {
+                  $chunkName = [string]$chunk.name
+                  if ($chunkName -match '^versions/[0-9A-Za-z.-]+/part-\d{3}\.bin) {
+                    & npx wrangler@4.130.0 r2 object delete "$bucket/$chunkName" --remote --cwd .. *> $null
+                  }
+                }
+                & npx wrangler@4.130.0 r2 object delete "$bucket/versions/$($release.VersionText)/manifest.json" --remote --cwd .. *> $null
+                Write-Host "Removed R2 updater version $($release.VersionText)."
+              } catch {
+                Write-Warning "Could not parse/delete R2 version $($release.VersionText): $($_.Exception.Message)"
+              }
+            }
+          }
+
+      - name: Keep only two Client GitHub releases
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          $clientReleases = @(
+            $raw |
+              Where-Object { $_.tagName -match '^client-v(\d+\.\d+\.\d+) } |
+              ForEach-Object {
+                [pscustomobject]@{
+                  Tag = $_.tagName
+                  Version = [version]$Matches[1]
+                }
+              } |
+              Sort-Object Version -Descending
+          )
+
+          $keep = @($clientReleases | Select-Object -First 2 | ForEach-Object { $_.Tag })
+          Write-Host "Keeping Client releases: $($keep -join ', ')"
+          foreach ($release in @($clientReleases | Select-Object -Skip 2)) {
+            Write-Host "Deleting old Client release $($release.Tag)..."
+            gh release delete $release.Tag --cleanup-tag --yes --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "Failed to delete release $($release.Tag)." }
           }

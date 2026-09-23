@@ -15,9 +15,15 @@ on:
 permissions:
   contents: write
 
+
+concurrency:
+  group: userflex-session-manager-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: session-manager
@@ -48,15 +54,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows installer
+        if: github.event_name != 'pull_request'
         run: npm run dist:win
 
       - name: Upload installer artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: userFLEX-Session-Manager-Windows
           path: session-manager/dist/*.exe
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
       - name: Publish installer release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -74,4 +82,32 @@ jobs:
             gh release upload $tag $asset.FullName --clobber --repo $env:GITHUB_REPOSITORY
           } else {
             gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Session Manager v$version" --notes "Instalador de Windows para abrir capturas de sesión userFLEX mediante el protocolo userflex-session:// y lanzar el Chromium aislado del perfil."
+          }
+
+      - name: Keep only two Session Manager GitHub releases
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          $releases = @(
+            $raw |
+              Where-Object { $_.tagName -match '^session-manager-v(\d+\.\d+\.\d+) } |
+              ForEach-Object {
+                [pscustomobject]@{
+                  Tag = $_.tagName
+                  Version = [version]$Matches[1]
+                }
+              } |
+              Sort-Object Version -Descending
+          )
+
+          $keep = @($releases | Select-Object -First 2 | ForEach-Object { $_.Tag })
+          Write-Host "Keeping Session Manager releases: $($keep -join ', ')"
+          foreach ($release in @($releases | Select-Object -Skip 2)) {
+            Write-Host "Deleting old Session Manager release $($release.Tag)..."
+            gh release delete $release.Tag --cleanup-tag --yes --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "Failed to delete release $($release.Tag)." }
           }
