@@ -28,6 +28,12 @@ export async function requestKeeperChecks(
   profileIds: string[],
   reason: 'admin-start' | 'client-start' | 'profile-update' | 'credentials-update',
 ): Promise<number> {
+  // Opening Admin or logging a client in must never fan out browser checks for
+  // every managed profile. Those startup calls are kept for backwards
+  // compatibility with already-installed clients/Admin bundles, but they are
+  // intentionally passive.
+  if (reason === 'admin-start' || reason === 'client-start') return 0;
+
   const ids = uniqueIds(profileIds);
   if (!ids.length) return 0;
 
