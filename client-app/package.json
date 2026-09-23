@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.3.39",
+  "version": "0.3.40",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
