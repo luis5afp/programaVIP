@@ -616,6 +616,23 @@ export function ProfilesView() {
     }
   }
 
+  async function openGuest(profile: Profile) {
+    try {
+      setSessionAction(profile.id);
+      setError(null);
+      setSuccess(null);
+      const result = await api.profileSessions.guest(profile.id);
+      launchCustomProtocol(result.launch_url);
+      setSuccess(
+        `${profileLabel(profile)} abierto como invitado. Es una ventana temporal: no carga el snapshot ni guarda cambios de sesión.`,
+      );
+    } catch (guestError: any) {
+      setError(guestError.message);
+    } finally {
+      setSessionAction(null);
+    }
+  }
+
   async function startCapture(profile: Profile) {
     try {
       setSessionAction(profile.id);
@@ -923,6 +940,15 @@ export function ProfilesView() {
                   </div>
 
                   <div className="profile-compact-actions">
+                    <button
+                      className="profile-icon-action"
+                      disabled={sessionAction === profile.id}
+                      onClick={() => void openGuest(profile)}
+                      title="Abrir como invitado · temporal, sin snapshot ni guardado"
+                      aria-label="Abrir como invitado"
+                    >
+                      <Globe2 size={15} />
+                    </button>
                     {snapshotManaged && (
                       <button
                         className="profile-icon-action"
@@ -1035,6 +1061,15 @@ export function ProfilesView() {
 
                     <div className="profile-card-footer">
                       <div className="profile-session-actions">
+                        <button
+                          className="button secondary small"
+                          disabled={sessionAction === profile.id}
+                          onClick={() => void openGuest(profile)}
+                          title="Abre Chrome/Edge en modo invitado temporal. No reutiliza ni modifica la sesión guardada."
+                        >
+                          <Globe2 size={12} />
+                          Abrir invitado
+                        </button>
                         {snapshotManaged && (
                           <>
                             <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
