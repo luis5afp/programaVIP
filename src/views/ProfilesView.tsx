@@ -532,6 +532,8 @@ export function ProfilesView() {
     const loginUsername = String(form.get('loginUsername') || '').trim();
     const loginPassword = String(form.get('loginPassword') || '');
     const currentState = editor && editor !== 'new' ? stateFor(editor.id) : null;
+    const wasEditing = Boolean(editor && editor !== 'new');
+    let profileSaved = false;
 
     try {
       setSaving(true);
@@ -591,7 +593,17 @@ export function ProfilesView() {
       if ((finalImageUrl || null) !== (savedProfile.image_url || null)) {
         throw new Error('La imagen fue subida, pero el perfil no confirmó el nuevo image_url. Vuelve a intentarlo.');
       }
-      if (editor === 'new') setEditor(savedProfile);
+
+      // The primary profile is already persisted at this point. Close the
+      // editor immediately instead of keeping the user trapped behind the
+      // remaining plan/extension/proxy/credential synchronization.
+      profileSaved = true;
+      closeEditor();
+      setSuccess(wasEditing
+        ? 'Perfil actualizado. Finalizando configuración…'
+        : 'Perfil creado. Finalizando configuración…');
+      void load();
+
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
       const shouldSaveCredentials = authStrategy === 'credential-autofill'
         || authStrategy === 'hybrid'
@@ -613,7 +625,6 @@ export function ProfilesView() {
           inspection: imported.inspection,
         };
       }
-      const wasEditing = Boolean(editor && editor !== 'new');
       const confirmation = importedCookies
         ? (() => {
             const ignored = importedCookies.inspection.ignored_cookies
@@ -624,10 +635,14 @@ export function ProfilesView() {
         : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
 
       setSuccess(confirmation);
-      closeEditor();
       await load();
     } catch (submitError: any) {
-      setError(submitError.message);
+      setSuccess(null);
+      setError(
+        profileSaved
+          ? `El perfil se guardó, pero no se pudo completar toda la configuración: ${submitError.message}`
+          : submitError.message,
+      );
     } finally {
       setSaving(false);
     }
