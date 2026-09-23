@@ -76,18 +76,54 @@ jobs:
           fi
 
       - name: Validate Supabase service access
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
+          headers=(--header "apikey: $SUPABASE_SERVICE_ROLE_KEY")
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" == *.*.* ]]; then
+            headers+=(--header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
           code="$(curl --silent --output /tmp/supabase-service-check.json --write-out '%{http_code}' \
-            --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            --header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            "${headers[@]}" \
             'https://lbvxnbbglkjnwphaomyx.supabase.co/rest/v1/vsixteen_users?select=id&limit=1')"
           echo "Supabase service access HTTP $code"
           if [ "$code" != "200" ]; then
             cat /tmp/supabase-service-check.json
             exit 1
+          fi
+
+      - name: Validate Supabase profile image storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          object_path="healthchecks/github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.png"
+          printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9p8AAAAASUVORK5CYII=' | base64 --decode > /tmp/userflex-storage-check.png
+
+          headers=(--header "apikey: $SUPABASE_SERVICE_ROLE_KEY")
+          if [[ "$SUPABASE_SERVICE_ROLE_KEY" == *.*.* ]]; then
+            headers+=(--header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          fi
+
+          code="$(curl --silent --output /tmp/supabase-storage-upload.json --write-out '%{http_code}' \
+            --request POST \
+            "${headers[@]}" \
+            --header 'Content-Type: image/png' \
+            --header 'x-upsert: false' \
+            --data-binary '@/tmp/userflex-storage-check.png' \
+            "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-profile-images/$object_path")"
+          echo "Supabase profile image upload HTTP $code"
+          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
+            cat /tmp/supabase-storage-upload.json
+            exit 1
+          fi
+
+          cleanup_code="$(curl --silent --output /tmp/supabase-storage-delete.json --write-out '%{http_code}' \
+            --request DELETE \
+            "${headers[@]}" \
+            "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-profile-images/$object_path")"
+          echo "Supabase profile image cleanup HTTP $cleanup_code"
+          if [ "$cleanup_code" != "200" ] && [ "$cleanup_code" != "204" ]; then
+            cat /tmp/supabase-storage-delete.json
           fi
 
       - name: Ensure Cloudflare R2 updater bucket
