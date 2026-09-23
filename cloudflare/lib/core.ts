@@ -32,6 +32,7 @@ export interface R2BucketLike {
 export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   CLIENT_RELEASES?: R2BucketLike;
+  NEON_DATABASE_URL?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
@@ -115,6 +116,36 @@ function config(env: Env) {
 }
 
 export async function sb(env: Env, path: string, init: RequestInit = {}): Promise<any> {
+  if (env.NEON_DATABASE_URL) {
+    try {
+      const { neonRest } = await import('./neon-rest');
+      return await neonRest(env, path, init);
+    } catch (error: any) {
+      if (error instanceof HttpError) throw error;
+      const normalized = String(error?.message || error?.code || error || '');
+      const code = String(error?.code || '');
+      console.error('Neon database error', path, code, normalized.slice(0, 180));
+      if (normalized.includes('USERFLEX_PROFILE_LIMIT_REACHED')) {
+        throw new HttpError(409, 'PROFILE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de perfiles.');
+      }
+      if (normalized.includes('USERFLEX_SUBSCRIPTION_INACTIVE')) {
+        throw new HttpError(409, 'SUBSCRIPTION_INACTIVE', 'El cliente no tiene una suscripción activa.');
+      }
+      if (normalized.includes('USERFLEX_DEVICE_LIMIT_REACHED')) {
+        throw new HttpError(409, 'DEVICE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de dispositivos.');
+      }
+      if (normalized.includes('USERFLEX_PLAN_INACTIVE')) {
+        throw new HttpError(409, 'PLAN_INACTIVE', 'El plan seleccionado no está activo.');
+      }
+      if (code === '23505') throw new HttpError(409, 'CONFLICT', 'Ya existe un registro con esos datos.');
+      if (code === '23503') throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
+      if (/timeout|fetch failed|connection|network|ECONN/i.test(normalized)) {
+        throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
+      }
+      throw new HttpError(502, 'DATABASE_ERROR', 'No se pudo completar la operación en la base de datos.');
+    }
+  }
+
   const { url, key } = config(env);
   const method = String(init.method || 'GET').toUpperCase();
   const retryable = method === 'GET' || method === 'HEAD';

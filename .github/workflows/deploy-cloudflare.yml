@@ -24,6 +24,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       USERFLEX_PROXY_MASTER_KEY: ${{ secrets.USERFLEX_PROXY_MASTER_KEY }}
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,6 +130,11 @@ jobs:
       - name: Configure proxy encryption secret
         shell: bash
         run: printf '%s' "$USERFLEX_PROXY_MASTER_KEY" | npx wrangler@4.130.0 secret put USERFLEX_PROXY_MASTER_KEY
+
+      - name: Configure Neon database secret
+        if: ${{ env.NEON_DATABASE_URL != '' }}
+        shell: bash
+        run: printf '%s' "$NEON_DATABASE_URL" | npx wrangler@4.130.0 secret put NEON_DATABASE_URL
 
       - name: Deploy Worker and static assets
         run: npx wrangler@4.130.0 deploy
