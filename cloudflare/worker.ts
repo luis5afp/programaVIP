@@ -8,7 +8,7 @@ import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION, clientVersionFrom, v
 import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
-import { serveProfileImage, uploadProfileImage } from './lib/profile-images';
+import { serveProfileImage, serveProfileImageObject, uploadProfileImage } from './lib/profile-images';
 import { profilePlanAccessRoutes } from './lib/profile-plan-access';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProxyRoutes } from './lib/proxy-admin';
@@ -24,7 +24,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.33';
+const APP_VERSION = '1.4.34';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -64,6 +64,7 @@ async function api(request: Request, env: Env): Promise<Response> {
       databaseReachable,
       databaseError,
       updateStorage: env.CLIENT_RELEASES ? 'cloudflare-r2' : 'missing',
+      profileImageStorage: env.PROFILE_IMAGES ? 'cloudflare-r2' : 'missing',
       proxyEncryptionConfigured: Boolean(env.USERFLEX_PROXY_MASTER_KEY),
       minimumClientVersion: MIN_USERFLOW_VERSION,
       minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
@@ -73,6 +74,11 @@ async function api(request: Request, env: Env): Promise<Response> {
 
   const updateResponse = await publicClientUpdateRoutes(request, env);
   if (updateResponse) return updateResponse;
+
+  const publicProfileImageObject = path.match(/^\/api\/profile-image-files\/(profiles\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.(?:jpg|png|webp|gif))$/i);
+  if (publicProfileImageObject && (method === 'GET' || method === 'HEAD')) {
+    return serveProfileImageObject(request, env, publicProfileImageObject[1]);
+  }
 
   const publicProfileImage = path.match(/^\/api\/profile-images\/([0-9a-f-]{36})$/i);
   if (publicProfileImage && (method === 'GET' || method === 'HEAD')) {

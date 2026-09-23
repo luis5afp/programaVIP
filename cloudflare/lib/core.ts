@@ -32,6 +32,7 @@ export interface R2BucketLike {
 export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   CLIENT_RELEASES?: R2BucketLike;
+  PROFILE_IMAGES?: R2BucketLike;
   NEON_DATABASE_URL?: string;
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;

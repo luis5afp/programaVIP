@@ -35,25 +35,6 @@ function encodeStoragePath(path: string) {
   return path.split('/').map((part) => encodeURIComponent(part)).join('/');
 }
 
-function supabaseStorageAdminHeaders(key: string, mime: string) {
-  const headers = new Headers({
-    apikey: key,
-    'Content-Type': mime,
-    'Cache-Control': '31536000',
-    'x-upsert': 'false',
-  });
-
-  // New Supabase secret keys (sb_secret_...) are API keys, not JWTs.
-  // Sending them as Authorization: Bearer makes Storage try to parse
-  // them as JWTs and can fail with "Invalid JWT". Legacy service_role
-  // keys are JWTs, so keep Bearer only for that legacy format.
-  const jwtParts = key.split('.');
-  if (jwtParts.length === 3 && jwtParts.every(Boolean)) {
-    headers.set('Authorization', `Bearer ${key}`);
-  }
-  return headers;
-}
-
 export async function uploadProfileImage(
   request: Request,
   env: Env,
@@ -89,33 +70,65 @@ export async function uploadProfileImage(
     throw new HttpError(415, 'PROFILE_IMAGE_CONTENT_INVALID', 'El contenido del archivo no coincide con un formato de imagen permitido.');
   }
 
-  const baseUrl = env.SUPABASE_URL?.replace(/\/$/, '');
-  const key = env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!baseUrl || !key) {
-    throw new HttpError(503, 'SUPABASE_CONFIG_MISSING', 'Supabase no está configurado.');
+  if (!env.PROFILE_IMAGES) {
+    throw new HttpError(503, 'PROFILE_IMAGE_STORAGE_MISSING', 'El almacenamiento de imágenes no está configurado.');
   }
 
   const objectPath = `profiles/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${extension}`;
-  const encodedPath = encodeStoragePath(objectPath);
-  const upload = await fetch(`${baseUrl}/storage/v1/object/${PROFILE_IMAGE_BUCKET}/${encodedPath}`, {
-    method: 'POST',
-    headers: supabaseStorageAdminHeaders(key, mime),
-    body: value,
-  });
-
-  if (!upload.ok) {
-    const detail = (await upload.text()).slice(0, 300);
-    console.error('Supabase Storage', upload.status, detail);
+  const bytes = await value.arrayBuffer();
+  try {
+    await env.PROFILE_IMAGES.put(objectPath, bytes, {
+      httpMetadata: {
+        contentType: mime,
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+    });
+  } catch (error) {
+    console.error('Cloudflare R2 profile image upload failed', error instanceof Error ? error.message : String(error));
     throw new HttpError(502, 'PROFILE_IMAGE_UPLOAD_FAILED', 'No se pudo guardar la imagen.');
   }
 
-  const publicUrl = `${baseUrl}/storage/v1/object/public/${PROFILE_IMAGE_BUCKET}/${encodedPath}`;
+  const publicUrl = `${new URL(request.url).origin}/api/profile-image-files/${encodeStoragePath(objectPath)}`;
   await audit(env, request, 'admin', admin.userId, 'profile.image.upload', 'profile_image', objectPath, {
     mime,
     bytes: value.size,
   });
 
   return json({ ok: true, url: publicUrl, path: objectPath, mime, size: value.size }, 201);
+}
+
+
+function validR2ObjectPath(value: string) {
+  return /^profiles\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.(?:jpg|png|webp|gif)$/i.test(value);
+}
+
+export async function serveProfileImageObject(
+  request: Request,
+  env: Env,
+  objectPath: string,
+): Promise<Response> {
+  if (!validR2ObjectPath(objectPath)) throw new HttpError(404, 'PROFILE_IMAGE_NOT_FOUND');
+  if (!env.PROFILE_IMAGES) {
+    throw new HttpError(503, 'PROFILE_IMAGE_STORAGE_MISSING', 'El almacenamiento de imágenes no está configurado.');
+  }
+
+  const object = await env.PROFILE_IMAGES.get(objectPath);
+  if (!object) throw new HttpError(404, 'PROFILE_IMAGE_NOT_FOUND');
+
+  const contentType = String(object.httpMetadata?.contentType || '').toLowerCase();
+  if (!contentType.startsWith('image/')) {
+    throw new HttpError(502, 'PROFILE_IMAGE_CONTENT_INVALID', 'La imagen guardada no tiene un formato válido.');
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type', contentType);
+  headers.set('Cache-Control', object.httpMetadata?.cacheControl || 'public, max-age=31536000, immutable');
+  headers.set('X-Content-Type-Options', 'nosniff');
+
+  if (request.method.toUpperCase() === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(object.body, { status: 200, headers });
 }
 
 

@@ -65,15 +65,13 @@ assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated gues
 
 assert.match(cloudflareWorker, /profile-images/, 'legacy same-origin image route stays available for compatibility');
 assert.match(profileImages, /serveProfileImage/, 'legacy profile image proxy must stay available');
-assert.match(profileImages, /function supabaseStorageAdminHeaders/, 'profile uploads must centralize Supabase Storage authentication headers');
-assert.match(profileImages, /const jwtParts = key\.split\('\.'\)/, 'profile uploads must detect legacy JWT service-role keys');
-assert.match(profileImages, /if \(jwtParts\.length === 3 && jwtParts\.every\(Boolean\)\)/, 'Bearer auth must be limited to legacy JWT keys');
-assert.match(profileImages, /headers\.set\('Authorization'/, 'legacy JWT service-role keys must keep Authorization support');
-assert.doesNotMatch(
-  profileImages,
-  /headers:\s*\{[\s\S]{0,220}Authorization:/,
-  'modern sb_secret keys must not be sent unconditionally as Authorization tokens',
-);
+assert.match(profileImages, /env\.PROFILE_IMAGES\.put\(objectPath, bytes/, 'profile image uploads must write to Cloudflare R2');
+assert.match(profileImages, /\/api\/profile-image-files\//, 'uploaded profile images must return a Worker-hosted R2 URL');
+assert.match(profileImages, /export async function serveProfileImageObject/, 'Worker must expose R2 profile image objects');
+assert.match(profileImages, /env\.PROFILE_IMAGES\.get\(objectPath\)/, 'profile image reads must come from Cloudflare R2');
+assert.doesNotMatch(profileImages, /Supabase Storage/, 'new profile image uploads must not depend on Supabase Storage');
+assert.match(cloudflareWorker, /profileImageStorage: env\.PROFILE_IMAGES \? 'cloudflare-r2' : 'missing'/, 'health must expose profile image R2 status');
+assert.match(cloudflareWorker, /serveProfileImageObject/, 'Worker must route public profile image objects from R2');
 assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must receive the original stored profile image URL');
 assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
 assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
