@@ -1,5 +1,5 @@
 import { ClipboardEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, EyeOff, Globe2, ImagePlus, KeyRound, Laptop, Pencil, Plus, Puzzle, RefreshCw, Search, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { Assignment, AuthStrategy, BrowserEngine, Client, CookieImportInspection, ExtensionStrategy, ManagedExtension, NetworkStrategy, Plan, Profile, ProfileExtensionMembership, ProfileProxyDefault, ProfileSessionState, ProfileValidation, ProfileValidationJob, ProxyRecord, SessionMode, StorageStrategy } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
@@ -767,21 +767,20 @@ export function ProfilesView() {
     }
   }
 
-  async function startClientTest() {
-    if (!validationProfile) return;
-    if (validationProfile.network_strategy === 'assigned-proxy' && !validationClientId) {
-      setError('Selecciona un cliente para simular su proxy asignado.');
-      return;
-    }
+  async function launchClientTest(profile: Profile, clientId: string | null) {
     try {
+      setValidationProfile(profile);
+      setValidationClientId(clientId || '');
       setValidationBusy(true);
+      setSessionAction(profile.id);
       setError(null);
-      const response = await api.profileSessions.clientTest(validationProfile.id, validationClientId || null);
+      setSuccess(null);
+      const response = await api.profileSessions.clientTest(profile.id, clientId);
       setValidationResult(response.validation);
       setValidationJob({
         id: response.job_id,
-        profile_id: validationProfile.id,
-        client_id: validationClientId || null,
+        profile_id: profile.id,
+        client_id: clientId,
         status: 'pending',
         result: null,
         error: null,
@@ -791,12 +790,38 @@ export function ProfilesView() {
         created_at: new Date().toISOString(),
       });
       launchCustomProtocol(response.launch_url);
+      setSuccess(`${profileLabel(profile)} abierto como cliente en userFLOW para comprobar la configuración real.`);
       void pollValidationJob(response.job_id);
     } catch (testError: any) {
       setError(testError.message);
     } finally {
       setValidationBusy(false);
+      setSessionAction(null);
     }
+  }
+
+  async function openAsClient(profile: Profile) {
+    const eligible = validationClientsFor(profile.id);
+    const clientId = profile.network_strategy === 'assigned-proxy'
+      ? (eligible[0]?.id || null)
+      : null;
+
+    if (profile.network_strategy === 'assigned-proxy' && !clientId) {
+      setError('Este perfil usa proxy por cliente, pero no hay un cliente activo con proxy asignado para probarlo.');
+      await openValidation(profile);
+      return;
+    }
+
+    await launchClientTest(profile, clientId);
+  }
+
+  async function startClientTest() {
+    if (!validationProfile) return;
+    if (validationProfile.network_strategy === 'assigned-proxy' && !validationClientId) {
+      setError('Selecciona un cliente para simular su proxy asignado.');
+      return;
+    }
+    await launchClientTest(validationProfile, validationClientId || null);
   }
 
 
@@ -943,6 +968,15 @@ export function ProfilesView() {
                     <button
                       className="profile-icon-action"
                       disabled={sessionAction === profile.id}
+                      onClick={() => void openAsClient(profile)}
+                      title="Abrir como cliente · prueba el perfil exactamente como lo recibe userFLOW"
+                      aria-label="Abrir como cliente"
+                    >
+                      <Laptop size={15} />
+                    </button>
+                    <button
+                      className="profile-icon-action"
+                      disabled={sessionAction === profile.id}
                       onClick={() => void openGuest(profile)}
                       title="Abrir como invitado · temporal, sin snapshot ni guardado"
                       aria-label="Abrir como invitado"
@@ -1061,6 +1095,15 @@ export function ProfilesView() {
 
                     <div className="profile-card-footer">
                       <div className="profile-session-actions">
+                        <button
+                          className="button secondary small"
+                          disabled={sessionAction === profile.id}
+                          onClick={() => void openAsClient(profile)}
+                          title="Abre el perfil con userFLOW usando snapshot, autofill, extensiones y red reales."
+                        >
+                          <Laptop size={12} />
+                          Abrir como cliente
+                        </button>
                         <button
                           className="button secondary small"
                           disabled={sessionAction === profile.id}
