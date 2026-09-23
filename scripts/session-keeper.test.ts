@@ -58,17 +58,21 @@ assert.match(captureState, /netflixAuthCookies/);
 assert.match(captureState, /netflixAppPath/);
 assert.match(manager, /Netflix no abrió el área autenticada \(\/browse\)/);
 
-assert.doesNotMatch(
+assert.match(
   clientEngine,
   /Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
-  'new central snapshots must not automatically destroy a healthy local profile',
+  'managed local profiles must adopt the exact central snapshot generation',
+);
+assert.match(
+  clientEngine,
+  /Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
+  'already-open managed browsers must be replaced when the central generation changes',
 );
 assert.doesNotMatch(
   clientEngine,
-  /markerVersion !== desiredVersion/,
-  'catalog reconciliation must preserve healthy local session generations',
+  /Number\(sessionMarker\?\.version \|\| 0\) > 0[\s\S]{0,120}sessionMarker\?\.profileId === profile\.id/,
+  'any-positive-version reuse must not allow stale managed sessions to outrank the server',
 );
-assert.match(clientEngine, /Number\(sessionMarker\?\.version \|\| 0\) > 0/);
 
 assert.match(clientMain, /preserveProfilesForAuthError/);
 assert.match(clientMain, /clientId && !preserveProfiles/);
