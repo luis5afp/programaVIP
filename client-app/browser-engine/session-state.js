@@ -88,32 +88,73 @@ function isNetflixTarget(target) {
   return hostname === 'netflix.com' || hostname.endsWith('.netflix.com');
 }
 
-async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
-  if (!isNetflixTarget(target)) return;
+function isGoogleFlowTarget(target) {
+  return String(target?.hostname || '').toLowerCase() === 'flow.google.com';
+}
 
-  const expected = new Map(
-    capturedCookies
-      .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
-      .filter((cookie) => ['netflixid', 'securenetflixid'].includes(String(cookie.name || '').toLowerCase()))
-      .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
-  );
-  if (!expected.size) return;
+function isGoogleAccountsDomain(value) {
+  const hostname = String(value || '').replace(/^\./, '').toLowerCase();
+  return hostname === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(hostname);
+}
+
+function isGoogleAuthCookieName(name) {
+  return /^(?:SID|HSID|SSID|APISID|SAPISID|__Secure-(?:1P|3P)?SID|__Secure-(?:1P|3P)?APISID)$/i
+    .test(String(name || ''));
+}
+
+async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
+  const netflixTarget = isNetflixTarget(target);
+  const flowTarget = isGoogleFlowTarget(target);
+  if (!netflixTarget && !flowTarget) return;
 
   const client = await page.createCDPSession();
   try {
     const result = await client.send('Storage.getCookies');
-    const installed = new Map(
-      (Array.isArray(result?.cookies) ? result.cookies : [])
-        .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
-        .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
-    );
-    const invalid = [];
-    for (const [name, expectedValue] of expected) {
-      const installedValue = installed.get(name);
-      if (!installedValue || installedValue !== expectedValue) invalid.push(name);
+    const installedCookies = Array.isArray(result?.cookies) ? result.cookies : [];
+
+    if (netflixTarget) {
+      const expected = new Map(
+        capturedCookies
+          .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+          .filter((cookie) => ['netflixid', 'securenetflixid'].includes(String(cookie.name || '').toLowerCase()))
+          .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
+      );
+      if (expected.size) {
+        const installed = new Map(
+          installedCookies
+            .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+            .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
+        );
+        const invalid = [];
+        for (const [name, expectedValue] of expected) {
+          const installedValue = installed.get(name);
+          if (!installedValue || installedValue !== expectedValue) invalid.push(name);
+        }
+        if (invalid.length) {
+          throw new Error(`Chrome no pudo conservar exactamente las cookies de autenticación de Netflix: ${invalid.join(', ')}.`);
+        }
+      }
     }
-    if (invalid.length) {
-      throw new Error(`Chrome no pudo conservar exactamente las cookies de autenticación de Netflix: ${invalid.join(', ')}.`);
+
+    if (flowTarget) {
+      const expectedNames = new Set(
+        capturedCookies
+          .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
+          .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
+          .map((cookie) => String(cookie.name || '').toLowerCase()),
+      );
+      if (expectedNames.size) {
+        const installedNames = new Set(
+          installedCookies
+            .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
+            .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
+            .map((cookie) => String(cookie.name || '').toLowerCase()),
+        );
+        const overlap = [...expectedNames].some((name) => installedNames.has(name));
+        if (!overlap) {
+          throw new Error('Chrome no pudo conservar las cookies de autenticación de Google Flow.');
+        }
+      }
     }
   } finally {
     await client.detach().catch(() => null);
@@ -601,6 +642,8 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
 export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionStrategy = 'custom' }) {
   const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
+  const profileTarget = new URL(profileUrl);
+  const targetHostname = String(profileTarget.hostname || '').toLowerCase();
   const browser = await connectKaizenBrowser(debugPort);
   try {
     await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -620,7 +663,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         helperVisible: false,
       };
     }
-    return await page.evaluate(() => {
+    return await page.evaluate(({ targetHostname }) => {
       const visible = (element) => {
         try {
           const style = getComputedStyle(element);
@@ -662,12 +705,17 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
             || element.getAttribute('title')
             || '',
           ).replace(/\s+/g, ' ').trim().toLowerCase();
-          return /^(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)$/.test(label);
+          return /(?:^|\b)(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)(?:\b|$)/.test(label);
         });
       const href = location.href;
+      const currentHost = String(location.hostname || '').toLowerCase();
+      const googleAccounts = currentHost === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(currentHost);
+      const flowSignedOut = targetHostname === 'flow.google.com' && (googleAccounts || loginActionVisible);
       return {
         currentUrl: href,
-        loginLikeUrl: /(?:\/|^)(login|signin|sign-in|auth)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
+        loginLikeUrl: flowSignedOut
+          || /(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
+        flowSignedOut,
         usernameFieldVisible: Boolean(username),
         passwordFieldVisible: Boolean(password),
         usernameFilled: Boolean(username && String(username.value || '').length > 0),
@@ -675,9 +723,10 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         loginActionVisible,
         helperVisible: Boolean(document.getElementById('__userflex-credential-helper')),
       };
-    }).catch(() => ({
+    }, { targetHostname }).catch(() => ({
       currentUrl: page.url(),
-      loginLikeUrl: /(?:\/|^)(login|signin|sign-in|auth)(?:\/|\?|#|$)/i.test(page.url()),
+      loginLikeUrl: /accounts\.google\.|(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(page.url()),
+      flowSignedOut: targetHostname === 'flow.google.com' && /accounts\.google\./i.test(page.url()),
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       usernameFilled: false,
