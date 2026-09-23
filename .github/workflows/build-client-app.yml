@@ -297,12 +297,18 @@ jobs:
           $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
           $clientReleases = @(
             $raw |
-              Where-Object { $_.tagName -match '^client-v(\d+\.\d+\.\d+) } |
+              Where-Object { $_.tagName.StartsWith('client-v') } |
               ForEach-Object {
+                $versionText = $_.tagName.Substring('client-v'.Length)
+                try {
+                  $parsedVersion = [version]$versionText
+                } catch {
+                  return
+                }
                 [pscustomobject]@{
                   Tag = $_.tagName
-                  Version = [version]$Matches[1]
-                  VersionText = $Matches[1]
+                  Version = $parsedVersion
+                  VersionText = $versionText
                 }
               } |
               Sort-Object Version -Descending
@@ -319,7 +325,8 @@ jobs:
                 $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
                 foreach ($chunk in @($manifest.chunks)) {
                   $chunkName = [string]$chunk.name
-                  if ($chunkName -match '^versions/[0-9A-Za-z.-]+/part-\d{3}\.bin) {
+                  $expectedPrefix = "versions/$($release.VersionText)/part-"
+                  if ($chunkName.StartsWith($expectedPrefix) -and $chunkName.EndsWith('.bin')) {
                     & npx wrangler@4.130.0 r2 object delete "$bucket/$chunkName" --remote --cwd .. *> $null
                   }
                 }
@@ -341,11 +348,17 @@ jobs:
           $raw = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
           $clientReleases = @(
             $raw |
-              Where-Object { $_.tagName -match '^client-v(\d+\.\d+\.\d+) } |
+              Where-Object { $_.tagName.StartsWith('client-v') } |
               ForEach-Object {
+                $versionText = $_.tagName.Substring('client-v'.Length)
+                try {
+                  $parsedVersion = [version]$versionText
+                } catch {
+                  return
+                }
                 [pscustomobject]@{
                   Tag = $_.tagName
-                  Version = [version]$Matches[1]
+                  Version = $parsedVersion
                 }
               } |
               Sort-Object Version -Descending
