@@ -36,7 +36,19 @@ assert.match(manager, /background: true/);
 assert.match(manager, /authenticated: false/);
 assert.match(manager, /await engine\(\)\.saveActive\(\)/);
 assert.match(manager, /completed\?\.keeper_token/);
-assert.match(manager, /if \(engine\(\)\.active\)[\s\S]{0,180}captura manual activa/);
+assert.match(manager, /function manualCaptureBusy/);
+assert.match(manager, /manualCaptureGeneration \+= 1/);
+assert.match(manager, /manual_capture_priority/);
+assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS/);
+assert.match(manager, /const entries = Object\.entries\(registry\)[\s\S]{0,500}keeperCycleCursor/);
+assert.match(
+  manager,
+  /if \(!interruptedByManualCapture\(\)\)[\s\S]{0,180}engine\(\)\.close\('keeper_check'\)/,
+  'a stale Keeper task must never close a newer manual renewal',
+);
+assert.doesNotMatch(manager, /queueKeeperCheck\(profile\.id, 'capture-complete'\)/);
+assert.match(sessions, /last_status: authenticated \? 'healthy' : 'registered'/);
+assert.match(sessions, /last_check_at: now/);
 
 assert.match(captureState, /export async function inspectCaptureSession/);
 assert.match(captureState, /loginActionVisible/);
