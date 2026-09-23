@@ -408,6 +408,21 @@ function isOpenAiAppUrl(rawUrl) {
   }
 }
 
+function isOpenAiManualVerificationState(state) {
+  if (!state?.url) return false;
+  try {
+    const value = new URL(String(state.url));
+    const host = value.hostname.replace(/^www\./i, '').toLowerCase();
+    const pathname = value.pathname.toLowerCase();
+    if (host === 'challenges.cloudflare.com' || host.endsWith('.challenges.cloudflare.com')) return true;
+    if (!(host === 'auth.openai.com' || host.endsWith('.auth.openai.com'))) return false;
+    if (pathname.startsWith('/api/accounts/authorize')) return true;
+    return /(?:^|\/)(?:email-verification|verification|verify|challenge|mfa|otp|one-time|code)(?:\/|$)/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
 function isOpenAiChallengeState(state) {
   if (!state?.url) return false;
   try {
@@ -845,10 +860,15 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
                 entry.stableAuthChecks = 0;
 
                 const challengeActive = authStates.some(isOpenAiChallengeState);
-                if (challengeActive) {
+                const manualVerificationActive = authStates.some(isOpenAiManualVerificationState);
+                if (challengeActive || manualVerificationActive) {
                   if (entry.openAiAutomationActivated || entry.browser) {
                     await deactivateOpenAiAutomation(entry);
-                    log.log?.('Session Manager OpenAI safe-auth mode: detached again because Cloudflare verification is active.');
+                    log.log?.(
+                      manualVerificationActive
+                        ? 'Session Manager OpenAI safe-auth mode: detached during OpenAI verification/MFA flow.'
+                        : 'Session Manager OpenAI safe-auth mode: detached again because Cloudflare verification is active.',
+                    );
                   }
                   return null;
                 }
@@ -864,7 +884,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
                   controlSecret: secret,
                   onSave: saveCapture,
                 });
-                log.log?.('Session Manager OpenAI autofill activated after the Cloudflare challenge completed.');
+                log.log?.('Session Manager OpenAI autofill activated on the credential-entry step.');
                 return null;
               }
 
