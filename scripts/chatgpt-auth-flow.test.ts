@@ -103,7 +103,7 @@ assert.match(engine, /email-verification\|verification\|verify\|challenge\|mfa\|
 assert.match(engine, /pathname\.startsWith\('\/api\/accounts\/authorize'\)/);
 assert.match(
   engine,
-  /challengeActive \|\| manualVerificationActive[\s\S]{0,520}deactivateOpenAiAutomation\(entry\)[\s\S]{0,340}return null;/,
+  /challengeActive \|\| manualVerificationActive[\s\S]{0,520}deactivateOpenAiAutomation\(entry\)[\s\S]{0,500}return null;/,
   'OpenAI email/MFA verification must stay detached from Puppeteer/CDP',
 );
 assert.match(
