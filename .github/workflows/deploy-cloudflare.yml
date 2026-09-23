@@ -130,6 +130,10 @@ jobs:
         shell: bash
         run: npx wrangler@4.130.0 r2 bucket create userflex-client-releases || true
 
+      - name: Ensure Cloudflare R2 profile image bucket
+        shell: bash
+        run: npx wrangler@4.130.0 r2 bucket create userflex-profile-images || true
+
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=high
