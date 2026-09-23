@@ -1000,6 +1000,40 @@ export async function adminProfileSessionRoutes(
     });
   }
 
+  const guestMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/guest-launch$/i);
+  if (guestMatch && method === 'POST') {
+    const profileId = uuid(guestMatch[1], 'profileId');
+    const profile = await profileRow(env, profileId);
+    const storedProxy = await captureProxyForProfile(env, profile);
+    const proxy = storedProxy ? await liveValidateCaptureProxy(env, storedProxy) : null;
+    if (proxy && !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'PROFILE_PROXY_UNAVAILABLE',
+        'El proxy del perfil está inactivo, usa un protocolo no compatible o falló validación.',
+      );
+    }
+
+    const rawToken = token(32);
+    const tokenHash = await sha(`userflex-session-guest:${rawToken}`);
+    const expiresAt = new Date(Date.now() + CAPTURE_TTL_MS).toISOString();
+    const jobs = await sb(env, 'userflex_profile_session_jobs', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ profile_id: profileId, token_hash: tokenHash, expires_at: expiresAt }),
+    });
+    const endpoint = url.origin;
+    const launchUrl = `userflex-session://guest?endpoint=${encodeURIComponent(endpoint)}&token=${encodeURIComponent(rawToken)}`;
+    await audit(env, request, 'admin', admin.userId, 'profile.guest.launch', 'profile', profileId, {
+      jobId: jobs?.[0]?.id || null,
+      expiresAt,
+      proxyId: proxy?.id || null,
+      proxyType: proxy?.proxy_type || null,
+      networkMode: proxy ? 'proxy' : 'direct',
+    });
+    return json({ ok: true, launch_url: launchUrl, expires_at: expiresAt });
+  }
+
   const captureMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/session-capture$/i);
   if (captureMatch && method === 'POST') {
     const profileId = uuid(captureMatch[1], 'profileId');
@@ -1105,6 +1139,35 @@ async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'comp
 
   if (!job.used_at) throw new HttpError(409, 'CAPTURE_NOT_STARTED', 'Abre primero el enlace de captura en Session Manager.');
   return job;
+}
+
+async function guestJob(env: Env, rawToken: string) {
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_GUEST_TOKEN');
+  const tokenHash = await sha(`userflex-session-guest:${rawToken}`);
+  const rows = await sb(
+    env,
+    `userflex_profile_session_jobs?select=id,profile_id,status,expires_at,used_at&token_hash=eq.${tokenHash}&limit=1`,
+  );
+  const job = rows?.[0];
+  if (!job || job.status !== 'pending') throw new HttpError(401, 'GUEST_TOKEN_INVALID');
+  if (new Date(job.expires_at).getTime() <= Date.now()) {
+    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired' }),
+    });
+    throw new HttpError(401, 'GUEST_TOKEN_EXPIRED');
+  }
+  if (job.used_at) throw new HttpError(401, 'GUEST_TOKEN_ALREADY_USED');
+
+  const claimedAt = new Date().toISOString();
+  const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ used_at: claimedAt, status: 'completed' }),
+  });
+  if (!claimed?.[0]) throw new HttpError(401, 'GUEST_TOKEN_ALREADY_USED');
+  return { ...job, used_at: claimedAt, status: 'completed' };
 }
 
 export async function publicSessionManagerRoutes(request: Request, env: Env): Promise<Response | null> {
@@ -1250,6 +1313,51 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     return json({ ok: true, job_id: job.id, status: result.ok ? 'completed' : 'failed' });
   }
 
+
+  if (path === '/api/session-manager/guest-bootstrap' && method === 'POST') {
+    const sessionManagerVersion = assertSessionManagerVersion(request);
+    const body = await bodyJson(request);
+    const rawToken = text(body.token, 'token', 128);
+    const job = await guestJob(env, rawToken);
+    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ session_manager_version: sessionManagerVersion }),
+    }).catch(() => null);
+
+    const profile = await profileRow(env, job.profile_id);
+    const proxy = await captureProxyForProfile(env, profile);
+    if (proxy && !proxyRuntimeUsable(proxy)) {
+      throw new HttpError(
+        409,
+        'PROFILE_PROXY_UNAVAILABLE',
+        'El proxy del perfil está inactivo, usa un protocolo no compatible o falló validación.',
+      );
+    }
+
+    return json({
+      ok: true,
+      minimumSessionManagerVersion: MIN_SESSION_MANAGER_VERSION,
+      sessionManagerVersion,
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        url: profile.url,
+        browserEngine: profile.browser_engine || 'chrome-native',
+      },
+      proxy: proxy ? {
+        id: proxy.id,
+        name: proxy.name,
+        host: proxy.host,
+        port: proxy.port,
+        type: proxy.proxy_type || 'http',
+        validationStatus: proxy.validation_status || null,
+        publicIp: inetHost(proxy.public_ip),
+        username: proxy.username || null,
+        password: proxy.password_ciphertext ? await decryptProxy(env, proxy.password_ciphertext, proxy.password_iv) : null,
+      } : null,
+    });
+  }
 
   if (path === '/api/session-manager/bootstrap' && method === 'POST') {
     const sessionManagerVersion = assertSessionManagerVersion(request);

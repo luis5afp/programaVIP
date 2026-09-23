@@ -297,6 +297,10 @@ export const api = {
         `/api/profiles/${profileId}/managed-credentials`,
         { method: 'DELETE' },
       ),
+    guest: (profileId: string) =>
+      request<{ ok: true; launch_url: string; expires_at: string }>(`/api/profiles/${profileId}/guest-launch`, {
+        method: 'POST',
+      }),
     capture: (profileId: string) =>
       request<{ ok: true; launch_url: string; save_url: string; expires_at: string }>(`/api/profiles/${profileId}/session-capture`, {
         method: 'POST',

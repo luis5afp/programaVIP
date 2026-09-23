@@ -555,6 +555,28 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
   return args;
 }
 
+function guestChromeArgs({ userDataDir, proxyRules, initialUrl }) {
+  const args = [
+    `--user-data-dir=${userDataDir}`,
+    '--guest',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--start-maximized',
+    '--disable-features=SignInProfileCreation,SigninConsistency,Translate,TranslateUI',
+    '--disable-translate',
+    '--disable-password-saving',
+    '--disable-save-password-bubble',
+    '--disable-session-crashed-bubble',
+    '--disable-background-mode',
+    '--disable-sync',
+    '--allow-browser-signin=false',
+    '--lang=es-ES',
+  ];
+  if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
+  args.push(initialUrl || 'about:blank');
+  return args;
+}
+
 export function createKaizenCaptureEngine({ app, log = console } = {}) {
   if (!app || typeof app.getPath !== 'function') throw new Error('El motor de captura KAIZEN requiere Electron app.');
   let active = null;
@@ -575,19 +597,24 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     }
     try { await entry.control?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
-    await markProfileExitedCleanly(entry.userDataDir);
+    if (!entry.temporaryProfile) {
+      await markProfileExitedCleanly(entry.userDataDir);
+    }
     if (entry.extensionDir) {
       try { await fsp.rm(entry.extensionDir, { recursive: true, force: true }); } catch {}
+    }
+    if (entry.temporaryProfile && entry.userDataDir) {
+      try { await fsp.rm(entry.userDataDir, { recursive: true, force: true }); } catch {}
     }
     log.log?.(`Session Manager KAIZEN closed: ${reason} · ${graceful ? 'graceful' : 'forced'}`);
   }
 
-  async function launch({ profile, credentials, proxy = null, onComplete, background = false }) {
+  async function launch({ profile, credentials, proxy = null, onComplete, background = false, guest = false }) {
     if (!profile?.id || !profile?.url) throw new Error('Configuración de perfil incompleta.');
-    if (profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
+    if (!guest && profile.authStrategy === 'hybrid' && (!credentials?.username || !credentials?.password)) {
       throw new Error('El perfil híbrido no tiene credenciales administradas.');
     }
-    await close('replace_capture');
+    await close(guest ? 'replace_guest' : 'replace_capture');
 
     const executable = resolveCaptureBrowserExecutable(process.resourcesPath, profile.browserEngine || 'chrome-native');
     if (!executable) {
@@ -599,14 +626,22 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       );
     }
 
-    const userDataDir = path.join(app.getPath('userData'), 'browserProfilesData', safeSegment(profile.id));
+    const userDataDir = guest
+      ? path.join(
+          app.getPath('temp'),
+          'userflex-session-guest',
+          `${safeSegment(profile.id)}-${crypto.randomBytes(8).toString('hex')}`,
+        )
+      : path.join(app.getPath('userData'), 'browserProfilesData', safeSegment(profile.id));
     const openAiCapture = isOpenAiProfileUrl(profile.url);
-    const extensionDir = openAiCapture
+    const extensionDir = guest || openAiCapture
       ? null
       : path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
     await fsp.mkdir(userDataDir, { recursive: true });
-    await killStrayProfileProcesses(userDataDir);
-    await markProfileExitedCleanly(userDataDir);
+    if (!guest) {
+      await killStrayProfileProcesses(userDataDir);
+      await markProfileExitedCleanly(userDataDir);
+    }
 
     let relay = null;
     let proxyRules = null;
@@ -676,6 +711,61 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
 
       relay = await startKaizenProxyRelay(proxy);
       proxyRules = relay.proxyRules;
+    }
+
+    if (guest) {
+      let entry = null;
+      const proc = spawn(executable, guestChromeArgs({
+        userDataDir,
+        proxyRules,
+        initialUrl: profile.url,
+      }), {
+        detached: false,
+        windowsHide: false,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+
+      entry = {
+        process: proc,
+        debugPort: null,
+        userDataDir,
+        extensionDir: null,
+        relay,
+        control: null,
+        profile,
+        proxy,
+        executable,
+        browser: null,
+        automation: null,
+        temporaryProfile: true,
+        guest: true,
+        closed: false,
+      };
+      active = entry;
+
+      proc.stderr?.on('data', (chunk) => {
+        const text = String(chunk || '').trim();
+        if (text && /ERROR|FATAL|proxy/i.test(text)) log.warn?.('Session Manager Guest Chrome:', text.slice(0, 800));
+      });
+      proc.once('error', (error) => {
+        log.error?.('Session Manager Guest Chrome spawn failed:', error?.message || error);
+        if (active === entry) void close('guest_spawn_error');
+      });
+      proc.once('exit', () => {
+        if (active === entry) active = null;
+        entry.closed = true;
+        void entry.relay?.close().catch(() => null);
+        void fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => null);
+      });
+
+      return {
+        ok: true,
+        external: true,
+        guest: true,
+        pid: proc.pid,
+        profileDir: userDataDir,
+        publicIp: verifiedPublicIp || proxy?.publicIp || null,
+      };
     }
 
     const debugPort = await freePort();
@@ -794,6 +884,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       openAiAutomationPromise: null,
       openAiRouteRecoveryAttempts: 0,
       devtoolsTimer: null,
+      temporaryProfile: false,
+      guest: false,
       closed: false,
     };
     active = entry;
@@ -966,8 +1058,20 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     return inspectCaptureSession(active.debugPort, active.profile.url);
   }
 
+  async function launchGuest({ profile, proxy = null }) {
+    return launch({
+      profile,
+      credentials: null,
+      proxy,
+      onComplete: null,
+      background: false,
+      guest: true,
+    });
+  }
+
   return {
     launch,
+    launchGuest,
     close,
     saveActive,
     inspectActive,

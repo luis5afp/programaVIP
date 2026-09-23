@@ -34,6 +34,19 @@ assert.match(
 assert.match(worker, /validatedAt: authenticated \? now : null/, 'backend must persist a validation timestamp for confirmed captures');
 assert.match(worker, /validated: authenticated/, 'capture completion must report whether the new snapshot is already verified');
 
+assert.match(admin, /Abrir como invitado/, 'profile cards must expose the guest launch action');
+assert.match(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'guest action must request a one-time Session Manager link');
+assert.match(api, /\/guest-launch/, 'Admin API must expose guest launch');
+assert.match(worker, /userflex-session-guest:/, 'guest links must use a separate one-time token namespace');
+assert.match(worker, /userflex-session:\/\/guest\?endpoint=/, 'backend must return the Session Manager guest protocol');
+assert.match(worker, /\/api\/session-manager\/guest-bootstrap/, 'Session Manager must bootstrap guest mode without snapshot delivery');
+assert.match(manager, /url\.hostname === 'guest'/, 'Session Manager must handle guest protocol URLs');
+assert.match(manager, /engine\(\)\.launchGuest\(\{ profile, proxy \}\)/, 'Session Manager must use the isolated guest engine');
+assert.match(engine, /'--guest'/, 'guest Chromium must use the browser guest mode');
+assert.match(engine, /temporaryProfile: true/, 'guest Chromium must use disposable profile storage');
+assert.match(engine, /app\.getPath\('temp'\)/, 'guest data must live under temporary storage');
+assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated guest launcher');
+
 assert.match(engine, /entry\.savedResult/);
 assert.match(engine, /entry\.savePromise/);
 assert.match(engine, /close\('capture_saved'\)/, 'Chromium must close after successful save');

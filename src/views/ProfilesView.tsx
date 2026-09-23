@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.41/userFLEX-Session-Manager-0.3.41-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.42/userFLEX-Session-Manager-0.3.42-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -149,7 +149,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.41+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.42+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
@@ -616,6 +616,23 @@ export function ProfilesView() {
     }
   }
 
+  async function openGuest(profile: Profile) {
+    try {
+      setSessionAction(profile.id);
+      setError(null);
+      setSuccess(null);
+      const result = await api.profileSessions.guest(profile.id);
+      launchCustomProtocol(result.launch_url);
+      setSuccess(
+        `${profileLabel(profile)} abierto como invitado. Es una ventana temporal: no carga el snapshot ni guarda cambios de sesión.`,
+      );
+    } catch (guestError: any) {
+      setError(guestError.message);
+    } finally {
+      setSessionAction(null);
+    }
+  }
+
   async function startCapture(profile: Profile) {
     try {
       setSessionAction(profile.id);
@@ -923,6 +940,15 @@ export function ProfilesView() {
                   </div>
 
                   <div className="profile-compact-actions">
+                    <button
+                      className="profile-icon-action"
+                      disabled={sessionAction === profile.id}
+                      onClick={() => void openGuest(profile)}
+                      title="Abrir como invitado · temporal, sin snapshot ni guardado"
+                      aria-label="Abrir como invitado"
+                    >
+                      <Globe2 size={15} />
+                    </button>
                     {snapshotManaged && (
                       <button
                         className="profile-icon-action"
@@ -1035,6 +1061,15 @@ export function ProfilesView() {
 
                     <div className="profile-card-footer">
                       <div className="profile-session-actions">
+                        <button
+                          className="button secondary small"
+                          disabled={sessionAction === profile.id}
+                          onClick={() => void openGuest(profile)}
+                          title="Abre Chrome/Edge en modo invitado temporal. No reutiliza ni modifica la sesión guardada."
+                        >
+                          <Globe2 size={12} />
+                          Abrir invitado
+                        </button>
                         {snapshotManaged && (
                           <>
                             <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
@@ -1757,7 +1792,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.41
+              Instalar / actualizar Session Manager v0.3.42
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
