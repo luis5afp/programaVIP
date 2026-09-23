@@ -25,7 +25,12 @@ function inetHost(value: unknown): string | null {
   return raw.split('/')[0] || null;
 }
 
-export async function clientCatalog(env: Env, id: ClientIdentity) {
+function profileImageUrl(request: Request, profile: any) {
+  if (!profile?.image_url || !profile?.id) return null;
+  return `${new URL(request.url).origin}/api/profile-images/${profile.id}`;
+}
+
+export async function clientCatalog(request: Request, env: Env, id: ClientIdentity) {
   const realtime = await clientRealtimeConfig(env, id.clientId);
   const memberships = await sb(
     env,
@@ -131,7 +136,7 @@ export async function clientCatalog(env: Env, id: ClientIdentity) {
         name: profile.name,
         url: profile.url,
         platform: profile.platform,
-        imageUrl: profile.image_url,
+        imageUrl: profileImageUrl(request, profile),
         tags: profile.tags || [],
         managedConnection: networkUsesProxy,
         sessionMode: profile.session_mode,
@@ -368,7 +373,7 @@ export async function clientLaunch(
       name: profile.name,
       url: profile.url,
       platform: profile.platform,
-      imageUrl: profile.image_url,
+      imageUrl: profileImageUrl(request, profile),
       tags: profile.tags || [],
       sessionMode: profile.session_mode,
       sessionReady: true,
