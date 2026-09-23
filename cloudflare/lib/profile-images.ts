@@ -142,8 +142,7 @@ export async function serveProfileImage(
     headers: {
       Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8,*/*;q=0.5',
     },
-    cf: { cacheTtl: 86400, cacheEverything: true },
-  } as RequestInit);
+  });
 
   if (!upstream.ok) {
     throw new HttpError(502, 'PROFILE_IMAGE_FETCH_FAILED', 'No se pudo cargar la imagen del perfil.');
