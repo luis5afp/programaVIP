@@ -1,5 +1,9 @@
 import { Env, sb } from './core';
 
+function uniqueIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => String(value || '')).filter(Boolean))];
+}
+
 export async function touchClientConfig(env: Env, clientId: string): Promise<void> {
   await touchClientsConfig(env, [clientId]);
 }
