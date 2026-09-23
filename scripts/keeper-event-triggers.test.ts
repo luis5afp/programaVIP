@@ -18,6 +18,11 @@ assert.match(keeper, /\/realtime\/v1\/api\/broadcast/);
 assert.match(keeper, /KEEPER_REQUEST_COOLDOWN_MS = 5 \* 60 \* 1000/);
 assert.match(keeper, /last_check_at/);
 assert.match(keeper, /reason: 'admin-start' \| 'client-start' \| 'profile-update' \| 'credentials-update'/);
+assert.match(
+  keeper,
+  /if \(reason === 'admin-start' \|\| reason === 'client-start'\) return 0;/,
+  'Admin/client startup must not fan out browser checks for all profiles',
+);
 
 assert.match(sessions, /\/api\/profile-session-checks\/request/);
 assert.match(sessions, /requestAllKeeperChecks\(env, 'admin-start'\)/);
