@@ -27,6 +27,7 @@ export type AdminIdentity = {
   userId: string;
   username: string;
   sessionId: string;
+  sessionToken: string;
   role: AdminRole;
   displayName: string;
   email: string | null;
@@ -165,15 +166,18 @@ export async function requireAdmin(request: Request, env: Env): Promise<AdminIde
   if (!user) throw new HttpError(401, 'UNAUTHENTICATED');
   const profile = await ensureAdminProfile(env, user);
   if (!profile) throw new HttpError(403, 'ADMIN_ACCESS_REVOKED', 'Esta cuenta no tiene acceso al panel userFLEX.');
+  const refreshedAt = new Date().toISOString();
+  const refreshedExpiresAt = new Date(Date.now() + ADMIN_MAX_AGE * 1000).toISOString();
   void sb(env, `vsixteen_login_sessions?id=eq.${session.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
+    body: JSON.stringify({ last_seen_at: refreshedAt, expires_at: refreshedExpiresAt }),
   }).catch(() => {});
   return {
     userId: user.id,
     username: user.username,
     sessionId: session.id,
+    sessionToken: raw,
     role: profile.role,
     displayName: profile.display_name,
     email: profile.email,
