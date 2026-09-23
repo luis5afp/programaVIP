@@ -31,6 +31,25 @@ function domainMatches(cookieDomain, hostname) {
   return Boolean(domain && (host === domain || host.endsWith(`.${domain}`)));
 }
 
+function isGoogleFlowHost(hostname) {
+  return String(hostname || '').toLowerCase() === 'flow.google.com';
+}
+
+function isGoogleAccountsHost(hostname) {
+  const host = String(hostname || '').replace(/^\./, '').toLowerCase();
+  return host === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(host);
+}
+
+function cookieRelevantToTarget(cookieDomain, targetHostname) {
+  if (domainMatches(cookieDomain, targetHostname)) return true;
+  return isGoogleFlowHost(targetHostname) && isGoogleAccountsHost(cookieDomain);
+}
+
+function isGoogleAuthCookieName(name) {
+  return /^(?:SID|HSID|SSID|APISID|SAPISID|__Secure-(?:1P|3P)?SID|__Secure-(?:1P|3P)?APISID)$/i
+    .test(String(name || ''));
+}
+
 function isNetflixHost(hostname) {
   const host = String(hostname || '').toLowerCase();
   return host === 'netflix.com' || host.endsWith('.netflix.com');
@@ -901,7 +920,7 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
     const pageState = await validateCapturePage(page, target);
     const cookiesRaw = await allCookies(page);
     const cookies = cookiesRaw
-      .filter((cookie) => cookie?.name && domainMatches(cookie.domain, target.hostname))
+      .filter((cookie) => cookie?.name && cookieRelevantToTarget(cookie.domain, target.hostname))
       .map(normalizeCookie);
 
     if (isNetflixHost(target.hostname)) {
@@ -909,6 +928,13 @@ export async function capturePortableSession({ debugPort, profile, networkMode =
       const missing = ['netflixid', 'securenetflixid'].filter((name) => !names.has(name));
       if (missing.length) {
         throw new Error('Netflix todavía no expuso las cookies de autenticación activas. Confirma que la cuenta esté abierta y vuelve a guardar.');
+      }
+    }
+
+    if (isGoogleFlowHost(target.hostname)) {
+      const hasGoogleAuth = cookies.some((cookie) => isGoogleAuthCookieName(cookie.name) && String(cookie.value || ''));
+      if (!hasGoogleAuth) {
+        throw new Error('Google Flow todavía no expuso cookies de autenticación activas. Confirma que la cuenta esté abierta antes de guardar.');
       }
     }
 
