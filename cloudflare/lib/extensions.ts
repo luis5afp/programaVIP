@@ -30,47 +30,39 @@ type ExtensionRow = {
   updated_at: string;
 };
 
-function storageConfig(env: Env) {
-  const url = env.SUPABASE_URL?.replace(/\/$/, '');
-  const key = env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new HttpError(503, 'SUPABASE_CONFIG_MISSING', 'Supabase no está configurado.');
-  return { url, key };
-}
-
-async function storageRequest(env: Env, objectPath: string, init: RequestInit = {}) {
-  const { url, key } = storageConfig(env);
-  const headers = new Headers(init.headers);
-  headers.set('Authorization', `Bearer ${key}`);
-  headers.set('apikey', key);
-  const response = await fetch(`${url}/storage/v1/object/${BUCKET}/${objectPath}`, { ...init, headers });
-  if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 240);
-    console.error('Extension storage', response.status, objectPath, detail);
-    throw new HttpError(502, 'EXTENSION_STORAGE_ERROR', 'No se pudo completar la operación con el paquete de la extensión.');
+function extensionBucket(env: Env) {
+  if (!env.EXTENSION_PACKAGES) {
+    throw new HttpError(503, 'EXTENSION_STORAGE_MISSING', 'El almacenamiento de extensiones no está configurado.');
   }
-  return response;
+  return env.EXTENSION_PACKAGES;
 }
 
 async function uploadPackage(env: Env, objectPath: string, bytes: Uint8Array) {
-  await storageRequest(env, objectPath, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/zip',
-      'x-upsert': 'true',
-      'cache-control': 'private, max-age=31536000, immutable',
-    },
-    body: bytes,
-  });
+  try {
+    await extensionBucket(env).put(objectPath, bytes, {
+      httpMetadata: {
+        contentType: 'application/zip',
+        cacheControl: 'private, max-age=31536000, immutable',
+      },
+    });
+  } catch (error) {
+    console.error('Extension R2 upload failed', objectPath, error instanceof Error ? error.message : String(error));
+    throw new HttpError(502, 'EXTENSION_STORAGE_ERROR', 'No se pudo guardar el paquete de la extensión.');
+  }
 }
 
 async function removePackage(env: Env, objectPath: string) {
   if (!objectPath) return;
-  await storageRequest(env, objectPath, { method: 'DELETE' }).catch(() => null);
+  await extensionBucket(env).delete(objectPath).catch(() => null);
 }
 
 async function readPackage(env: Env, objectPath: string) {
-  const response = await storageRequest(env, objectPath, { method: 'GET' });
-  return new Uint8Array(await response.arrayBuffer());
+  const object = await extensionBucket(env).get(objectPath);
+  if (!object) throw new HttpError(404, 'EXTENSION_PACKAGE_NOT_FOUND', 'El paquete de la extensión no existe.');
+  if (object.size < 1 || object.size > MAX_PACKAGE_BYTES) {
+    throw new HttpError(502, 'EXTENSION_PACKAGE_SIZE', 'El paquete almacenado tiene un tamaño inválido.');
+  }
+  return new Uint8Array(await object.arrayBuffer());
 }
 
 async function digestBytes(bytes: Uint8Array) {
