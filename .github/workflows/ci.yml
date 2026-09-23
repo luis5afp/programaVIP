@@ -21,6 +21,8 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - name: Test profile runtime matrix
         run: node --experimental-strip-types scripts/profile-runtime-matrix.test.ts
+      - name: Test proxy changes preserve snapshot
+        run: node --experimental-strip-types scripts/proxy-change-preserves-snapshot.test.ts
       - name: Test release compatibility
         run: node --experimental-strip-types scripts/release-hardening.test.ts
       - name: Test reliability hardening
