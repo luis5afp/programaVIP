@@ -34,6 +34,12 @@ assert.match(
 assert.match(worker, /validatedAt: authenticated \? now : null/, 'backend must persist a validation timestamp for confirmed captures');
 assert.match(worker, /validated: authenticated/, 'capture completion must report whether the new snapshot is already verified');
 
+assert.match(admin, /Abrir como cliente/, 'profile cards must expose the direct userFLOW client test action');
+assert.match(admin, /api\.profileSessions\.clientTest\(profile\.id, clientId\)/, 'direct client action must use the real userFLOW client-test endpoint');
+assert.match(admin, /userFLOW para comprobar la configuración real/, 'direct client action must explain that it uses the real client configuration');
+assert.match(admin, /network_strategy === 'assigned-proxy'/, 'direct client action must respect client-specific proxy assignments');
+assert.match(admin, /Laptop size=\{15\}/, 'compact profile row must show the client-open icon before maintenance actions');
+
 assert.match(admin, /Abrir como invitado/, 'profile cards must expose the guest launch action');
 assert.match(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'guest action must request a one-time Session Manager link');
 assert.match(api, /\/guest-launch/, 'Admin API must expose guest launch');
