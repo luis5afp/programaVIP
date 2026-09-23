@@ -196,6 +196,7 @@ jobs:
           const value = JSON.parse(process.env.HEALTH || '{}');
           if (value.ok !== true) process.exit(1);
           if (value.updateStorage !== 'cloudflare-r2') process.exit(1);
+          if (value.profileImageStorage !== 'cloudflare-r2') process.exit(1);
           if (value.minimumClientVersion !== process.env.EXPECTED_USERFLOW) process.exit(1);
           if (value.minimumSessionManagerVersion !== process.env.MIN_SESSION_MANAGER) process.exit(1);
           NODE
