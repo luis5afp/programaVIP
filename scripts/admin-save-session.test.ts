@@ -65,6 +65,14 @@ assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated gues
 
 assert.match(cloudflareWorker, /profile-images/, 'legacy same-origin image route stays available for compatibility');
 assert.match(profileImages, /serveProfileImage/, 'legacy profile image proxy must stay available');
+assert.match(profileImages, /function supabaseStorageAdminHeaders/, 'profile uploads must centralize Supabase Storage authentication headers');
+assert.match(profileImages, /const jwtParts = key\.split\('\.'\)/, 'profile uploads must detect legacy JWT service-role keys');
+assert.match(profileImages, /headers\.set\('Authorization', \`Bearer \\${key}\`\)/, 'legacy JWT service-role keys must keep Bearer authorization');
+assert.doesNotMatch(
+  profileImages,
+  /headers:\s*\{[\s\S]{0,220}Authorization:\s*\`Bearer \\${key}\`/,
+  'modern sb_secret keys must not be sent unconditionally as Bearer tokens',
+);
 assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must receive the original stored profile image URL');
 assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
 assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
