@@ -24,7 +24,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.34';
+const APP_VERSION = '1.4.35';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -59,8 +59,8 @@ async function api(request: Request, env: Env): Promise<Response> {
       ok: true,
       service: 'userFLEX Admin API',
       version: APP_VERSION,
-      supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
-      databaseBackend: env.NEON_DATABASE_URL ? 'neon' : 'supabase',
+      databaseConfigured: Boolean(env.NEON_DATABASE_URL),
+      databaseBackend: 'neon',
       databaseReachable,
       databaseError,
       updateStorage: env.CLIENT_RELEASES ? 'cloudflare-r2' : 'missing',
