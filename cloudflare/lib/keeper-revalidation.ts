@@ -6,7 +6,7 @@ export async function requestKeeperChecks(
   _reason: 'admin-start' | 'client-start' | 'profile-update' | 'credentials-update',
 ): Promise<number> {
   // Session Manager performs low-frequency round-robin Keeper checks locally.
-  // No external realtime/broadcast provider is required.
+  // No external event provider is required.
   return 0;
 }
 
