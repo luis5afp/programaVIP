@@ -948,9 +948,13 @@ export function ProfilesView() {
                       <Globe2 className="profile-image-fallback" size={30} aria-hidden="true" />
                       {profileImageSrc(profile) && (
                         <img
+                          key={profileImageSrc(profile) || undefined}
                           src={profileImageSrc(profile) || undefined}
                           alt={`Logo de ${profileLabel(profile)}`}
                           referrerPolicy="no-referrer"
+                          onLoad={(event) => {
+                            event.currentTarget.style.display = 'block';
+                          }}
                           onError={(event) => {
                             event.currentTarget.style.display = 'none';
                           }}
@@ -1415,9 +1419,13 @@ export function ProfilesView() {
                 <div style={{ width: 118, height: 78, flex: '0 0 auto', borderRadius: 10, overflow: 'hidden', border: '1px solid #e2e8f0', background: '#fff', display: 'grid', placeItems: 'center', color: '#94a3b8' }}>
                   {previewUrl ? (
                     <img
+                      key={previewUrl}
                       src={previewUrl}
                       alt="Vista previa"
                       style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', padding: 4 }}
+                      onLoad={(event) => {
+                        event.currentTarget.style.display = 'block';
+                      }}
                       onError={(event) => {
                         event.currentTarget.style.display = 'none';
                       }}
