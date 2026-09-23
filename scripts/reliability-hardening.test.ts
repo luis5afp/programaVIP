@@ -17,8 +17,8 @@ assert.match(adminApi, /X-Userflex-Request-Id/);
 assert.match(adminMain, /<ErrorBoundary>/);
 assert.match(boundary, /Recargar panel/);
 
-assert.match(core, /AbortSignal\.timeout\(15_000\)/);
-assert.match(core, /const retryable = method === 'GET' \|\| method === 'HEAD'/);
+assert.match(core, /NEON_DATABASE_URL/);
+assert.match(core, /Neon database error/);
 assert.match(core, /DATABASE_UNAVAILABLE/);
 assert.match(worker, /X-Userflex-Request-Id/);
 assert.match(worker, /requestId/);

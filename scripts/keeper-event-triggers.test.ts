@@ -12,22 +12,19 @@ const clientMain = readFileSync(new URL('../client-app/main.js', import.meta.url
 const manager = readFileSync(new URL('../session-manager/main.js', import.meta.url), 'utf8');
 const managerPackage = JSON.parse(readFileSync(new URL('../session-manager/package.json', import.meta.url), 'utf8'));
 
-assert.match(keeper, /const KEEPER_EVENT = 'keeper_check'/);
-assert.match(keeper, /userflex-keeper:\$\{profileId\}:\$\{secret\}/);
-assert.match(keeper, /\/realtime\/v1\/api\/broadcast/);
-assert.match(keeper, /KEEPER_REQUEST_COOLDOWN_MS = 5 \* 60 \* 1000/);
-assert.match(keeper, /last_check_at/);
-assert.match(keeper, /reason: 'admin-start' \| 'client-start' \| 'profile-update' \| 'credentials-update'/);
+assert.doesNotMatch(keeper, /supabase|realtime|broadcast/i);
+assert.match(keeper, /requestKeeperChecks/);
+assert.match(keeper, /return 0;/);
 assert.match(
   keeper,
-  /if \(reason === 'admin-start' \|\| reason === 'client-start'\) return 0;/,
-  'Admin/client startup must not fan out browser checks for all profiles',
+  /Session Manager performs low-frequency round-robin Keeper checks locally/,
+  'Keeper requests must remain passive without a third-party realtime provider',
 );
 
 assert.match(sessions, /\/api\/profile-session-checks\/request/);
 assert.match(sessions, /requestAllKeeperChecks\(env, 'admin-start'\)/);
 assert.match(sessions, /\/api\/session-keeper\/realtime/);
-assert.match(sessions, /keeperRealtimeConfig\(env, keeper\.profile_id\)/);
+assert.match(sessions, /realtime: null/);
 assert.match(sessions, /requestKeeperChecks\(env, \[profileId\], 'credentials-update'\)/);
 
 assert.match(client, /export async function clientRequestSessionChecks/);
@@ -44,13 +41,16 @@ assert.match(clientMain, /requestSessionKeeperChecks/);
 assert.match(clientMain, /\/api\/client\/session-checks\/request/);
 assert.ok((clientMain.match(/void requestSessionKeeperChecks\(\)/g) || []).length >= 2);
 
-assert.equal(managerPackage.dependencies['@supabase/realtime-js'], '^2.99.2');
-assert.match(manager, /import \{ RealtimeClient \} from '@supabase\/realtime-js'/);
-assert.match(manager, /\/api\/session-keeper\/realtime/);
-assert.match(manager, /queueKeeperCheck/);
-assert.match(manager, /runRequestedKeeperChecks/);
-assert.match(manager, /KEEPER_EVENT_COOLDOWN_MS = 5 \* 60 \* 1000/);
+assert.equal(managerPackage.dependencies?.['@supabase/realtime-js'], undefined);
+assert.doesNotMatch(manager, /@supabase\/realtime-js|RealtimeClient|supabase\.co/i);
+assert.doesNotMatch(manager, /queueKeeperCheck|runRequestedKeeperChecks|connectKeeperRealtime/);
 assert.match(manager, /KEEPER_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
-assert.match(manager, /void connectKeeperRealtime\(\)/);
+assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS/);
+assert.match(manager, /keeperCycleCursor/);
+assert.match(
+  manager,
+  /periodic cycle checks one[\s\S]{0,160}round-robin cursor to keep server usage low/,
+  'Session Manager must retain low-frequency round-robin Keeper checks',
+);
 
-console.log('Keeper event triggers: OK');
+console.log('Keeper low-frequency checks without Supabase Realtime: OK');

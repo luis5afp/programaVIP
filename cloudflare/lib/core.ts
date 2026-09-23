@@ -33,10 +33,8 @@ export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   CLIENT_RELEASES?: R2BucketLike;
   PROFILE_IMAGES?: R2BucketLike;
+  EXTENSION_PACKAGES?: R2BucketLike;
   NEON_DATABASE_URL?: string;
-  SUPABASE_URL?: string;
-  SUPABASE_SERVICE_ROLE_KEY?: string;
-  SUPABASE_PUBLISHABLE_KEY?: string;
   USERFLEX_PROXY_MASTER_KEY?: string;
   USERFLEX_PROXY_KEY_VERSION?: string;
   CREATORTOOLS_AUTH_ORIGIN?: string;
@@ -109,96 +107,19 @@ export function requireSameOriginWrite(request: Request): void {
   }
 }
 
-function config(env: Env) {
-  const url = env.SUPABASE_URL?.replace(/\/$/, '');
-  const key = env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new HttpError(503, 'SUPABASE_CONFIG_MISSING', 'Supabase no está configurado.');
-  return { url, key };
-}
-
 export async function sb(env: Env, path: string, init: RequestInit = {}): Promise<any> {
-  if (env.NEON_DATABASE_URL) {
-    try {
-      const { neonRest } = await import('./neon-rest');
-      return await neonRest(env, path, init);
-    } catch (error: any) {
-      if (error instanceof HttpError) throw error;
-      const normalized = String(error?.message || error?.code || error || '');
-      const code = String(error?.code || '');
-      console.error('Neon database error', path, code, normalized.slice(0, 180));
-      if (normalized.includes('USERFLEX_PROFILE_LIMIT_REACHED')) {
-        throw new HttpError(409, 'PROFILE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de perfiles.');
-      }
-      if (normalized.includes('USERFLEX_SUBSCRIPTION_INACTIVE')) {
-        throw new HttpError(409, 'SUBSCRIPTION_INACTIVE', 'El cliente no tiene una suscripción activa.');
-      }
-      if (normalized.includes('USERFLEX_DEVICE_LIMIT_REACHED')) {
-        throw new HttpError(409, 'DEVICE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de dispositivos.');
-      }
-      if (normalized.includes('USERFLEX_PLAN_INACTIVE')) {
-        throw new HttpError(409, 'PLAN_INACTIVE', 'El plan seleccionado no está activo.');
-      }
-      if (code === '23505') throw new HttpError(409, 'CONFLICT', 'Ya existe un registro con esos datos.');
-      if (code === '23503') throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
-      if (/timeout|fetch failed|connection|network|ECONN/i.test(normalized)) {
-        throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
-      }
-      throw new HttpError(502, 'DATABASE_ERROR', 'No se pudo completar la operación en la base de datos.');
-    }
+  if (!env.NEON_DATABASE_URL) {
+    throw new HttpError(503, 'NEON_CONFIG_MISSING', 'Neon no está configurado.');
   }
 
-  const { url, key } = config(env);
-  const method = String(init.method || 'GET').toUpperCase();
-  const retryable = method === 'GET' || method === 'HEAD';
-  const maxAttempts = retryable ? 3 : 1;
-  let response: Response | null = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const headers = new Headers(init.headers);
-    headers.set('apikey', key);
-    headers.set('Authorization', `Bearer ${key}`);
-    headers.set('Accept', 'application/json');
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-
-    try {
-      response = await fetch(`${url}/rest/v1/${path}`, {
-        ...init,
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      });
-    } catch (error) {
-      console.error('Supabase network error', path, error instanceof Error ? error.message : String(error));
-      if (retryable && attempt < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-        continue;
-      }
-      throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
-    }
-
-    if (retryable && [408, 425, 429, 502, 503, 504].includes(response.status) && attempt < maxAttempts) {
-      await response.text().catch(() => '');
-      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-      continue;
-    }
-    break;
-  }
-
-  if (!response) throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no está disponible.');
-
-  const raw = await response.text();
-  let body: any = null;
-  if (raw) {
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      body = raw;
-    }
-  }
-
-  if (!response.ok) {
-    const message = typeof body === 'string' ? body : body?.message || body?.code || '';
-    const normalized = String(message);
-    console.error('Supabase', response.status, path, normalized.slice(0, 180));
+  try {
+    const { neonRest } = await import('./neon-rest');
+    return await neonRest(env, path, init);
+  } catch (error: any) {
+    if (error instanceof HttpError) throw error;
+    const normalized = String(error?.message || error?.code || error || '');
+    const code = String(error?.code || '');
+    console.error('Neon database error', path, code, normalized.slice(0, 180));
     if (normalized.includes('USERFLEX_PROFILE_LIMIT_REACHED')) {
       throw new HttpError(409, 'PROFILE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de perfiles.');
     }
@@ -211,18 +132,13 @@ export async function sb(env: Env, path: string, init: RequestInit = {}): Promis
     if (normalized.includes('USERFLEX_PLAN_INACTIVE')) {
       throw new HttpError(409, 'PLAN_INACTIVE', 'El plan seleccionado no está activo.');
     }
-    if (response.status === 409 || body?.code === '23505') {
-      throw new HttpError(409, 'CONFLICT', 'Ya existe un registro con esos datos.');
-    }
-    if (body?.code === '23503') {
-      throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
-    }
-    if ([408, 425, 429, 502, 503, 504].includes(response.status)) {
-      throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos está temporalmente ocupada. Intenta nuevamente.');
+    if (code === '23505') throw new HttpError(409, 'CONFLICT', 'Ya existe un registro con esos datos.');
+    if (code === '23503') throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
+    if (/timeout|fetch failed|connection|network|ECONN/i.test(normalized)) {
+      throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
     }
     throw new HttpError(502, 'DATABASE_ERROR', 'No se pudo completar la operación en la base de datos.');
   }
-  return body;
 }
 
 export async function bodyJson(request: Request, max = 32768): Promise<any> {

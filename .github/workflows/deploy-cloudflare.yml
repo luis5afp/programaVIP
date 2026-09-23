@@ -22,7 +22,6 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       USERFLEX_PROXY_MASTER_KEY: ${{ secrets.USERFLEX_PROXY_MASTER_KEY }}
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
     steps:
@@ -38,95 +37,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPABASE_SERVICE_ROLE_KEY USERFLEX_PROXY_MASTER_KEY; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID USERFLEX_PROXY_MASTER_KEY NEON_DATABASE_URL; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub secret: ${name}" >&2
               exit 1
             fi
           done
-
-      - name: Reclaim obsolete updater storage
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          payload="$(node - <<'NODE'
-          const versions = ['0.3.5','0.3.6','0.3.7','0.3.8','0.3.9','0.3.34','0.3.35'];
-          const prefixes = [];
-          for (const version of versions) {
-            prefixes.push(`versions/${version}/manifest.json`);
-            for (let i = 0; i <= 10; i += 1) {
-              prefixes.push(`versions/${version}/part-${String(i).padStart(3, '0')}.bin`);
-            }
-          }
-          process.stdout.write(JSON.stringify({ prefixes }));
-          NODE
-          )"
-          code="$(curl --silent --output /tmp/storage-cleanup.json --write-out '%{http_code}' \
-            --request DELETE \
-            --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            --header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            --header 'Content-Type: application/json' \
-            --data "$payload" \
-            'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-client-releases')"
-          echo "Supabase updater cleanup HTTP $code"
-          cat /tmp/storage-cleanup.json
-          if [ "$code" != "200" ]; then
-            exit 1
-          fi
-
-      - name: Validate Supabase service access
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          headers=(--header "apikey: $SUPABASE_SERVICE_ROLE_KEY")
-          if [[ "$SUPABASE_SERVICE_ROLE_KEY" == *.*.* ]]; then
-            headers+=(--header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
-          fi
-          code="$(curl --silent --output /tmp/supabase-service-check.json --write-out '%{http_code}' \
-            "${headers[@]}" \
-            'https://lbvxnbbglkjnwphaomyx.supabase.co/rest/v1/vsixteen_users?select=id&limit=1')"
-          echo "Supabase service access HTTP $code"
-          if [ "$code" != "200" ]; then
-            cat /tmp/supabase-service-check.json
-            exit 1
-          fi
-
-      - name: Validate Supabase profile image storage
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          object_path="healthchecks/github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.png"
-          printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9p8AAAAASUVORK5CYII=' | base64 --decode > /tmp/userflex-storage-check.png
-
-          headers=(--header "apikey: $SUPABASE_SERVICE_ROLE_KEY")
-          if [[ "$SUPABASE_SERVICE_ROLE_KEY" == *.*.* ]]; then
-            headers+=(--header "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
-          fi
-
-          code="$(curl --silent --output /tmp/supabase-storage-upload.json --write-out '%{http_code}' \
-            --request POST \
-            "${headers[@]}" \
-            --header 'Content-Type: image/png' \
-            --header 'x-upsert: false' \
-            --data-binary '@/tmp/userflex-storage-check.png' \
-            "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-profile-images/$object_path")"
-          echo "Supabase profile image upload HTTP $code"
-          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
-            cat /tmp/supabase-storage-upload.json
-            exit 1
-          fi
-
-          cleanup_code="$(curl --silent --output /tmp/supabase-storage-delete.json --write-out '%{http_code}' \
-            --request DELETE \
-            "${headers[@]}" \
-            "https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/userflex-profile-images/$object_path")"
-          echo "Supabase profile image cleanup HTTP $cleanup_code"
-          if [ "$cleanup_code" != "200" ] && [ "$cleanup_code" != "204" ]; then
-            cat /tmp/supabase-storage-delete.json
-          fi
 
       - name: Ensure Cloudflare R2 updater bucket
         shell: bash
@@ -136,8 +52,16 @@ jobs:
         shell: bash
         run: npx wrangler@4.130.0 r2 bucket create userflex-profile-images || true
 
+      - name: Ensure Cloudflare R2 extension package bucket
+        shell: bash
+        run: npx wrangler@4.130.0 r2 bucket create userflex-extension-packages || true
+
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm ci --ignore-scripts
+
+      - name: Migrate legacy profile images to Cloudflare R2
+        shell: bash
+        run: node scripts/migrate-legacy-profile-images-to-r2.mjs
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
       - run: npm run build
@@ -165,16 +89,11 @@ jobs:
           fi
           echo "Desktop release prerequisites are published."
 
-      - name: Configure Supabase service secret
-        shell: bash
-        run: printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.130.0 secret put SUPABASE_SERVICE_ROLE_KEY
-
       - name: Configure proxy encryption secret
         shell: bash
         run: printf '%s' "$USERFLEX_PROXY_MASTER_KEY" | npx wrangler@4.130.0 secret put USERFLEX_PROXY_MASTER_KEY
 
       - name: Configure Neon database secret
-        if: ${{ env.NEON_DATABASE_URL != '' }}
         shell: bash
         run: printf '%s' "$NEON_DATABASE_URL" | npx wrangler@4.130.0 secret put NEON_DATABASE_URL
 

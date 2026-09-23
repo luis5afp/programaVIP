@@ -1,5 +1,5 @@
 import { AdminIdentity } from './auth';
-import { clientIdsForPlans, clientIdsForProfile, clientIdsForProxy, notifyClientsConfig, touchClientConfig, touchClientsConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
+import { clientIdsForPlans, clientIdsForProfile, clientIdsForProxy, touchClientConfig, touchClientsConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
 import { requestKeeperChecks } from './keeper-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
 import {
@@ -264,7 +264,6 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       });
       await closeOpenProfileUsageForClient(env, clientId, 'client_suspended');
     }
-    await notifyClientsConfig(env, [clientId], patch.updated_at);
     await audit(env, request, 'admin', admin.userId, 'client.update', 'client', clientId);
     return json((await clientDetails(env, rows))[0]);
   }
@@ -273,7 +272,6 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const clientId = uuid(clientMatch[1], 'clientId');
     await closeOpenProfileUsageForClient(env, clientId, 'client_deleted');
     await sb(env, `userflex_clients?id=eq.${clientId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
-    await notifyClientsConfig(env, [clientId]);
     await audit(env, request, 'admin', admin.userId, 'client.delete', 'client', clientId);
     return json({ ok: true });
   }
