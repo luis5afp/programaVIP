@@ -21,7 +21,16 @@ assert.match(worker, /userflex-session:\/\/save\?endpoint=/, 'server keeps legac
 assert.match(manager, /url\.hostname === 'save'/, 'Session Manager keeps legacy save handling');
 assert.match(manager, /completedCaptureFor\(token\)/, 'legacy repeated save stays idempotent');
 assert.match(manager, /authenticated: authenticated === true/, 'Session Manager must report confirmed authentication to the backend');
-assert.match(manager, /queueKeeperCheck\(profile\.id, 'capture-complete'\)/, 'new captures must trigger the first Keeper check promptly');
+assert.doesNotMatch(
+  manager,
+  /queueKeeperCheck\(profile\.id, 'capture-complete'\)/,
+  'a freshly verified capture must not reopen Chromium immediately just to re-check itself',
+);
+assert.match(
+  worker,
+  /last_status: authenticated \? 'healthy' : 'registered'/,
+  'a confirmed capture must register Keeper as already healthy',
+);
 assert.match(worker, /validatedAt: authenticated \? now : null/, 'backend must persist a validation timestamp for confirmed captures');
 assert.match(worker, /validated: authenticated/, 'capture completion must report whether the new snapshot is already verified');
 
