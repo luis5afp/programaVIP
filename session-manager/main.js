@@ -7,7 +7,7 @@ import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engin
 
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const KEEPER_INTERVAL_MS = 3 * 60 * 60 * 1000;
-const KEEPER_INITIAL_DELAY_MS = 60 * 1000;
+const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS;
 const KEEPER_EVENT_COOLDOWN_MS = 5 * 60 * 1000;
 const KEEPER_EVENT_RETRY_MS = 15 * 1000;
 
@@ -24,12 +24,18 @@ let keeperRunning = false;
 let keeperRealtimeClient = null;
 let keeperRealtimeChannels = [];
 let keeperEventTimer = null;
+let keeperCycleCursor = 0;
+let manualCaptureGeneration = 0;
 const keeperRequestedProfiles = new Map();
 const keeperLastEventCheck = new Map();
 
 function engine() {
   if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
   return captureEngine;
+}
+
+function manualCaptureBusy() {
+  return Boolean(activeCaptureToken || captureStartState);
 }
 
 function keeperRegistryPath() {
@@ -207,7 +213,15 @@ function keeperNeedsLoginMessage(inspection) {
 async function checkKeeperProfile(profileId, entry) {
   const token = entry?.token;
   if (!token) return;
+
+  const manualGenerationAtStart = manualCaptureGeneration;
+  const interruptedByManualCapture = () => (
+    manualCaptureGeneration !== manualGenerationAtStart || manualCaptureBusy()
+  );
+
   const bootstrap = await apiPost(API_ORIGIN, '/api/session-keeper/bootstrap', { token }, 45_000);
+  if (interruptedByManualCapture()) return;
+
   const profile = bootstrap.profile;
   const credentials = bootstrap.credentials || null;
   const proxy = bootstrap.proxy || null;
@@ -222,6 +236,9 @@ async function checkKeeperProfile(profileId, entry) {
       proxy,
       background: true,
       onComplete: async ({ material, publicIp, diagnostics }) => {
+        if (interruptedByManualCapture()) {
+          throw new Error('Session Keeper interrumpido por una renovación manual.');
+        }
         const completed = await apiPost(API_ORIGIN, '/api/session-keeper/complete', {
           token,
           authenticated: true,
@@ -239,16 +256,21 @@ async function checkKeeperProfile(profileId, entry) {
       },
     });
 
+    if (interruptedByManualCapture()) return;
     await new Promise((resolve) => setTimeout(resolve, 4500));
+    if (interruptedByManualCapture()) return;
+
     let inspection = await engine().inspectActive().catch(() => null);
     if (!inspection?.authenticated && profile.authStrategy === 'hybrid' && credentials?.username && credentials?.password) {
       // Give the managed autofill a short window to recover sessions that only
       // need the stored account identifier/password. 2FA/CAPTCHA still requires
       // the administrator and will never overwrite the last good snapshot.
       await new Promise((resolve) => setTimeout(resolve, 10_000));
+      if (interruptedByManualCapture()) return;
       inspection = await engine().inspectActive().catch(() => inspection);
     }
 
+    if (interruptedByManualCapture()) return;
     if (!inspection?.authenticated) {
       const reason = keeperNeedsLoginMessage(inspection);
       await apiPost(API_ORIGIN, '/api/session-keeper/complete', {
@@ -262,12 +284,17 @@ async function checkKeeperProfile(profileId, entry) {
 
     await engine().saveActive();
   } finally {
-    await engine().close('keeper_check').catch(() => null);
+    // A manual renewal may have replaced the Keeper browser while this async
+    // check was waiting. Never let a stale Keeper finally() close the user's
+    // newly-opened manual capture.
+    if (!interruptedByManualCapture()) {
+      await engine().close('keeper_check').catch(() => null);
+    }
   }
 }
 
 async function runRequestedKeeperChecks() {
-  if (keeperRunning || engine().active || quitAfterCleanup) {
+  if (keeperRunning || manualCaptureBusy() || engine().active || quitAfterCleanup) {
     if (keeperRequestedProfiles.size) scheduleRequestedKeeperChecks(KEEPER_EVENT_RETRY_MS);
     return;
   }
@@ -277,6 +304,7 @@ async function runRequestedKeeperChecks() {
   try {
     const registry = await loadKeeperRegistry();
     while (keeperRequestedProfiles.size && !quitAfterCleanup) {
+      if (manualCaptureBusy()) break;
       const [profileId, reason] = keeperRequestedProfiles.entries().next().value || [];
       if (!profileId) break;
       keeperRequestedProfiles.delete(profileId);
@@ -305,26 +333,36 @@ async function runRequestedKeeperChecks() {
 
 async function runKeeperCycle() {
   if (keeperRunning) return;
-  if (engine().active) {
+  if (manualCaptureBusy() || engine().active) {
     console.log('Session Keeper pospuesto porque hay una captura manual activa.');
     return;
   }
+
   keeperRunning = true;
   try {
     const registry = await loadKeeperRegistry();
-    for (const [profileId, entry] of Object.entries(registry)) {
-      if (quitAfterCleanup) break;
-      try {
-        keeperLastEventCheck.set(profileId, Date.now());
-        await checkKeeperProfile(profileId, entry);
-      } catch (error) {
-        console.warn(
-          `Session Keeper check failed for ${entry?.name || profileId}: `
-          + `${error instanceof Error ? error.message : String(error || 'error')}`,
-        );
-        if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN'].includes(String(error?.code || ''))) {
-          await removeKeeper(profileId);
-        }
+    const entries = Object.entries(registry);
+    if (!entries.length || quitAfterCleanup || manualCaptureBusy()) return;
+
+    // Do not open every managed profile in a burst. A periodic cycle checks one
+    // profile and advances a round-robin cursor; Realtime events still check the
+    // specific profile that actually changed.
+    const index = keeperCycleCursor % entries.length;
+    keeperCycleCursor = (index + 1) % entries.length;
+    const [profileId, entry] = entries[index];
+
+    try {
+      keeperLastEventCheck.set(profileId, Date.now());
+      await checkKeeperProfile(profileId, entry);
+    } catch (error) {
+      console.warn(
+        `Session Keeper check failed for ${entry?.name || profileId}: `
+        + `${error instanceof Error ? error.message : String(error || 'error')}`,
+      );
+      if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN'].includes(String(error?.code || ''))) {
+        await removeKeeper(profileId);
+      }
+      if (!manualCaptureBusy()) {
         await engine().close('keeper_error').catch(() => null);
       }
     }
@@ -335,17 +373,14 @@ async function runKeeperCycle() {
   }
 }
 
-function scheduleKeeper() {
+function scheduleKeeper(delayMs = KEEPER_INITIAL_DELAY_MS) {
   if (keeperTimer) clearTimeout(keeperTimer);
   keeperTimer = setTimeout(() => {
     keeperTimer = null;
     void runKeeperCycle().finally(() => {
-      if (!quitAfterCleanup) {
-        keeperTimer = setTimeout(() => void scheduleKeeper(), KEEPER_INTERVAL_MS);
-        keeperTimer.unref?.();
-      }
+      if (!quitAfterCleanup) scheduleKeeper(KEEPER_INTERVAL_MS);
     });
-  }, KEEPER_INITIAL_DELAY_MS);
+  }, delayMs);
   keeperTimer.unref?.();
 }
 
@@ -502,12 +537,19 @@ function sameCaptureToken(left, right) {
 async function startCapture(rawUrl) {
   const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'capture');
 
+  // Manual renewal always wins over background Keeper activity. The generation
+  // also lets an older Keeper task detect that it no longer owns the browser.
+  manualCaptureGeneration += 1;
+
   // Mark the ticket before any network/browser work starts. The Admin can send
   // the Save protocol almost immediately after the Capture protocol and both
   // arrive as separate Windows protocol activations.
   activeCaptureToken = token;
 
   const launchPromise = (async () => {
+    if (keeperRunning && engine().active) {
+      await engine().close('manual_capture_priority').catch(() => null);
+    }
     const bootstrap = await apiPost(endpoint, '/api/session-manager/bootstrap', { token });
     const profile = bootstrap.profile;
     const credentials = bootstrap.credentials;
@@ -538,10 +580,6 @@ async function startCapture(rawUrl) {
           configureKeeperStartup();
           scheduleKeeper();
           void connectKeeperRealtime();
-          const firstKeeperCheck = setTimeout(() => {
-            queueKeeperCheck(profile.id, 'capture-complete');
-          }, 1500);
-          firstKeeperCheck.unref?.();
         }
 
         const completedResult = {
