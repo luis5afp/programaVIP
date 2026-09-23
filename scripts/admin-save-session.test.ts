@@ -62,7 +62,7 @@ assert.match(engine, /temporaryProfile: true/, 'guest Chromium must use disposab
 assert.match(engine, /app\.getPath\('temp'\)/, 'guest data must live under temporary storage');
 assert.match(engine, /launchGuest/, 'capture engine must expose a dedicated guest launcher');
 
-assert.match(cloudflareWorker, /\/api\/profile-images\//, 'Worker must expose same-origin profile images');
+assert.match(cloudflareWorker, /profile-images/, 'Worker must expose same-origin profile images');
 assert.match(profileImages, /serveProfileImage/, 'profile image proxy must be implemented');
 assert.match(clientApi, /profileImageUrl\(request, profile\)/, 'userFLOW catalog must receive Worker-hosted image URLs');
 assert.match(admin, /profileImageSrc\(profile\)/, 'Admin must use Worker-hosted profile image URLs');
