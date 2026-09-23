@@ -219,15 +219,21 @@ function makeProfileCard(profile) {
 
   const image = document.createElement('div');
   image.className = 'profile-image';
+  const fallback = document.createElement('span');
+  fallback.className = 'profile-image-fallback';
+  fallback.textContent = profileLabel(profile).slice(0, 1).toUpperCase();
+  image.appendChild(fallback);
   if (profile.imageUrl) {
     const img = document.createElement('img');
     img.src = profile.imageUrl;
     img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('load', () => image.classList.add('has-image'), { once: true });
+    img.addEventListener('error', () => {
+      img.remove();
+      image.classList.remove('has-image');
+    }, { once: true });
     image.appendChild(img);
-  } else {
-    const fallback = document.createElement('span');
-    fallback.textContent = profileLabel(profile).slice(0, 1).toUpperCase();
-    image.appendChild(fallback);
   }
 
   const body = document.createElement('div');

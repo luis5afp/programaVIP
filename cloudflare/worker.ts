@@ -8,7 +8,7 @@ import { MIN_SESSION_MANAGER_VERSION, MIN_USERFLOW_VERSION, clientVersionFrom, v
 import { cleanupRuntimeState } from './lib/maintenance';
 import { adminClientReleaseRoutes } from './lib/client-release-admin';
 import { planAccessRoutes } from './lib/plan-access';
-import { uploadProfileImage } from './lib/profile-images';
+import { serveProfileImage, uploadProfileImage } from './lib/profile-images';
 import { profilePlanAccessRoutes } from './lib/profile-plan-access';
 import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProxyRoutes } from './lib/proxy-admin';
@@ -74,6 +74,11 @@ async function api(request: Request, env: Env): Promise<Response> {
   const updateResponse = await publicClientUpdateRoutes(request, env);
   if (updateResponse) return updateResponse;
 
+  const publicProfileImage = path.match(/^\/api\/profile-images\/([0-9a-f-]{36})$/i);
+  if (publicProfileImage && (method === 'GET' || method === 'HEAD')) {
+    return serveProfileImage(request, env, publicProfileImage[1]);
+  }
+
   if (path === '/api/auth/login' && method === 'POST') {
     requireSameOriginWrite(request);
     return adminLogin(request, env);
@@ -109,7 +114,7 @@ async function api(request: Request, env: Env): Promise<Response> {
     const identity = await requireClient(request, env);
     if (path === '/api/client/catalog' && method === 'GET') {
       assertMinimumUserflowVersion(request);
-      return clientCatalog(env, identity);
+      return clientCatalog(request, env, identity);
     }
     if (path === '/api/client/heartbeat' && method === 'POST') return clientHeartbeat(request, env, identity);
     if (path === '/api/client/session-checks/request' && method === 'POST') return clientRequestSessionChecks(request, env, identity);

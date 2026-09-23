@@ -1,5 +1,5 @@
 import { AdminIdentity } from './auth';
-import { Env, HttpError, audit, json } from './core';
+import { Env, HttpError, audit, json, sb } from './core';
 
 const PROFILE_IMAGE_BUCKET = 'userflex-profile-images';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -103,4 +103,65 @@ export async function uploadProfileImage(
   });
 
   return json({ ok: true, url: publicUrl, path: objectPath, mime, size: value.size }, 201);
+}
+
+
+function trustedProfileImageUrl(env: Env, rawUrl: unknown) {
+  const value = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  const base = env.SUPABASE_URL?.replace(/\/$/, '');
+  if (!value || !base) return null;
+  try {
+    const target = new URL(value);
+    const expected = new URL(base);
+    const prefix = `/storage/v1/object/public/${PROFILE_IMAGE_BUCKET}/`;
+    if (target.origin !== expected.origin || !target.pathname.startsWith(prefix)) return null;
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+export async function serveProfileImage(
+  request: Request,
+  env: Env,
+  profileId: string,
+): Promise<Response> {
+  const rows = await sb(
+    env,
+    `userflex_profiles?select=id,image_url&id=eq.${profileId}&enabled=eq.true&limit=1`,
+  );
+  const profile = rows?.[0];
+  if (!profile?.image_url) throw new HttpError(404, 'PROFILE_IMAGE_NOT_FOUND');
+
+  const trusted = trustedProfileImageUrl(env, profile.image_url);
+  if (!trusted) {
+    return Response.redirect(String(profile.image_url), 302);
+  }
+
+  const upstream = await fetch(trusted.toString(), {
+    headers: {
+      Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8,*/*;q=0.5',
+    },
+  });
+
+  if (!upstream.ok) {
+    throw new HttpError(502, 'PROFILE_IMAGE_FETCH_FAILED', 'No se pudo cargar la imagen del perfil.');
+  }
+
+  const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.startsWith('image/')) {
+    throw new HttpError(502, 'PROFILE_IMAGE_CONTENT_INVALID', 'La imagen del perfil no devolvió un formato válido.');
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type', contentType);
+  headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  const etag = upstream.headers.get('etag');
+  if (etag) headers.set('ETag', etag);
+
+  if (request.method.toUpperCase() === 'HEAD') {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(upstream.body, { status: 200, headers });
 }
