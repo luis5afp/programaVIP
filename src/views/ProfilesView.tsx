@@ -97,7 +97,17 @@ function profileLabel(profile: Profile) {
 }
 
 function profileImageSrc(profile: Profile) {
-  return profile.image_url ? `/api/profile-images/${profile.id}` : null;
+  const raw = profile.image_url?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.pathname.includes('/storage/v1/object/public/userflex-profile-images/')) {
+      url.searchParams.set('ufv', profile.updated_at || '1');
+    }
+    return url.toString();
+  } catch {
+    return raw;
+  }
 }
 
 function normalizeSearchValue(value: string) {
@@ -578,6 +588,9 @@ export function ProfilesView() {
         ? await api.profiles.update(editor.id, input)
         : await api.profiles.create(input);
 
+      if ((finalImageUrl || null) !== (savedProfile.image_url || null)) {
+        throw new Error('La imagen fue subida, pero el perfil no confirmó el nuevo image_url. Vuelve a intentarlo.');
+      }
       if (editor === 'new') setEditor(savedProfile);
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
       const shouldSaveCredentials = authStrategy === 'credential-autofill'
@@ -612,7 +625,7 @@ export function ProfilesView() {
 
       setSuccess(confirmation);
       closeEditor();
-      void load();
+      await load();
     } catch (submitError: any) {
       setError(submitError.message);
     } finally {
@@ -844,7 +857,12 @@ export function ProfilesView() {
   }
 
   const current = editor && editor !== 'new' ? editor : null;
-  const previewUrl = imageObjectUrl || imageUrl.trim() || null;
+  const previewProfile = editor && editor !== 'new' ? editor : null;
+  const previewUrl = imageObjectUrl
+    || (previewProfile && imageUrl.trim() === (previewProfile.image_url || '').trim()
+      ? profileImageSrc(previewProfile)
+      : imageUrl.trim())
+    || null;
   const currentProxyId = current ? defaultProxyId(current.id) : null;
   const currentState = current ? stateFor(current.id) : null;
   const categoryOptions = Array.from(new Map(
@@ -1395,7 +1413,16 @@ export function ProfilesView() {
               <label>Imagen del perfil</label>
               <div tabIndex={0} onPaste={pasteImage} onDragOver={(event) => event.preventDefault()} onDrop={dropImage} style={{ border: '1px dashed #cbd5e1', borderRadius: 12, padding: 12, display: 'flex', alignItems: 'center', gap: 14, background: '#f8fafc', outline: 'none' }}>
                 <div style={{ width: 118, height: 78, flex: '0 0 auto', borderRadius: 10, overflow: 'hidden', border: '1px solid #e2e8f0', background: '#fff', display: 'grid', placeItems: 'center', color: '#94a3b8' }}>
-                  {previewUrl ? <img src={previewUrl} alt="Vista previa" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <ImagePlus size={26} />}
+                  {previewUrl ? (
+                    <img
+                      src={previewUrl}
+                      alt="Vista previa"
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', padding: 4 }}
+                      onError={(event) => {
+                        event.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  ) : <ImagePlus size={26} />}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', marginBottom: 4 }}>Subir, arrastrar o pegar una imagen</div>
