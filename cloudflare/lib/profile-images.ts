@@ -35,6 +35,25 @@ function encodeStoragePath(path: string) {
   return path.split('/').map((part) => encodeURIComponent(part)).join('/');
 }
 
+function supabaseStorageAdminHeaders(key: string, mime: string) {
+  const headers = new Headers({
+    apikey: key,
+    'Content-Type': mime,
+    'Cache-Control': '31536000',
+    'x-upsert': 'false',
+  });
+
+  // New Supabase secret keys (sb_secret_...) are API keys, not JWTs.
+  // Sending them as Authorization: Bearer makes Storage try to parse
+  // them as JWTs and can fail with "Invalid JWT". Legacy service_role
+  // keys are JWTs, so keep Bearer only for that legacy format.
+  const jwtParts = key.split('.');
+  if (jwtParts.length === 3 && jwtParts.every(Boolean)) {
+    headers.set('Authorization', `Bearer ${key}`);
+  }
+  return headers;
+}
+
 export async function uploadProfileImage(
   request: Request,
   env: Env,
@@ -80,13 +99,7 @@ export async function uploadProfileImage(
   const encodedPath = encodeStoragePath(objectPath);
   const upload = await fetch(`${baseUrl}/storage/v1/object/${PROFILE_IMAGE_BUCKET}/${encodedPath}`, {
     method: 'POST',
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      'Content-Type': mime,
-      'Cache-Control': '31536000',
-      'x-upsert': 'false',
-    },
+    headers: supabaseStorageAdminHeaders(key, mime),
     body: value,
   });
 
