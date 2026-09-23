@@ -76,7 +76,7 @@ assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must rec
 assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
 assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
 assert.match(admin, /La imagen fue subida, pero el perfil no confirmó el nuevo image_url/, 'Admin must verify that an edited image was persisted');
-assert.match(admin, /closeEditor\(\);\s*await load\(\);/, 'Admin must await refreshed profile data after saving an image');
+assert.match(admin, /profileSaved = true;[\s\S]{0,160}closeEditor\(\);[\s\S]{0,260}void load\(\);/, 'Admin must close immediately and refresh profile data after saving an image');
 assert.match(clientMain, /async function profileImageDataUrl/, 'userFLOW main process must download profile images itself');
 assert.match(clientMain, /data:\$\{mime\};base64/, 'userFLOW must inline downloaded profile images as local data URLs');
 assert.match(clientMain, /cache: 'no-store'/, 'userFLOW image refresh must bypass stale HTTP cache');
