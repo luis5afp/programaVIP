@@ -33,6 +33,7 @@ export interface Env {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   CLIENT_RELEASES?: R2BucketLike;
   PROFILE_IMAGES?: R2BucketLike;
+  EXTENSION_PACKAGES?: R2BucketLike;
   NEON_DATABASE_URL?: string;
   USERFLEX_PROXY_MASTER_KEY?: string;
   USERFLEX_PROXY_KEY_VERSION?: string;
