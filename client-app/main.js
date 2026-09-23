@@ -48,6 +48,7 @@ const profileTabs = new Map();
 let profileOrder = [];
 let profileDragMonitor = null;
 const pendingUsageCloseRequests = new Set();
+const profileImageDataCache = new Map();
 let quitAfterUsageFlush = false;
 let kaizenBrowserEngine = null;
 
@@ -184,6 +185,7 @@ async function loadAuth() {
 async function clearAuth() {
   accessToken = null;
   authMeta = null;
+  profileImageDataCache.clear();
   stopHeartbeat();
   try {
     await fs.unlink(authPath());
@@ -263,6 +265,72 @@ async function apiRequest(pathName, options = {}) {
   }
 
   throw new UserflexError('No se pudo completar la solicitud.', 'REQUEST_FAILED');
+}
+
+const PROFILE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const PROFILE_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+async function profileImageDataUrl(imageUrl, imageVersion = null) {
+  const raw = typeof imageUrl === 'string' ? imageUrl.trim() : '';
+  if (!raw) return null;
+  if (raw.startsWith('data:image/')) return raw;
+
+  let target;
+  try {
+    target = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (target.protocol !== 'https:') return null;
+
+  const cacheKey = `${target.toString()}::${String(imageVersion || '')}`;
+  if (profileImageDataCache.has(cacheKey)) return profileImageDataCache.get(cacheKey);
+
+  try {
+    const response = await fetch(target, {
+      redirect: 'follow',
+      headers: {
+        Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8,*/*;q=0.5',
+        'User-Agent': `userFLOW/${app.getVersion()} (Windows; profile-image)`,
+      },
+      signal: AbortSignal.timeout(10_000),
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+
+    const mime = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!PROFILE_IMAGE_MIME.has(mime)) return null;
+
+    const advertised = Number(response.headers.get('content-length') || 0);
+    if (advertised > PROFILE_IMAGE_MAX_BYTES) return null;
+    const bytes = await response.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > PROFILE_IMAGE_MAX_BYTES) return null;
+
+    const dataUrl = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+    if (profileImageDataCache.size >= 80) {
+      const oldest = profileImageDataCache.keys().next().value;
+      if (oldest) profileImageDataCache.delete(oldest);
+    }
+    profileImageDataCache.set(cacheKey, dataUrl);
+    return dataUrl;
+  } catch (error) {
+    console.warn('userFLOW profile image download failed:', target.hostname, error?.message || error);
+    return null;
+  }
+}
+
+async function hydrateCatalogProfileImages(payload) {
+  if (!payload || !Array.isArray(payload.profiles)) return payload;
+  const profiles = await Promise.all(payload.profiles.map(async (profile) => {
+    const originalImageUrl = typeof profile?.imageUrl === 'string' ? profile.imageUrl : null;
+    const localImageUrl = await profileImageDataUrl(originalImageUrl, profile?.imageVersion || null);
+    return {
+      ...profile,
+      imageSourceUrl: originalImageUrl,
+      imageUrl: localImageUrl,
+    };
+  }));
+  return { ...payload, profiles };
 }
 
 async function apiBinaryRequest(pathName, options = {}) {
@@ -505,7 +573,8 @@ function preserveProfilesForAuthError(error) {
 async function catalog() {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   try {
-    return await apiRequest('/api/client/catalog');
+    const payload = await apiRequest('/api/client/catalog');
+    return await hydrateCatalogProfileImages(payload);
   } catch (error) {
     if (authError(error)) {
       await returnToLogin(
