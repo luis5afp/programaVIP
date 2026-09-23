@@ -722,7 +722,7 @@ async function handleProtocolUrl(rawUrl) {
   if (url.hostname === 'guest') return startGuest(rawUrl);
   if (url.hostname === 'capture') return startCapture(rawUrl);
   if (url.hostname === 'save') return saveActiveCapture(rawUrl);
-  throw new Error('Acción de Session Manager no compatible.');
+  throw new Error(`Acción no compatible con Session Manager v${app.getVersion()}. Cierra esta versión e instala la actualización más reciente.`);
 }
 
 function showFatalError(error) {

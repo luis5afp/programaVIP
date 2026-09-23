@@ -41,6 +41,9 @@ assert.match(admin, /network_strategy === 'assigned-proxy'/, 'direct client acti
 assert.match(admin, /Laptop size=\{15\}/, 'compact profile row must show the client-open icon before maintenance actions');
 
 assert.match(admin, /Abrir como invitado/, 'profile cards must expose the guest launch action');
+assert.match(admin, /GUEST_MIN_SESSION_MANAGER_VERSION = '0\.3\.43'/);
+assert.match(admin, /Este perfil reporta v\$\{observedVersion\}/, 'guest action must stop before launching an unsupported Session Manager version');
+assert.match(admin, /Solicitud enviada a Session Manager/, 'Admin must not claim guest Chrome opened before the protocol handler succeeds');
 assert.match(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'guest action must request a one-time Session Manager link');
 assert.match(api, /\/guest-launch/, 'Admin API must expose guest launch');
 assert.match(worker, /userflex-session-guest:/, 'guest links must use a separate one-time token namespace');
