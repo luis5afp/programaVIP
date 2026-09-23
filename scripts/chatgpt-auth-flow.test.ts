@@ -74,8 +74,8 @@ assert.match(engine, /function isOpenAiAuthFlowUrl/);
 assert.match(engine, /function isOpenAiAppUrl/);
 assert.match(
   engine,
-  /const authStates = states\.filter[\s\S]{0,260}const challengeActive = authStates\.some\(isOpenAiChallengeState\)/,
-  'Session Manager must identify OpenAI auth pages and distinguish the Cloudflare challenge before attaching',
+  /const authStates = states\.filter[\s\S]{0,360}const challengeActive = authStates\.some\(isOpenAiChallengeState\)[\s\S]{0,160}manualVerificationActive = authStates\.some\(isOpenAiManualVerificationState\)/,
+  'Session Manager must identify Cloudflare and OpenAI verification pages before attaching',
 );
 assert.match(
   engine,
@@ -98,10 +98,24 @@ assert.match(
   /challengeActive[\s\S]{0,420}deactivateOpenAiAutomation\(entry\)[\s\S]{0,220}return null;/,
   'Cloudflare challenge must keep Puppeteer detached even if autofill had already been activated',
 );
+assert.match(engine, /function isOpenAiManualVerificationState/);
+assert.match(engine, /email-verification\|verification\|verify\|challenge\|mfa\|otp\|one-time\|code/);
+assert.match(engine, /pathname\.startsWith\('\/api\/accounts\/authorize'\)/);
 assert.match(
   engine,
-  /activateOpenAiAutomation\(entry,[\s\S]{0,520}OpenAI autofill activated after the Cloudflare challenge completed/,
-  'autofill must activate only after auth.openai.com leaves the challenge state',
+  /challengeActive \|\| manualVerificationActive[\s\S]{0,520}deactivateOpenAiAutomation\(entry\)[\s\S]{0,340}return null;/,
+  'OpenAI email/MFA verification must stay detached from Puppeteer/CDP',
+);
+assert.match(
+  engine,
+  /activateOpenAiAutomation\(entry,[\s\S]{0,520}OpenAI autofill activated on the credential-entry step/,
+  'autofill may activate only on credential-entry steps, not verification steps',
+);
+assert.match(captureState, /const openAiManualVerificationPage =/);
+assert.match(
+  captureState,
+  /if \(openAiAuth && !openAiManualVerification\)[\s\S]{0,120}nativeAdvanceOpenAiUsername/,
+  'native credential advance must never run on OpenAI verification/MFA pages',
 );
 assert.match(engine, /function openAiRouteErrorText/);
 assert.match(engine, /async function recoverOpenAiRouteError/);
