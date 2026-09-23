@@ -52,7 +52,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   box-shadow: 0 10px 28px rgba(87, 70, 221, .25);
 }
 .brand-mark.large { width: 62px; height: 62px; border-radius: 18px; font-size: 21px; }
-.brand-mark.compact { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; box-shadow: none; }
+.brand-mark.compact { width: 34px; height: 34px; border-radius: 11px; font-size: 12px; box-shadow: none; }
 
 /* Login */
 #login-view {
@@ -242,7 +242,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   position: relative;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 76px minmax(0, 1fr);
   grid-template-rows: 1fr auto;
   column-gap: 13px;
   row-gap: 5px;
@@ -286,8 +286,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .profile-image {
   position: relative;
   z-index: 1;
-  width: 64px;
-  height: 64px;
+  width: 76px;
+  height: 76px;
   border-radius: 10px;
   overflow: hidden;
   display: grid;
@@ -299,7 +299,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border: 1px solid #2a3240;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
 }
-.profile-image img { position: relative; z-index: 2; width: 100%; height: 100%; object-fit: contain; object-position: center; padding: 6px; margin: auto; }
+.profile-image img { position: relative; z-index: 2; width: 100%; height: 100%; object-fit: contain; object-position: center; padding: 1px; margin: auto; }
 .profile-image-fallback { position: absolute; z-index: 1; inset: 0; display: grid; place-items: center; font-size: 24px; }
 .profile-image.has-image .profile-image-fallback { visibility: hidden; }
 .profile-body { position: relative; z-index: 1; min-width: 0; align-self: center; }

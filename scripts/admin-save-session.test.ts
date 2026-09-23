@@ -83,7 +83,9 @@ assert.match(clientMain, /cache: 'no-store'/, 'userFLOW image refresh must bypas
 assert.match(clientMain, /hydrateCatalogProfileImages/, 'userFLOW catalog must hydrate local profile images before rendering');
 assert.match(clientRenderer, /profile-image-fallback/, 'userFLOW must show a clean fallback when a logo cannot load');
 assert.match(clientRenderer, /img\.addEventListener\('error'/, 'broken remote logos must not render the browser broken-image glyph');
-assert.match(clientStyles, /width: 64px;[\s\S]{0,80}height: 64px;/, 'userFLOW profile logos must be enlarged');
+assert.match(clientStyles, /width: 76px;[\s\S]{0,80}height: 76px;/, 'userFLOW profile logos must be enlarged without changing card height');
+assert.match(clientStyles, /padding: 1px;/, 'userFLOW profile images must use nearly the full logo box');
+assert.match(clientStyles, /min-height: 112px;/, 'userFLOW card height must remain unchanged while enlarging only the image');
 assert.match(clientStyles, /object-position: center/, 'userFLOW profile logos must stay centered');
 assert.match(adminStyles, /profile-image-compact \{ width:56px; height:56px;/, 'Admin profile logos must be enlarged');
 assert.match(adminStyles, /object-position:center/, 'Admin profile logos must stay centered');
