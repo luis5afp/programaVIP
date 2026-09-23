@@ -67,11 +67,12 @@ assert.match(cloudflareWorker, /profile-images/, 'legacy same-origin image route
 assert.match(profileImages, /serveProfileImage/, 'legacy profile image proxy must stay available');
 assert.match(profileImages, /function supabaseStorageAdminHeaders/, 'profile uploads must centralize Supabase Storage authentication headers');
 assert.match(profileImages, /const jwtParts = key\.split\('\.'\)/, 'profile uploads must detect legacy JWT service-role keys');
-assert.match(profileImages, /headers\.set\('Authorization', \`Bearer \\${key}\`\)/, 'legacy JWT service-role keys must keep Bearer authorization');
+assert.match(profileImages, /if \(jwtParts\.length === 3 && jwtParts\.every\(Boolean\)\)/, 'Bearer auth must be limited to legacy JWT keys');
+assert.match(profileImages, /headers\.set\('Authorization'/, 'legacy JWT service-role keys must keep Authorization support');
 assert.doesNotMatch(
   profileImages,
-  /headers:\s*\{[\s\S]{0,220}Authorization:\s*\`Bearer \\${key}\`/,
-  'modern sb_secret keys must not be sent unconditionally as Bearer tokens',
+  /headers:\s*\{[\s\S]{0,220}Authorization:/,
+  'modern sb_secret keys must not be sent unconditionally as Authorization tokens',
 );
 assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must receive the original stored profile image URL');
 assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
