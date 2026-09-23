@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.3.40",
+  "version": "0.3.41",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -12,7 +12,6 @@
     "dist:win": "electron-builder --win nsis"
   },
   "dependencies": {
-    "@supabase/realtime-js": "^2.99.2",
     "socks": "^2.8.10",
     "puppeteer-core": "^24.17.1",
     "adm-zip": "^0.5.16"
