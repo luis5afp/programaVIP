@@ -17,6 +17,7 @@ import {
 } from './release-compat';
 import { requestKeeperChecks } from './keeper-revalidation';
 import { managedSessionHealth } from './session-health-policy';
+import { touchProfileClients } from './client-revalidation';
 
 function inetHost(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -526,13 +527,19 @@ export async function clientSessionHealth(
   if (!memberships?.[0]) {
     throw new HttpError(403, 'PROFILE_NOT_INCLUDED_IN_PLAN', 'Este perfil no está incluido en tu plan activo.');
   }
+
   const body = await bodyJson(request);
   const authenticated = body.authenticated === true;
+  const confirmedFailure = body.confirmedFailure === true;
   const reportedVersion = Math.max(0, Number(body.sessionVersion || 0));
   const source = typeof body.source === 'string' ? body.source.slice(0, 64) : '';
+  const reason = typeof body.reason === 'string'
+    ? body.reason.trim().slice(0, 1000)
+    : 'El cliente confirmó que la sesión ya no permite acceder con normalidad.';
+
   const currentRows = await sb(
     env,
-    `userflex_profile_sessions?select=session_version,status&profile_id=eq.${profileId}&limit=1`,
+    `userflex_profile_sessions?select=session_version,status,last_validated_at&profile_id=eq.${profileId}&limit=1`,
   );
   const current = currentRows?.[0] || null;
   const currentVersion = Number(current?.session_version || 0);
@@ -540,25 +547,48 @@ export async function clientSessionHealth(
   const sameCentralGeneration = current?.status === 'ready'
     && reportedVersion > 0
     && reportedVersion === currentVersion;
-  const centralUpdated = authenticated && sameCentralGeneration;
+  const revoked = !authenticated && confirmedFailure && sameCentralGeneration;
 
-  if (centralUpdated) {
-    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        last_validated_at: now,
-        updated_at: now,
+  // Validation is one-time. Successful client launches do not extend a timer
+  // or revalidate the snapshot. Only a confirmed real access failure revokes
+  // the exact central generation that the client tried to use.
+  if (revoked) {
+    await Promise.all([
+      sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready&session_version=eq.${currentVersion}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          status: 'needs_auth',
+          updated_at: now,
+        }),
       }),
-    });
+      sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          last_status: 'needs_admin',
+          last_error: reason,
+          last_check_at: now,
+          updated_at: now,
+        }),
+      }).catch(() => null),
+    ]);
+    await touchProfileClients(env, profileId);
+    await audit(env, request, 'client', id.clientId, 'profile.session_revoked', 'profile', profileId, {
+      deviceId: id.deviceId,
+      sessionVersion: currentVersion,
+      source,
+      reason,
+    }).catch(() => null);
   }
+
   return json({
     ok: true,
     authenticated,
     checkedAt: now,
     reportedVersion,
     currentVersion,
-    centralUpdated,
+    revoked,
   });
 }
 
