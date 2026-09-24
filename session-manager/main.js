@@ -5,8 +5,10 @@ import crypto from 'node:crypto';
 import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
 
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const KEEPER_INTERVAL_MS = 3 * 60 * 60 * 1000;
-const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS;
+const KEEPER_TARGET_ROUND_MS = 8 * 60 * 60 * 1000;
+const KEEPER_MIN_INTERVAL_MS = 20 * 60 * 1000;
+const KEEPER_MAX_INTERVAL_MS = 3 * 60 * 60 * 1000;
+const KEEPER_INITIAL_DELAY_MS = 2 * 60 * 1000;
 
 let readyWindow = null;
 let pendingProtocolUrl = null;
@@ -18,7 +20,6 @@ let lastCompletedCapture = null;
 let quitAfterCleanup = false;
 let keeperTimer = null;
 let keeperRunning = false;
-let keeperCycleCursor = 0;
 let manualCaptureGeneration = 0;
 
 function engine() {
@@ -51,6 +52,7 @@ async function loadKeeperRegistry() {
             token,
             name: typeof item.name === 'string' ? item.name : profileId,
             updatedAt: item.updatedAt || null,
+            lastCheckAt: item.lastCheckAt || null,
           };
         }
       } catch {}
@@ -73,14 +75,43 @@ async function saveKeeper(profile, rawToken) {
     const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
     if (parsed && typeof parsed === 'object' && parsed.profiles && typeof parsed.profiles === 'object') current = parsed;
   } catch {}
+  const previous = current.profiles[profile.id] || {};
   current.profiles[profile.id] = {
     token: safeStorage.encryptString(String(rawToken)).toString('base64'),
     name: profile.name || profile.id,
     updatedAt: new Date().toISOString(),
+    lastCheckAt: previous.lastCheckAt || null,
   };
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify(current), { encoding: 'utf8', mode: 0o600 });
   return true;
+}
+
+async function markKeeperChecked(profileId) {
+  const file = keeperRegistryPath();
+  try {
+    const current = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (!current?.profiles?.[profileId]) return;
+    current.profiles[profileId].lastCheckAt = new Date().toISOString();
+    await fs.writeFile(file, JSON.stringify(current), { encoding: 'utf8', mode: 0o600 });
+  } catch {}
+}
+
+function keeperIntervalForCount(count) {
+  const safeCount = Math.max(1, Number(count || 0));
+  return Math.max(
+    KEEPER_MIN_INTERVAL_MS,
+    Math.min(KEEPER_MAX_INTERVAL_MS, Math.floor(KEEPER_TARGET_ROUND_MS / safeCount)),
+  );
+}
+
+function strongKeeperLoginEvidence(inspection) {
+  if (!inspection) return false;
+  if (inspection.loginLikeUrl === true) return true;
+  if (inspection.passwordFieldVisible === true) return true;
+  if (inspection.loginActionVisible === true) return true;
+  if (inspection.netflixTarget && inspection.netflixAuthCookies === false && inspection.netflixAppPath === false) return true;
+  return false;
 }
 
 async function removeKeeper(profileId) {
@@ -161,17 +192,30 @@ async function checkKeeperProfile(profileId, entry) {
 
     let inspection = await engine().inspectActive().catch(() => null);
     if (!inspection?.authenticated && profile.authStrategy === 'hybrid' && credentials?.username && credentials?.password) {
-      // Give the managed autofill a short window to recover sessions that only
-      // need the stored account identifier/password. 2FA/CAPTCHA still requires
-      // the administrator and will never overwrite the last good snapshot.
+      // Give autofill a short window to recover a session that only needs the
+      // stored credentials. 2FA/CAPTCHA still requires the administrator.
       await new Promise((resolve) => setTimeout(resolve, 10_000));
       if (interruptedByManualCapture()) return;
       inspection = await engine().inspectActive().catch(() => inspection);
     }
 
+    const failedInspections = [];
+    if (!inspection?.authenticated) failedInspections.push(inspection);
+    for (let attempt = 0; attempt < 2 && !inspection?.authenticated; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      if (interruptedByManualCapture()) return;
+      inspection = await engine().inspectActive().catch(() => null);
+      if (!inspection?.authenticated) failedInspections.push(inspection);
+    }
+
     if (interruptedByManualCapture()) return;
     if (!inspection?.authenticated) {
-      const reason = keeperNeedsLoginMessage(inspection);
+      const confirmedLoginLoss = failedInspections.length >= 3
+        && failedInspections.every((item) => strongKeeperLoginEvidence(item));
+      if (!confirmedLoginLoss) {
+        throw new Error('Session Keeper no pudo confirmar el estado de acceso; se conserva la última sesión válida y se intentará de nuevo.');
+      }
+      const reason = keeperNeedsLoginMessage(failedInspections[failedInspections.length - 1]);
       await apiPost(API_ORIGIN, '/api/session-keeper/complete', {
         token,
         authenticated: false,
@@ -205,11 +249,16 @@ async function runKeeperCycle() {
     const entries = Object.entries(registry);
     if (!entries.length || quitAfterCleanup || manualCaptureBusy()) return;
 
-    // Do not open every managed profile in a burst. A periodic cycle checks one
-    // profile and advances a round-robin cursor to keep server usage low.
-    const index = keeperCycleCursor % entries.length;
-    keeperCycleCursor = (index + 1) % entries.length;
-    const [profileId, entry] = entries[index];
+    // Check exactly one profile at a time to keep CPU/server usage low, but
+    // choose the least-recently checked profile so app restarts cannot starve
+    // profiles that happen to be later in the registry.
+    entries.sort((left, right) => {
+      const leftAt = Date.parse(left[1]?.lastCheckAt || left[1]?.updatedAt || '') || 0;
+      const rightAt = Date.parse(right[1]?.lastCheckAt || right[1]?.updatedAt || '') || 0;
+      return leftAt - rightAt;
+    });
+    const [profileId, entry] = entries[0];
+    let removed = false;
 
     try {
       await checkKeeperProfile(profileId, entry);
@@ -219,11 +268,14 @@ async function runKeeperCycle() {
         + `${error instanceof Error ? error.message : String(error || 'error')}`,
       );
       if (Number(error?.status || 0) === 401 || ['KEEPER_TOKEN_INVALID', 'INVALID_KEEPER_TOKEN'].includes(String(error?.code || ''))) {
+        removed = true;
         await removeKeeper(profileId);
       }
       if (!manualCaptureBusy()) {
         await engine().close('keeper_error').catch(() => null);
       }
+    } finally {
+      if (!removed) await markKeeperChecked(profileId);
     }
   } finally {
     keeperRunning = false;
@@ -234,8 +286,10 @@ function scheduleKeeper(delayMs = KEEPER_INITIAL_DELAY_MS) {
   if (keeperTimer) clearTimeout(keeperTimer);
   keeperTimer = setTimeout(() => {
     keeperTimer = null;
-    void runKeeperCycle().finally(() => {
-      if (!quitAfterCleanup) scheduleKeeper(KEEPER_INTERVAL_MS);
+    void runKeeperCycle().finally(async () => {
+      if (quitAfterCleanup) return;
+      const registry = await loadKeeperRegistry();
+      scheduleKeeper(keeperIntervalForCount(Object.keys(registry).length));
     });
   }, delayMs);
   keeperTimer.unref?.();
