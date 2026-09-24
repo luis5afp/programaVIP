@@ -517,9 +517,9 @@ async function startCapture(rawUrl) {
           authenticated: authenticated === true,
         }, 90_000);
         if (completed?.keeper_token) {
-          await saveKeeper(profile, completed.keeper_token);
-          configureKeeperStartup();
-          scheduleKeeper();
+          // Validation is one-time. Keep the server-side record for backward
+          // compatibility, but do not schedule periodic revalidation.
+          configureKeeperStartup(false);
         }
 
         const completedResult = {
@@ -683,12 +683,9 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     protocolRegistered = registerProtocol();
-    const keepers = await loadKeeperRegistry();
-    const hasKeepers = Object.keys(keepers).length > 0;
-    configureKeeperStartup(hasKeepers);
-    if (hasKeepers) {
-      scheduleKeeper();
-    }
+    // Managed sessions are validated once at capture. Session Manager no
+    // longer wakes up periodically to revalidate them by age.
+    configureKeeperStartup(false);
     const protocolUrl = pendingProtocolUrl || protocolUrlFromArgs(process.argv);
     const keeperOnly = process.argv.includes('--keeper') && !protocolUrl;
     pendingProtocolUrl = null;
