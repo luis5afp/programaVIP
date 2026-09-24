@@ -46,7 +46,7 @@ export function managedSessionHealth(
   keeper: any = null,
   nowMs = Date.now(),
 ): ManagedSessionHealth {
-  if (!session || session.status !== 'ready') {
+  if (!session) {
     return {
       usable: false,
       needsAttention: true,
@@ -58,77 +58,66 @@ export function managedSessionHealth(
     };
   }
 
+  if (session.status === 'needs_auth') {
+    return {
+      usable: false,
+      needsAttention: true,
+      severity: 'critical',
+      status: 'needs_renewal',
+      reason: keeper?.last_error || 'Un acceso real del cliente confirmó que esta sesión ya no permite entrar con normalidad.',
+      validatedAt: session.last_validated_at || null,
+      ageMs: validationAge(session.last_validated_at, nowMs),
+    };
+  }
+
+  if (session.status !== 'ready') {
+    return {
+      usable: false,
+      needsAttention: true,
+      severity: 'critical',
+      status: 'not_configured',
+      reason: 'No hay una sesión central lista para este perfil.',
+      validatedAt: session.last_validated_at || null,
+      ageMs: validationAge(session.last_validated_at, nowMs),
+    };
+  }
+
   if (keeper?.enabled === true && keeper?.last_status === 'needs_admin') {
     return {
       usable: false,
       needsAttention: true,
       severity: 'critical',
       status: 'needs_renewal',
-      reason: keeper?.last_error || 'La web volvió a solicitar inicio de sesión.',
+      reason: keeper?.last_error || 'La web volvió a solicitar inicio de sesión durante un acceso real.',
       validatedAt: session.last_validated_at || null,
       ageMs: validationAge(session.last_validated_at, nowMs),
     };
   }
 
-  const keeperValidatedAt = keeper?.enabled === true && keeper?.last_status === 'healthy'
-    ? latestValidationTimestamp(keeper.last_check_at, keeper.last_refresh_at)
-    : null;
-  // A healthy Keeper check is a real validation. Always use the newest
-  // successful timestamp instead of preferring an older snapshot timestamp.
-  const effectiveValidatedAt = latestValidationTimestamp(session.last_validated_at, keeperValidatedAt);
-  const ageMs = validationAge(effectiveValidatedAt, nowMs);
+  const validatedAt = session.last_validated_at || null;
+  const ageMs = validationAge(validatedAt, nowMs);
   if (ageMs === null) {
     return {
       usable: false,
       needsAttention: true,
       severity: 'critical',
       status: 'pending_validation',
-      reason: 'La sesión está guardada pero todavía no fue validada en la web.',
+      reason: 'La sesión está guardada pero todavía no completó su validación inicial.',
       validatedAt: null,
       ageMs: null,
     };
   }
 
-  const keeperNeedsSetup = !keeper
-    || keeper.enabled !== true
-    || !['healthy', 'refreshing'].includes(String(keeper.last_status || ''));
-
-  if (ageMs > SESSION_VALIDATION_STALE_MS) {
-    return {
-      usable: true,
-      needsAttention: true,
-      severity: 'warning',
-      status: 'stale_validation',
-      reason: 'La última comprobación tiene más de 24 horas. La sesión sigue habilitada y solo se bloqueará si Keeper o una prueba real confirma que la web pidió acceso otra vez.',
-      validatedAt: effectiveValidatedAt,
-      ageMs,
-    };
-  }
-
-  if (ageMs > SESSION_VALIDATION_WARN_MS || keeperNeedsSetup) {
-    let reason = 'Conviene volver a comprobar esta sesión, pero seguirá habilitada mientras no exista una confirmación real de cierre de sesión.';
-    if (!keeper) reason = 'Session Keeper todavía no está registrado para este perfil.';
-    else if (keeper.enabled !== true || keeper.last_status === 'disabled') reason = 'Session Keeper está desactivado para este perfil.';
-    else if (keeper.last_status === 'registered') reason = 'Session Keeper está registrado y espera su primera comprobación.';
-    else if (keeper.last_status === 'error') reason = keeper.last_error || 'Session Keeper reportó un error y necesita revisión.';
-    return {
-      usable: true,
-      needsAttention: true,
-      severity: 'warning',
-      status: 'renew_soon',
-      reason,
-      validatedAt: effectiveValidatedAt,
-      ageMs,
-    };
-  }
-
+  // Validation is intentionally one-time. A validated session never expires
+  // because of age. It is revoked only when a real client access confirms that
+  // authentication no longer works.
   return {
     usable: true,
     needsAttention: false,
     severity: 'ok',
     status: 'valid',
     reason: null,
-    validatedAt: effectiveValidatedAt,
+    validatedAt,
     ageMs,
   };
 }
