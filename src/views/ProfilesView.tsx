@@ -23,7 +23,7 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.45/userFLEX-Session-Manager-0.3.45-Setup.exe';
+const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.46/userFLEX-Session-Manager-0.3.45-Setup.exe';
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
@@ -138,9 +138,9 @@ function snapshotBadge(session: ProfileSessionState | null) {
   const validationAge = Date.now() - validatedAt;
   if (validationAge > SNAPSHOT_VALIDATION_FRESH_MS) {
     return {
-      tone: 'bad' as const,
-      compact: `Snapshot: v${version} · vencida`,
-      detail: `Snapshot: guardado · v${version} · validación vencida; requiere revisión`,
+      tone: 'warn' as const,
+      compact: `Snapshot: v${version} · verificación antigua`,
+      detail: `Snapshot: activo · v${version} · la última comprobación tiene más de 24 h; no se bloquea solo por tiempo`,
     };
   }
   if (validationAge > SNAPSHOT_VALIDATION_WARNING_MS) {
@@ -163,7 +163,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'warn' as const,
       compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.45+.',
+      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.46+.',
     };
   }
   if (keeper.enabled === false || keeper.status === 'disabled') {
@@ -1900,7 +1900,7 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.45
+              Instalar / actualizar Session Manager v0.3.46
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
