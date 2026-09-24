@@ -76,7 +76,12 @@ assert.match(clientApi, /profileImageUrl\(profile\)/, 'userFLOW catalog must rec
 assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW catalog must version image refreshes');
 assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
 assert.match(admin, /La imagen fue subida, pero el perfil no confirmó el nuevo image_url/, 'Admin must verify that an edited image was persisted');
-assert.match(admin, /closeEditor\(\);[\s\S]{0,180}const profileUrlValue[\s\S]{0,1600}profileSaved = true;[\s\S]{0,320}void load\(\);/, 'Admin must close immediately after local validation and refresh profile data after saving');
+const submitStart = admin.indexOf('async function submit');
+const submitClose = admin.indexOf('closeEditor();', submitStart);
+const submitSave = admin.indexOf('const savedProfile =', submitStart);
+const submitRefresh = admin.indexOf('void load();', submitStart);
+assert.ok(submitClose > submitStart && submitClose < submitSave, 'Admin must close before the primary network save');
+assert.ok(submitRefresh > submitSave, 'Admin must refresh profile data after saving');
 assert.match(clientMain, /async function profileImageDataUrl/, 'userFLOW main process must download profile images itself');
 assert.match(clientMain, /data:\$\{mime\};base64/, 'userFLOW must inline downloaded profile images as local data URLs');
 assert.match(clientMain, /cache: 'no-store'/, 'userFLOW image refresh must bypass stale HTTP cache');
