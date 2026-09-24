@@ -62,7 +62,10 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
     version: Number(session?.session_version || 0),
     public_ip: session?.expected_egress_ip || null,
     captured_at: session?.last_captured_at || null,
-    validated_at: session?.last_validated_at || null,
+    validated_at: session?.last_validated_at
+      || (keeper?.enabled === true && keeper?.last_status === 'healthy'
+        ? (keeper?.last_check_at || keeper?.last_refresh_at || null)
+        : null),
     updated_at: session?.updated_at || credential?.updated_at || null,
     keeper: keeper ? {
       enabled: keeper.enabled === true,
