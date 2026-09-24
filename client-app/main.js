@@ -1608,13 +1608,15 @@ async function requestSessionKeeperChecks() {
   });
 }
 
-async function reportSessionHealth(profileId, authenticated, result = null) {
+async function reportSessionHealth(profileId, authenticated, result = null, options = {}) {
   await apiRequest(`/api/client/profiles/${profileId}/session-health`, {
     method: 'POST',
     body: {
       authenticated: authenticated === true,
-      sessionVersion: Number(result?.sessionVersion || 0),
-      source: String(result?.profileState || ''),
+      confirmedFailure: options.confirmedFailure === true,
+      sessionVersion: Number(options.sessionVersion ?? result?.sessionVersion ?? 0),
+      source: String(options.source || result?.profileState || ''),
+      reason: typeof options.reason === 'string' ? options.reason : undefined,
     },
     timeout: 8_000,
   }).catch((error) => {
@@ -1668,6 +1670,7 @@ async function openProfile(profileId) {
     let fallbackRecovered = false;
     let activeDelivery = delivery;
     if (snapshotManagedProfile(profile)) {
+      const centralSessionVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
       inspection = await engine.inspect(clientId, profile.id).catch(() => null);
       if (inspectionNeedsLogin(inspection) && result?.profileState === 'persistent-reuse') {
         await engine.close(clientId, profile.id, 'session_health_restore').catch(() => null);
@@ -1686,10 +1689,8 @@ async function openProfile(profileId) {
       }
 
       if (inspectionNeedsLogin(inspection) && result?.profileState === 'server-session-restored') {
-        // The newest central snapshot failed a real browser check. Mark only
-        // that exact generation as suspect, then request older encrypted
-        // snapshots one-by-one. No fallback material is downloaded normally.
-        await reportSessionHealth(profile.id, false, result);
+        // Try older encrypted snapshots before deciding that access is really
+        // lost. A failed intermediate inspection never revokes the session.
         let beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
         for (let attempt = 0; attempt < 2 && beforeVersion > 1; attempt += 1) {
           const fallback = await apiRequest(`/api/client/profiles/${profile.id}/session-fallback`, {
@@ -1721,8 +1722,24 @@ async function openProfile(profileId) {
         }
       }
 
+      // A login-looking page can be transient while a service redirects or
+      // hydrates. Confirm it repeatedly before revoking the original central
+      // generation. This check runs only when actual client access is failing.
+      for (let attempt = 0; attempt < 2 && inspectionNeedsLogin(inspection); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        inspection = await engine.inspect(clientId, profile.id).catch(() => inspection);
+      }
+
       if (inspection) {
-        await reportSessionHealth(profile.id, !inspectionNeedsLogin(inspection), result);
+        const accessFailed = inspectionNeedsLogin(inspection);
+        await reportSessionHealth(profile.id, !accessFailed, result, {
+          confirmedFailure: accessFailed,
+          sessionVersion: accessFailed ? centralSessionVersion : Number(result?.sessionVersion || activeDelivery?.version || 0),
+          source: accessFailed ? 'confirmed-client-access-failure' : String(result?.profileState || ''),
+          reason: accessFailed
+            ? 'userFLOW confirmó repetidamente que la web volvió a pedir inicio de sesión y no pudo recuperar el acceso.'
+            : undefined,
+        });
       }
     }
 
