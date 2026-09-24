@@ -44,13 +44,13 @@ assert.ok((clientMain.match(/void requestSessionKeeperChecks\(\)/g) || []).lengt
 assert.equal(managerPackage.dependencies?.['@supabase/realtime-js'], undefined);
 assert.doesNotMatch(manager, /@supabase\/realtime-js|RealtimeClient|supabase\.co/i);
 assert.doesNotMatch(manager, /queueKeeperCheck|runRequestedKeeperChecks|connectKeeperRealtime/);
-assert.match(manager, /KEEPER_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
-assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS/);
-assert.match(manager, /keeperCycleCursor/);
+assert.match(manager, /KEEPER_TARGET_ROUND_MS = 8 \* 60 \* 60 \* 1000/);
+assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = 2 \* 60 \* 1000/);
+assert.match(manager, /lastCheckAt/);
 assert.match(
   manager,
-  /periodic cycle checks one[\s\S]{0,160}round-robin cursor to keep server usage low/,
-  'Session Manager must retain low-frequency round-robin Keeper checks',
+  /Check exactly one profile at a time[\s\S]{0,260}least-recently checked profile/,
+  'Session Manager must retain low-frequency fair Keeper checks',
 );
 
 console.log('Keeper low-frequency checks without Supabase Realtime: OK');
