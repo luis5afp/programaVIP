@@ -92,18 +92,28 @@ assert.match(
 );
 assert.match(
   client,
-  /const centralUpdated = authenticated && sameCentralGeneration[\s\S]{0,700}last_validated_at: now/,
-  'live client health must only advance the exact central generation after positive authentication',
+  /confirmedFailure[\s\S]{0,1200}status: 'needs_auth'/,
+  'client health must revoke only an explicitly confirmed real access failure',
+);
+assert.doesNotMatch(
+  client,
+  /last_validated_at: now/,
+  'normal client launches must not keep extending a validation timer',
+);
+assert.match(
+  main,
+  /confirmedFailure: accessFailed[\s\S]{0,420}confirmed-client-access-failure/,
+  'userFLOW must confirm a repeated access failure before requesting revocation',
 );
 assert.match(
   profilesView,
-  /SNAPSHOT_VALIDATION_FRESH_MS = 24 \* 60 \* 60 \* 1000/,
-  'Admin must distinguish old verification without expiring the snapshot by age alone',
+  /no caduca por tiempo/,
+  'Admin must show that a completed initial validation does not expire by age',
 );
 assert.match(
   profilesView,
-  /pendiente de prueba real/,
-  'Admin must distinguish saved snapshots from verified web sessions',
+  /validar una vez/,
+  'Admin must distinguish an unvalidated initial snapshot from a validated one',
 );
 
 console.log('Managed session health recovery: OK');
