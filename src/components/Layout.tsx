@@ -66,8 +66,8 @@ export function Layout({
             <div className="session-alert-copy">
               <strong>
                 {sessionAlerts.criticalCount > 0
-                  ? `${sessionAlerts.criticalCount} perfil${sessionAlerts.criticalCount === 1 ? '' : 'es'} necesita${sessionAlerts.criticalCount === 1 ? '' : 'n'} renovar o validar sesión`
-                  : `${sessionAlerts.warningCount} perfil${sessionAlerts.warningCount === 1 ? '' : 'es'} conviene${sessionAlerts.warningCount === 1 ? '' : 'n'} validar pronto`}
+                  ? `${sessionAlerts.criticalCount} perfil${sessionAlerts.criticalCount === 1 ? '' : 'es'} requiere${sessionAlerts.criticalCount === 1 ? '' : 'n'} renovar acceso`
+                  : `${sessionAlerts.warningCount} perfil${sessionAlerts.warningCount === 1 ? '' : 'es'} requiere${sessionAlerts.warningCount === 1 ? '' : 'n'} revisión`}
               </strong>
               <span>
                 {sessionAlerts.profiles.slice(0, 4).map((item) => item.profile_name).join(' · ')}
