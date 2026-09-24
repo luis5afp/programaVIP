@@ -22,8 +22,8 @@ assert.match(
 );
 assert.match(
   sessions,
-  /sessionOutcome === 'snapshot-authenticated' \? now : null/,
-  'manual runtime validation must clear verification when login is still required',
+  /sessionChecked && sessionOutcome === 'snapshot-authenticated'/,
+  'manual runtime validation must only advance verification on confirmed authentication',
 );
 assert.match(
   state,
@@ -92,13 +92,13 @@ assert.match(
 );
 assert.match(
   client,
-  /sameCentralGeneration[\s\S]{0,900}last_validated_at: authenticated \? now : null/,
-  'live client health must update only the exact central generation that was tested',
+  /const centralUpdated = authenticated && sameCentralGeneration[\s\S]{0,700}last_validated_at: now/,
+  'live client health must only advance the exact central generation after positive authentication',
 );
 assert.match(
   profilesView,
   /SNAPSHOT_VALIDATION_FRESH_MS = 24 \* 60 \* 60 \* 1000/,
-  'Admin must treat old session verification as stale',
+  'Admin must distinguish old verification without expiring the snapshot by age alone',
 );
 assert.match(
   profilesView,
