@@ -540,16 +540,14 @@ export async function clientSessionHealth(
   const sameCentralGeneration = current?.status === 'ready'
     && reportedVersion > 0
     && reportedVersion === currentVersion;
-  const centralUpdated = authenticated
-    ? sameCentralGeneration
-    : sameCentralGeneration && source === 'server-session-restored';
+  const centralUpdated = authenticated && sameCentralGeneration;
 
   if (centralUpdated) {
     await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
-        last_validated_at: authenticated ? now : null,
+        last_validated_at: now,
         updated_at: now,
       }),
     });
