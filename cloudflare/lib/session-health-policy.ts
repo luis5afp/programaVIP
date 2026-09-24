@@ -1,11 +1,6 @@
-export const SESSION_VALIDATION_WARN_MS = 12 * 60 * 60 * 1000;
-export const SESSION_VALIDATION_STALE_MS = 24 * 60 * 60 * 1000;
-
 export type ManagedSessionHealthStatus =
   | 'valid'
-  | 'renew_soon'
   | 'pending_validation'
-  | 'stale_validation'
   | 'needs_renewal'
   | 'not_configured';
 
