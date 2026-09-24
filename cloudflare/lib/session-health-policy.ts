@@ -1,5 +1,5 @@
 export const SESSION_VALIDATION_WARN_MS = 12 * 60 * 60 * 1000;
-export const SESSION_VALIDATION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const SESSION_VALIDATION_STALE_MS = 24 * 60 * 60 * 1000;
 
 export type ManagedSessionHealthStatus =
   | 'valid'
@@ -68,24 +68,24 @@ export function managedSessionHealth(
     };
   }
 
-  if (ageMs > SESSION_VALIDATION_MAX_AGE_MS) {
+  const keeperNeedsSetup = !keeper
+    || keeper.enabled !== true
+    || !['healthy', 'refreshing'].includes(String(keeper.last_status || ''));
+
+  if (ageMs > SESSION_VALIDATION_STALE_MS) {
     return {
-      usable: false,
+      usable: true,
       needsAttention: true,
-      severity: 'critical',
+      severity: 'warning',
       status: 'stale_validation',
-      reason: 'La última validación de la sesión tiene más de 24 horas.',
+      reason: 'La última comprobación tiene más de 24 horas. La sesión sigue habilitada y solo se bloqueará si Keeper o una prueba real confirma que la web pidió acceso otra vez.',
       validatedAt: session.last_validated_at,
       ageMs,
     };
   }
 
-  const keeperNeedsSetup = !keeper
-    || keeper.enabled !== true
-    || !['healthy', 'refreshing'].includes(String(keeper.last_status || ''));
-
   if (ageMs > SESSION_VALIDATION_WARN_MS || keeperNeedsSetup) {
-    let reason = 'Conviene volver a validar esta sesión antes de que llegue al límite de 24 horas.';
+    let reason = 'Conviene volver a comprobar esta sesión, pero seguirá habilitada mientras no exista una confirmación real de cierre de sesión.';
     if (!keeper) reason = 'Session Keeper todavía no está registrado para este perfil.';
     else if (keeper.enabled !== true || keeper.last_status === 'disabled') reason = 'Session Keeper está desactivado para este perfil.';
     else if (keeper.last_status === 'registered') reason = 'Session Keeper está registrado y espera su primera comprobación.';
