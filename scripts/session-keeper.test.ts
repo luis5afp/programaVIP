@@ -29,7 +29,7 @@ assert.match(sessions, /KEEPER_DISABLED/);
 
 assert.match(manager, /safeStorage\.encryptString/);
 assert.match(manager, /safeStorage\.decryptString/);
-assert.match(manager, /const KEEPER_INTERVAL_MS = 3 \* 60 \* 60 \* 1000/);
+assert.match(manager, /const KEEPER_TARGET_ROUND_MS = 8 \* 60 \* 60 \* 1000/);
 assert.match(manager, /setLoginItemSettings/);
 assert.match(manager, /args: enabled === true \? \['--keeper'\] : \[\]/);
 assert.match(manager, /background: true/);
@@ -39,8 +39,8 @@ assert.match(manager, /completed\?\.keeper_token/);
 assert.match(manager, /function manualCaptureBusy/);
 assert.match(manager, /manualCaptureGeneration \+= 1/);
 assert.match(manager, /manual_capture_priority/);
-assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = KEEPER_INTERVAL_MS/);
-assert.match(manager, /const entries = Object\.entries\(registry\)[\s\S]{0,500}keeperCycleCursor/);
+assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = 2 \* 60 \* 1000/);
+assert.match(manager, /const entries = Object\.entries\(registry\)[\s\S]{0,1000}lastCheckAt/);
 assert.match(
   manager,
   /if \(!interruptedByManualCapture\(\)\)[\s\S]{0,180}engine\(\)\.close\('keeper_check'\)/,
@@ -85,3 +85,7 @@ assert.match(profilesView, /Keeper: requiere acceso/);
 assert.match(profilesView, /Keeper: pendiente/);
 
 console.log('Session Keeper architecture: OK');
+
+assert.match(manager, /strongKeeperLoginEvidence/);
+assert.match(manager, /failedInspections\.length >= 3/);
+assert.match(manager, /keeperIntervalForCount/);
