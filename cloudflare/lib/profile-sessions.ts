@@ -1299,12 +1299,12 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       'hybrid-autofill-ready',
       'hybrid-login-not-detected',
     ].includes(sessionOutcome);
-    if (sessionChecked) {
+    if (sessionChecked && sessionOutcome === 'snapshot-authenticated') {
       await sb(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          last_validated_at: sessionOutcome === 'snapshot-authenticated' ? now : null,
+          last_validated_at: now,
           updated_at: now,
         }),
       }).catch(() => null);
@@ -1567,7 +1567,6 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
           method: 'PATCH',
           headers: { Prefer: 'return=minimal' },
           body: JSON.stringify({
-            last_validated_at: null,
             updated_at: now,
           }),
         }),
