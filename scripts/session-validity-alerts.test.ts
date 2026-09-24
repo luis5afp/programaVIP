@@ -14,6 +14,7 @@ assert.match(policy, /status: 'needs_renewal'/);
 assert.match(policy, /status: 'pending_validation'/);
 assert.match(policy, /status: 'stale_validation'/);
 assert.match(policy, /usable: true,[\s\S]{0,220}status: 'renew_soon'/);
+assert.match(policy, /usable: true,[\s\S]{0,220}status: 'stale_validation'/);
 
 assert.match(
   client,
@@ -37,8 +38,13 @@ assert.match(sessions, /criticalCount:/);
 assert.match(sessions, /warningCount:/);
 assert.match(
   sessions,
+  /last_status: 'needs_admin'/,
+  'Keeper can block a session after confirmed login loss',
+);
+assert.doesNotMatch(
+  sessions,
   /last_status: 'needs_admin'[\s\S]{0,900}last_validated_at: null/,
-  'Keeper login loss must immediately invalidate central session validation',
+  'Keeper must preserve the last-known-good validation timestamp',
 );
 assert.match(
   sessions,
