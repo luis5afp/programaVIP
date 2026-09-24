@@ -26,6 +26,21 @@ function validationAge(validatedAt: unknown, nowMs: number): number | null {
   return Math.max(0, nowMs - parsed);
 }
 
+export function latestValidationTimestamp(...values: unknown[]): string | null {
+  let latestValue: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed > latestMs) {
+      latestMs = parsed;
+      latestValue = value;
+    }
+  }
+  return latestValue;
+}
+
 export function managedSessionHealth(
   session: any,
   keeper: any = null,
@@ -56,9 +71,11 @@ export function managedSessionHealth(
   }
 
   const keeperValidatedAt = keeper?.enabled === true && keeper?.last_status === 'healthy'
-    ? (keeper.last_check_at || keeper.last_refresh_at || null)
+    ? latestValidationTimestamp(keeper.last_check_at, keeper.last_refresh_at)
     : null;
-  const effectiveValidatedAt = session.last_validated_at || keeperValidatedAt;
+  // A healthy Keeper check is a real validation. Always use the newest
+  // successful timestamp instead of preferring an older snapshot timestamp.
+  const effectiveValidatedAt = latestValidationTimestamp(session.last_validated_at, keeperValidatedAt);
   const ageMs = validationAge(effectiveValidatedAt, nowMs);
   if (ageMs === null) {
     return {
