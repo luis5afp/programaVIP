@@ -9,7 +9,7 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/components/Layout.tsx', import.meta.url), 'utf8');
 
 assert.match(policy, /SESSION_VALIDATION_WARN_MS = 12 \* 60 \* 60 \* 1000/);
-assert.match(policy, /SESSION_VALIDATION_MAX_AGE_MS = 24 \* 60 \* 60 \* 1000/);
+assert.match(policy, /SESSION_VALIDATION_STALE_MS = 24 \* 60 \* 60 \* 1000/);
 assert.match(policy, /status: 'needs_renewal'/);
 assert.match(policy, /status: 'pending_validation'/);
 assert.match(policy, /status: 'stale_validation'/);
