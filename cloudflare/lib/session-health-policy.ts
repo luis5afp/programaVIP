@@ -55,7 +55,11 @@ export function managedSessionHealth(
     };
   }
 
-  const ageMs = validationAge(session.last_validated_at, nowMs);
+  const keeperValidatedAt = keeper?.enabled === true && keeper?.last_status === 'healthy'
+    ? (keeper.last_check_at || keeper.last_refresh_at || null)
+    : null;
+  const effectiveValidatedAt = session.last_validated_at || keeperValidatedAt;
+  const ageMs = validationAge(effectiveValidatedAt, nowMs);
   if (ageMs === null) {
     return {
       usable: false,
@@ -79,7 +83,7 @@ export function managedSessionHealth(
       severity: 'warning',
       status: 'stale_validation',
       reason: 'La última comprobación tiene más de 24 horas. La sesión sigue habilitada y solo se bloqueará si Keeper o una prueba real confirma que la web pidió acceso otra vez.',
-      validatedAt: session.last_validated_at,
+      validatedAt: effectiveValidatedAt,
       ageMs,
     };
   }
@@ -96,7 +100,7 @@ export function managedSessionHealth(
       severity: 'warning',
       status: 'renew_soon',
       reason,
-      validatedAt: session.last_validated_at,
+      validatedAt: effectiveValidatedAt,
       ageMs,
     };
   }
@@ -107,7 +111,7 @@ export function managedSessionHealth(
     severity: 'ok',
     status: 'valid',
     reason: null,
-    validatedAt: session.last_validated_at,
+    validatedAt: effectiveValidatedAt,
     ageMs,
   };
 }
