@@ -60,7 +60,6 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    void api.profileSessions.requestChecks().catch(() => null);
     const loadAlerts = async () => {
       try {
         const result = await api.profileSessions.alerts();
