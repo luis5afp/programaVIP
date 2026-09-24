@@ -17,7 +17,13 @@ assert.doesNotMatch(deploy, /SUPABASE_/);
 assert.doesNotMatch(deploy, /supabase\.co/i);
 assert.doesNotMatch(wrangler, /SUPABASE_/);
 assert.doesNotMatch(wrangler, /supabase\.co/i);
-assert.match(deploy, /NEON_DATABASE_URL/);
+assert.doesNotMatch(
+  deploy,
+  /secrets\.NEON_DATABASE_URL|secret put NEON_DATABASE_URL/,
+  'GitHub deploy must preserve the Neon secret already configured in Cloudflare instead of requiring a duplicate GitHub secret',
+);
+assert.match(deploy, /value\.databaseConfigured !== true/);
+assert.match(deploy, /value\.databaseReachable !== true/);
 assert.match(adapter, /sql\.query|client\(env\)\.query/);
 assert.match(adapter, /DATABASE_UNBOUNDED_WRITE/);
 assert.match(adapter, /on_conflict/);
