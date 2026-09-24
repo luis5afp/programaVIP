@@ -117,13 +117,14 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
-const SNAPSHOT_VALIDATION_WARNING_MS = 12 * 60 * 60 * 1000;
-const SNAPSHOT_VALIDATION_FRESH_MS = 24 * 60 * 60 * 1000;
-
 function snapshotBadge(session: ProfileSessionState | null) {
   if (!session || session.status !== 'active') {
     return session?.status === 'needs_auth'
-      ? { tone: 'warn' as const, compact: 'Snapshot: acceso', detail: 'Snapshot: requiere acceso' }
+      ? {
+          tone: 'bad' as const,
+          compact: 'Snapshot: renovar acceso',
+          detail: 'Snapshot bloqueado porque un acceso real confirmó que la sesión ya no entra con normalidad.',
+        }
       : { tone: 'bad' as const, compact: 'Snapshot: sin cargar', detail: 'Snapshot: sin cargar' };
   }
   const version = Number(session.version || 0);
@@ -131,65 +132,30 @@ function snapshotBadge(session: ProfileSessionState | null) {
   if (!Number.isFinite(validatedAt)) {
     return {
       tone: 'warn' as const,
-      compact: `Snapshot: v${version} · sin verificar`,
-      detail: `Snapshot: guardado · v${version} · pendiente de prueba real`,
-    };
-  }
-  const validationAge = Date.now() - validatedAt;
-  if (validationAge > SNAPSHOT_VALIDATION_FRESH_MS) {
-    return {
-      tone: 'warn' as const,
-      compact: `Snapshot: v${version} · verificación antigua`,
-      detail: `Snapshot: activo · v${version} · la última comprobación tiene más de 24 h; no se bloquea solo por tiempo`,
-    };
-  }
-  if (validationAge > SNAPSHOT_VALIDATION_WARNING_MS) {
-    return {
-      tone: 'warn' as const,
-      compact: `Snapshot: v${version} · validar pronto`,
-      detail: `Snapshot: activo · v${version} · conviene validar antes de 24 h`,
+      compact: `Snapshot: v${version} · validar una vez`,
+      detail: `Snapshot: guardado · v${version} · falta completar la validación inicial`,
     };
   }
   return {
     tone: 'ok' as const,
-    compact: `Snapshot: v${version} · OK`,
-    detail: `Snapshot: activo · v${version} · verificado recientemente`,
+    compact: `Snapshot: v${version} · válido`,
+    detail: `Snapshot: activo · v${version} · validación inicial completada; no caduca por tiempo`,
   };
 }
 
 function keeperBadge(session: ProfileSessionState | null) {
   const keeper = session?.keeper || null;
-  if (!keeper) {
-    return {
-      tone: 'warn' as const,
-      compact: 'Keeper: pendiente',
-      detail: 'Session Keeper: pendiente de registrar; renueva el snapshot una vez con Session Manager v0.3.46+.',
-    };
-  }
-  if (keeper.enabled === false || keeper.status === 'disabled') {
-    return { tone: 'neutral' as const, compact: 'Keeper: apagado', detail: 'Session Keeper: desactivado' };
-  }
-  if (keeper.status === 'healthy') {
-    return { tone: 'ok' as const, compact: 'Keeper: activo', detail: 'Session Keeper: activo · sesión central vigilada' };
-  }
-  if (keeper.status === 'needs_admin') {
+  if (session?.status === 'needs_auth' || keeper?.status === 'needs_admin') {
     return {
       tone: 'bad' as const,
-      compact: 'Keeper: requiere acceso',
-      detail: `Session Keeper: requiere administrador${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
-    };
-  }
-  if (keeper.status === 'error') {
-    return {
-      tone: 'bad' as const,
-      compact: 'Keeper: error',
-      detail: `Session Keeper: error${keeper.last_error ? ` · ${keeper.last_error}` : ''}`,
+      compact: 'Acceso: renovar',
+      detail: `Acceso revocado por fallo real${keeper?.last_error ? ` · ${keeper.last_error}` : ''}`,
     };
   }
   return {
-    tone: 'neutral' as const,
-    compact: 'Keeper: registrado',
-    detail: 'Session Keeper: registrado · esperando primera comprobación automática',
+    tone: 'ok' as const,
+    compact: 'Acceso: por uso',
+    detail: 'No se revalida por tiempo. userFLOW solo revoca la sesión si un acceso real confirma que ya no funciona.',
   };
 }
 
