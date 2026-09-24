@@ -8,23 +8,14 @@ const renderer = readFileSync(new URL('../client-app/renderer.js', import.meta.u
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/components/Layout.tsx', import.meta.url), 'utf8');
 
-assert.match(policy, /SESSION_VALIDATION_WARN_MS = 12 \* 60 \* 60 \* 1000/);
-assert.match(policy, /SESSION_VALIDATION_STALE_MS = 24 \* 60 \* 60 \* 1000/);
+assert.match(policy, /session\.status === 'needs_auth'/);
 assert.match(policy, /status: 'needs_renewal'/);
 assert.match(policy, /status: 'pending_validation'/);
-assert.match(policy, /status: 'stale_validation'/);
-assert.match(policy, /usable: true,[\s\S]{0,220}status: 'renew_soon'/);
-assert.match(policy, /usable: true,[\s\S]{0,220}status: 'stale_validation'/);
-assert.match(
-  policy,
-  /latestValidationTimestamp\(session\.last_validated_at, keeperValidatedAt\)/,
-  'health policy must use the newest successful snapshot or Keeper validation',
-);
-assert.match(
-  sessions,
-  /validated_at: latestValidationTimestamp\(/,
-  'Admin session state must expose the newest successful validation timestamp',
-);
+assert.match(policy, /Validation is intentionally one-time/);
+assert.doesNotMatch(policy, /SESSION_VALIDATION_WARN_MS/);
+assert.doesNotMatch(policy, /SESSION_VALIDATION_STALE_MS/);
+assert.doesNotMatch(policy, /status: 'stale_validation'/);
+assert.doesNotMatch(policy, /status: 'renew_soon'/);
 
 assert.match(
   client,
@@ -57,9 +48,9 @@ assert.doesNotMatch(
   'Keeper must preserve the last-known-good validation timestamp',
 );
 assert.match(
-  sessions,
-  /if \(!previousHealth\.usable\) await touchProfileClients/,
-  'clients should be woken when Keeper restores a previously blocked session',
+  client,
+  /confirmedFailure[\s\S]{0,1500}touchProfileClients\(env, profileId\)/,
+  'clients should be notified when a real access failure revokes a session',
 );
 
 assert.match(renderer, /Requiere renovación/);
