@@ -320,7 +320,8 @@ jobs:
             if (Test-Path $manifestPath) { Remove-Item $manifestPath -Force }
 
             & npx wrangler@4.130.0 r2 object get "$bucket/versions/$($release.VersionText)/manifest.json" --file "$manifestPath" --remote --cwd .. *> $null
-            if ($LASTEXITCODE -eq 0 -and (Test-Path $manifestPath)) {
+            $manifestFound = $LASTEXITCODE -eq 0 -and (Test-Path $manifestPath)
+            if ($manifestFound) {
               try {
                 $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json
                 foreach ($chunk in @($manifest.chunks)) {
@@ -328,15 +329,29 @@ jobs:
                   $expectedPrefix = "versions/$($release.VersionText)/part-"
                   if ($chunkName.StartsWith($expectedPrefix) -and $chunkName.EndsWith('.bin')) {
                     & npx wrangler@4.130.0 r2 object delete "$bucket/$chunkName" --remote --cwd .. *> $null
+                    if ($LASTEXITCODE -ne 0) {
+                      Write-Warning "R2 chunk already missing or could not be removed: $chunkName"
+                    }
                   }
                 }
                 & npx wrangler@4.130.0 r2 object delete "$bucket/versions/$($release.VersionText)/manifest.json" --remote --cwd .. *> $null
-                Write-Host "Removed R2 updater version $($release.VersionText)."
+                if ($LASTEXITCODE -eq 0) {
+                  Write-Host "Removed R2 updater version $($release.VersionText)."
+                } else {
+                  Write-Warning "R2 manifest already missing or could not be removed for $($release.VersionText)."
+                }
               } catch {
                 Write-Warning "Could not parse/delete R2 version $($release.VersionText): $($_.Exception.Message)"
               }
+            } else {
+              Write-Host "R2 updater version $($release.VersionText) is already absent."
             }
           }
+
+          # Retention cleanup is best-effort. Missing stale objects must never
+          # fail publication of the new updater.
+          $global:LASTEXITCODE = 0
+          exit 0
 
       - name: Keep only two Client GitHub releases
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
