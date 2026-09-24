@@ -17,8 +17,8 @@ assert.match(keeper, /requestKeeperChecks/);
 assert.match(keeper, /return 0;/);
 assert.match(
   keeper,
-  /Session Manager performs low-frequency round-robin Keeper checks locally/,
-  'Keeper requests must remain passive without a third-party realtime provider',
+  /return 0;/,
+  'legacy Keeper request endpoints must remain passive',
 );
 
 assert.match(sessions, /\/api\/profile-session-checks\/request/);
@@ -35,7 +35,7 @@ assert.match(admin, /requestKeeperChecks\(env, \[profileId\], 'profile-update'\)
 assert.match(admin, /!invalidateSnapshot && nextSnapshot/);
 
 assert.match(api, /requestChecks: \(\) => request/);
-assert.match(app, /api\.profileSessions\.requestChecks\(\)/);
+assert.doesNotMatch(app, /api\.profileSessions\.requestChecks\(\)/);
 
 assert.match(clientMain, /requestSessionKeeperChecks/);
 assert.match(clientMain, /\/api\/client\/session-checks\/request/);
@@ -44,13 +44,11 @@ assert.ok((clientMain.match(/void requestSessionKeeperChecks\(\)/g) || []).lengt
 assert.equal(managerPackage.dependencies?.['@supabase/realtime-js'], undefined);
 assert.doesNotMatch(manager, /@supabase\/realtime-js|RealtimeClient|supabase\.co/i);
 assert.doesNotMatch(manager, /queueKeeperCheck|runRequestedKeeperChecks|connectKeeperRealtime/);
-assert.match(manager, /KEEPER_TARGET_ROUND_MS = 8 \* 60 \* 60 \* 1000/);
-assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = 2 \* 60 \* 1000/);
-assert.match(manager, /lastCheckAt/);
-assert.match(
+assert.match(manager, /configureKeeperStartup\(false\)/);
+assert.doesNotMatch(
   manager,
-  /Check exactly one profile at a time[\s\S]{0,260}least-recently checked profile/,
-  'Session Manager must retain low-frequency fair Keeper checks',
+  /if \(hasKeepers\)[\s\S]{0,120}scheduleKeeper\(\)/,
+  'Session Manager must not start periodic Keeper checks',
 );
 
-console.log('Keeper low-frequency checks without Supabase Realtime: OK');
+console.log('Keeper endpoints passive; access is revoked only by real client failures: OK');
