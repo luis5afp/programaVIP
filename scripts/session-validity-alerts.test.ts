@@ -15,6 +15,16 @@ assert.match(policy, /status: 'pending_validation'/);
 assert.match(policy, /status: 'stale_validation'/);
 assert.match(policy, /usable: true,[\s\S]{0,220}status: 'renew_soon'/);
 assert.match(policy, /usable: true,[\s\S]{0,220}status: 'stale_validation'/);
+assert.match(
+  policy,
+  /latestValidationTimestamp\(session\.last_validated_at, keeperValidatedAt\)/,
+  'health policy must use the newest successful snapshot or Keeper validation',
+);
+assert.match(
+  sessions,
+  /validated_at: latestValidationTimestamp\(/,
+  'Admin session state must expose the newest successful validation timestamp',
+);
 
 assert.match(
   client,
