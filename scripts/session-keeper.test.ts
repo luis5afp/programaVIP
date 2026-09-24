@@ -29,22 +29,19 @@ assert.match(sessions, /KEEPER_DISABLED/);
 
 assert.match(manager, /safeStorage\.encryptString/);
 assert.match(manager, /safeStorage\.decryptString/);
-assert.match(manager, /const KEEPER_TARGET_ROUND_MS = 8 \* 60 \* 60 \* 1000/);
 assert.match(manager, /setLoginItemSettings/);
 assert.match(manager, /args: enabled === true \? \['--keeper'\] : \[\]/);
-assert.match(manager, /background: true/);
-assert.match(manager, /authenticated: false/);
-assert.match(manager, /await engine\(\)\.saveActive\(\)/);
 assert.match(manager, /completed\?\.keeper_token/);
-assert.match(manager, /function manualCaptureBusy/);
-assert.match(manager, /manualCaptureGeneration \+= 1/);
-assert.match(manager, /manual_capture_priority/);
-assert.match(manager, /const KEEPER_INITIAL_DELAY_MS = 2 \* 60 \* 1000/);
-assert.match(manager, /const entries = Object\.entries\(registry\)[\s\S]{0,1000}lastCheckAt/);
-assert.match(
+assert.match(manager, /configureKeeperStartup\(false\)/);
+assert.doesNotMatch(
   manager,
-  /if \(!interruptedByManualCapture\(\)\)[\s\S]{0,180}engine\(\)\.close\('keeper_check'\)/,
-  'a stale Keeper task must never close a newer manual renewal',
+  /completed\?\.keeper_token[\s\S]{0,220}scheduleKeeper\(\)/,
+  'a completed capture must not start periodic validation',
+);
+assert.doesNotMatch(
+  manager,
+  /if \(hasKeepers\)[\s\S]{0,120}scheduleKeeper\(\)/,
+  'Session Manager startup must not schedule age-based validation',
 );
 assert.doesNotMatch(manager, /queueKeeperCheck\(profile\.id, 'capture-complete'\)/);
 assert.match(sessions, /last_status: authenticated \? 'healthy' : 'registered'/);
@@ -80,12 +77,12 @@ assert.match(clientMain, /session-fallback/);
 assert.match(clientMain, /fallbackRecovered/);
 assert.match(clientMain, /sessionVersion: Number\(result\?\.sessionVersion/);
 
-assert.match(profilesView, /Keeper: activo/);
-assert.match(profilesView, /Keeper: requiere acceso/);
-assert.match(profilesView, /Keeper: pendiente/);
+assert.match(profilesView, /Acceso: por uso/);
+assert.match(profilesView, /Acceso: renovar/);
+assert.match(profilesView, /no se revalida por tiempo/i);
 
 console.log('Session Keeper architecture: OK');
 
-assert.match(manager, /strongKeeperLoginEvidence/);
-assert.match(manager, /failedInspections\.length >= 3/);
-assert.match(manager, /keeperIntervalForCount/);
+assert.match(clientMain, /confirmedFailure: accessFailed/);
+assert.match(clientMain, /confirmed-client-access-failure/);
+assert.match(clientMain, /setTimeout\(resolve, 2500\)/);
