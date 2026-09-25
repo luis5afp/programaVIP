@@ -517,11 +517,11 @@ export function ProfilesView() {
         throw new Error('Para importar cookies JSON usa autenticación Snapshot de sesión o Híbrido.');
       }
 
-      // "Guardar y cerrar" debe cerrar el editor en cuanto la validación local
-      // termina. Las operaciones de red continúan con los valores capturados
-      // por este submit; cualquier fallo posterior se muestra en la lista.
+      // "Guardar y cerrar" cierra el editor apenas termina la validación
+      // local. A partir de aquí los mensajes siguen una secuencia única y
+      // reflejan exactamente la fase que se está ejecutando.
       closeEditor();
-      setSuccess(wasEditing ? 'Guardando cambios…' : 'Creando perfil…');
+      setSuccess(wasEditing ? 'Guardando cambios del perfil…' : 'Guardando nuevo perfil…');
 
       const profileUrlValue = String(form.get('url') || '').trim();
       if (cookieFile) {
@@ -539,8 +539,10 @@ export function ProfilesView() {
 
       let finalImageUrl = imageUrl.trim() || null;
       if (imageFile) {
+        setSuccess('Subiendo imagen del perfil…');
         const uploaded = await api.profiles.uploadImage(imageFile);
         finalImageUrl = uploaded.url;
+        setSuccess(wasEditing ? 'Guardando cambios del perfil…' : 'Guardando nuevo perfil…');
       }
 
       const input = {
@@ -566,12 +568,11 @@ export function ProfilesView() {
         throw new Error('La imagen fue subida, pero el perfil no confirmó el nuevo image_url. Vuelve a intentarlo.');
       }
 
-      // The primary profile is already persisted. The editor was already
-      // closed before the network work started, so only update the status.
+      // El perfil principal ya quedó persistido. Desde este punto cualquier
+      // error pertenece a la configuración secundaria y no debe dar a entender
+      // que el perfil completo se perdió.
       profileSaved = true;
-      setSuccess(wasEditing
-        ? 'Perfil actualizado. Finalizando configuración…'
-        : 'Perfil creado. Finalizando configuración…');
+      setSuccess('Perfil guardado. Aplicando planes, extensiones, proxy y credenciales…');
       void load();
 
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
@@ -589,6 +590,7 @@ export function ProfilesView() {
       ]);
       let importedCookies: { version: number; inspection: CookieImportInspection } | null = null;
       if (cookieFile) {
+        setSuccess('Configuración guardada. Importando cookies y creando snapshot…');
         const imported = await api.profileSessions.importCookies(savedProfile.id, cookieFile);
         importedCookies = {
           version: imported.version,
@@ -604,14 +606,15 @@ export function ProfilesView() {
           })()
         : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
 
-      setSuccess(confirmation);
       await load();
+      setError(null);
+      setSuccess(confirmation);
     } catch (submitError: any) {
       setSuccess(null);
       setError(
         profileSaved
-          ? `El perfil se guardó, pero no se pudo completar toda la configuración: ${submitError.message}`
-          : submitError.message,
+          ? `Perfil guardado, pero quedó una configuración pendiente: ${submitError.message}`
+          : `No se pudo guardar el perfil: ${submitError.message}`,
       );
     } finally {
       setSaving(false);
