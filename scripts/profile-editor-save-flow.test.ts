@@ -14,7 +14,7 @@ assert.ok(profileUrlIndex > closeIndex, 'editor must close after local validatio
 assert.ok(primarySaveIndex > closeIndex, 'editor must close before the primary network save');
 assert.ok(secondarySyncIndex > primarySaveIndex, 'secondary synchronization must happen after the primary save');
 assert.doesNotMatch(source, /setSuccess\(confirmation\);[\s\S]{0,100}closeEditor\(\);/, 'editor must not wait until the final confirmation to close');
-assert.match(source, /El perfil se guardó, pero no se pudo completar toda la configuración/, 'secondary failures must be reported after the modal has closed');
+assert.match(source, /Perfil guardado, pero quedó una configuración pendiente/, 'secondary failures must be reported after the modal has closed');
 assert.match(source, /if \(!saving\) closeEditor\(\)/);
 assert.match(source, /await Promise\.all\(\[/);
 assert.match(source, /key=\{previewUrl\}/, 'image preview must remount when the selected source changes');
