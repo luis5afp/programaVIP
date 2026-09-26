@@ -31,6 +31,21 @@ assert.match(
   'runtime inspection must detect visible login/sign-in actions',
 );
 assert.match(
+  state,
+  /Netflix can rotate NetflixId\/SecureNetflixId immediately/,
+  'Netflix cookie rotation must be treated as a normal authenticated response, not a restore failure',
+);
+assert.doesNotMatch(
+  state,
+  /Chrome no pudo conservar exactamente las cookies de autenticación de Netflix/,
+  'userFLOW must not close Netflix merely because Netflix rotated authentication cookie values',
+);
+assert.match(
+  state,
+  /cookieVerification/,
+  'portable session restore must return cookie diagnostics without aborting the browser launch',
+);
+assert.match(
   main,
   /inspectionNeedsLogin\(inspection\)/,
   'client launch must evaluate whether the managed session is still authenticated',
