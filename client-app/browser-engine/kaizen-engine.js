@@ -374,6 +374,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
+      || preserveDeviceLocalState
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
     // Managed snapshots are versioned contracts. STREAMING is the deliberate
     // exception: once this PC has a working local browser/device state, keep it
@@ -738,6 +739,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
       const desiredRuntimeKey = runtimeKey(runtime);
       const desiredExtensionKey = managedExtensionKey(profile);
+      const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
+      const preserveDeviceLocalState = wantsSnapshot && desiredPolicy === 'netflix-local-device';
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
       const extensionsChanged = runningEntry && String(runningEntry.extensionKey || '') !== desiredExtensionKey;
@@ -758,7 +761,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
         // Extension-only changes restart Chrome so the new list is loaded, but
         // must not erase cookies, local storage, or the persistent profile.
-        if (runtimeChanged || snapshotChanged) {
+        // STREAMING keeps its device-local browser identity even when runtime
+        // metadata or the central snapshot changes.
+        if ((runtimeChanged || snapshotChanged) && !preserveDeviceLocalState) {
           await killStrayProfileProcesses(dir);
           await fsp.rm(dir, { recursive: true, force: true });
         }
@@ -775,10 +780,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       if (!runningEntry && marker) {
         const markerVersion = Number(marker.version || 0);
         const markerPolicy = String(marker?.restore?.storagePolicy || '');
-        const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
         const markerInvalid = !wantsSnapshot
           || !snapshotReady
-          || markerPolicy !== desiredPolicy;
+          || (!preserveDeviceLocalState && markerPolicy !== desiredPolicy);
         if (markerInvalid) {
           await killStrayProfileProcesses(dir);
           await fsp.rm(dir, { recursive: true, force: true });
