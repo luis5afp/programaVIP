@@ -24,7 +24,39 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
 const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.47/userFLEX-Session-Manager-0.3.47-Setup.exe';
-const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'Pro'];
+const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'STREAMING', 'Pro'];
+
+const STREAMING_HOSTS = [
+  'netflix.com',
+  'disneyplus.com',
+  'max.com',
+  'hbomax.com',
+  'primevideo.com',
+  'hulu.com',
+  'peacocktv.com',
+  'paramountplus.com',
+  'tv.apple.com',
+  'crunchyroll.com',
+  'tubitv.com',
+  'pluto.tv',
+  'vix.com',
+  'discoveryplus.com',
+];
+
+function isStreamingUrl(value: string | null | undefined) {
+  try {
+    const host = new URL(String(value || '')).hostname.replace(/^www\./i, '').toLowerCase();
+    return STREAMING_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+function profileCategory(profile: Pick<Profile, 'platform' | 'url'>) {
+  const category = String(profile.platform || '').trim();
+  if (category.toLowerCase() === 'streaming' || isStreamingUrl(profile.url)) return 'STREAMING';
+  return category;
+}
 
 const BROWSER_ENGINE_HELP: Record<BrowserEngine, string> = {
   'chrome-native': 'Usa Chrome instalado o el Chrome nativo autorizado. Es la opción recomendada para perfiles Google y para el uso normal.',
@@ -49,7 +81,7 @@ const STORAGE_STRATEGY_HELP: Record<StorageStrategy, string> = {
   'local-persistent': 'Conserva el estado solamente en el perfil local de la PC del cliente. No crea un snapshot portable para otras instalaciones.',
   'cookies-only': 'Importa únicamente cookies. Puede ser suficiente en sitios simples, pero algunas webs modernas también necesitan Local Storage, Session Storage o IndexedDB.',
   'portable-first-party': 'Restaura cookies, Local Storage, Session Storage e IndexedDB. Es el snapshot más completo para trasladar el estado de una sesión web.',
-  'netflix-local-device': 'Política especial para Netflix: combina cookies administradas con almacenamiento local propio del dispositivo.',
+  'netflix-local-device': 'Política STREAMING: combina cookies administradas con almacenamiento local propio de cada dispositivo. Evita copiar o borrar identidad local de servicios como Netflix.',
 };
 
 const NETWORK_STRATEGY_HELP: Record<NetworkStrategy, string> = {
@@ -75,7 +107,7 @@ const STORAGE_STRATEGY_LABEL: Record<StorageStrategy, string> = {
   'local-persistent': 'Persistencia local',
   'cookies-only': 'Solo cookies',
   'portable-first-party': 'Snapshot completo',
-  'netflix-local-device': 'Netflix local',
+  'netflix-local-device': 'Streaming local',
 };
 
 const NETWORK_STRATEGY_LABEL: Record<NetworkStrategy, string> = {
@@ -347,8 +379,13 @@ export function ProfilesView() {
       || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
     setBrowserEngine(current?.browser_engine || 'chrome-native');
     setAuthStrategy(initialAuth);
-    setStorageStrategy(current?.storage_strategy
-      || (initialAuth === 'manual' || initialAuth === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'));
+    const currentCategory = current ? profileCategory(current) : '';
+    setStorageStrategy(
+      currentCategory === 'STREAMING' && initialAuth !== 'manual' && initialAuth !== 'credential-autofill'
+        ? 'netflix-local-device'
+        : current?.storage_strategy
+          || (initialAuth === 'manual' || initialAuth === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
+    );
     setNetworkStrategy(current?.network_strategy || 'auto');
     setExtensionStrategy(current?.extension_strategy || (initialAuth === 'manual' ? 'guard-only' : 'custom'));
     setSelectedPlanIds(current ? planIdsFor(current.id) : []);
@@ -545,17 +582,26 @@ export function ProfilesView() {
         setSuccess(wasEditing ? 'Guardando cambios del perfil…' : 'Guardando nuevo perfil…');
       }
 
+      const requestedCategory = String(form.get('category') || '').trim();
+      const streamingCategory = requestedCategory.toLowerCase() === 'streaming' || isStreamingUrl(profileUrlValue);
+      const savedCategory = streamingCategory ? 'STREAMING' : requestedCategory || null;
+      const savedStorageStrategy: StorageStrategy = streamingCategory
+        && authStrategy !== 'manual'
+        && authStrategy !== 'credential-autofill'
+        ? 'netflix-local-device'
+        : storageStrategy;
+
       const input = {
         name: label,
         url: profileUrlValue,
-        platform: String(form.get('category') || '').trim() || null,
+        platform: savedCategory,
         image_url: finalImageUrl,
         tags: [label],
         enabled: String(form.get('enabled')) === 'true',
         session_mode: (authStrategy === 'manual' ? 'manual-login' : 'managed-first-party') as SessionMode,
         browser_engine: browserEngine,
         auth_strategy: authStrategy,
-        storage_strategy: storageStrategy,
+        storage_strategy: savedStorageStrategy,
         network_strategy: networkStrategy,
         extension_strategy: extensionStrategy,
       };
@@ -854,7 +900,7 @@ export function ProfilesView() {
   const currentProxyId = current ? defaultProxyId(current.id) : null;
   const currentState = current ? stateFor(current.id) : null;
   const categoryOptions = Array.from(new Map(
-    [...DEFAULT_CATEGORIES, ...profiles.map((profile) => profile.platform || '').filter(Boolean)]
+    [...DEFAULT_CATEGORIES, ...profiles.map((profile) => profileCategory(profile)).filter(Boolean)]
       .map((name) => [normalizeSearchValue(String(name)), String(name).trim()]),
   ).values());
   const normalizedSearch = normalizeSearchValue(searchQuery.trim());
@@ -863,7 +909,7 @@ export function ProfilesView() {
         const proxyName = proxies.find((proxy) => proxy.id === defaultProxyId(profile.id))?.name || '';
         const profilePlanIds = planIdsFor(profile.id);
         const planNames = plans.filter((plan) => profilePlanIds.includes(plan.id)).map((plan) => plan.name);
-        const searchable = [profileLabel(profile), profile.name, profile.url, profile.platform || '', proxyName, ...planNames, ...(profile.tags || [])]
+        const searchable = [profileLabel(profile), profile.name, profile.url, profileCategory(profile), proxyName, ...planNames, ...(profile.tags || [])]
           .join(' ');
         return normalizeSearchValue(searchable).includes(normalizedSearch);
       })
@@ -955,7 +1001,7 @@ export function ProfilesView() {
                         <Badge tone={profile.enabled ? 'ok' : 'bad'}>{profile.enabled ? 'Activo' : 'Inactivo'}</Badge>
                       </div>
                       <div className="profile-compact-meta">
-                        <Badge tone={profile.platform ? 'neutral' : 'warn'}>{profile.platform || 'Sin categoría'}</Badge>
+                        <Badge tone={profileCategory(profile) ? 'neutral' : 'warn'}>{profileCategory(profile) || 'Sin categoría'}</Badge>
                         <Badge tone={profilePlanIds.length > 0 ? 'neutral' : 'warn'}>
                           {profilePlanIds.length === 0
                             ? 'Sin plan'
@@ -1385,16 +1431,16 @@ export function ProfilesView() {
             <Field
               label="Categoría"
               className="span-2"
-              help="Escoge una categoría existente o escribe un nombre nuevo. Las categorías nuevas aparecerán automáticamente en userFLOW cuando el plan tenga al menos un perfil de esa categoría."
+              help="STREAMING activa automáticamente almacenamiento local por dispositivo para snapshots e híbridos. Netflix y otros servicios compatibles también se reconocen por dominio para corregir perfiles ya guardados."
             >
               <input
                 className="input"
                 name="category"
                 list="profile-category-options"
-                defaultValue={current?.platform || 'Chat'}
+                defaultValue={current ? profileCategory(current) || 'Chat' : 'Chat'}
                 required
                 maxLength={80}
-                placeholder="Chat, Imagen, Video..."
+                placeholder="Chat, Imagen, Video, STREAMING..."
               />
               <datalist id="profile-category-options">
                 {categoryOptions.map((categoryName) => <option value={categoryName} key={categoryName} />)}
@@ -1619,7 +1665,7 @@ export function ProfilesView() {
                 <option value="local-persistent" title={STORAGE_STRATEGY_HELP['local-persistent']}>Solo estado persistente del cliente</option>
                 <option value="cookies-only" title={STORAGE_STRATEGY_HELP['cookies-only']}>Importar solo cookies</option>
                 <option value="portable-first-party" title={STORAGE_STRATEGY_HELP['portable-first-party']}>Cookies + Local/Session Storage + IndexedDB</option>
-                <option value="netflix-local-device" title={STORAGE_STRATEGY_HELP['netflix-local-device']}>Netflix: cookies + storage local del dispositivo</option>
+                <option value="netflix-local-device" title={STORAGE_STRATEGY_HELP['netflix-local-device']}>STREAMING: cookies + storage local del dispositivo</option>
               </select>
             </Field>
 
