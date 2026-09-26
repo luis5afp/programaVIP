@@ -52,6 +52,21 @@ assert.match(
 );
 assert.match(
   main,
+  /inspection\?\.netflixHouseholdRestriction === true\) return false/,
+  'Netflix Household restriction must not be reported as an expired authentication session',
+);
+assert.match(
+  state,
+  /netflixHouseholdRestriction/,
+  'runtime inspection must identify the official Netflix Household restriction separately',
+);
+assert.match(
+  engine,
+  /preserveDeviceLocalState[\s\S]{0,700}sessionMarker = null/,
+  'Netflix device-local authorization must survive central snapshot generation changes',
+);
+assert.match(
+  main,
   /result\?\.profileState === 'persistent-reuse'[\s\S]{0,900}forceRestore: true/,
   'a stale persisted profile must retry once from the server snapshot',
 );
