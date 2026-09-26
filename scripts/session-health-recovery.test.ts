@@ -52,8 +52,8 @@ assert.match(
 );
 assert.match(
   main,
-  /inspection\?\.netflixHouseholdRestriction === true\) return false/,
-  'Netflix Household restriction must not be reported as an expired authentication session',
+  /inspection\?\.netflixHouseholdRestriction === true \|\| inspection\?\.streamingAccessRestriction === true\) return false/,
+  'STREAMING device/household restrictions must not be reported as expired authentication sessions',
 );
 assert.match(
   state,
@@ -61,9 +61,19 @@ assert.match(
   'runtime inspection must identify the official Netflix Household restriction separately',
 );
 assert.match(
+  state,
+  /streamingAccessRestriction/,
+  'runtime inspection must identify device restrictions for STREAMING profiles separately from login failure',
+);
+assert.match(
+  engine,
+  /streamingProfile:[\s\S]{0,180}storageStrategy === 'netflix-local-device'/,
+  'the browser inspector must receive STREAMING policy from the effective runtime',
+);
+assert.match(
   engine,
   /preserveDeviceLocalState[\s\S]{0,700}sessionMarker = null/,
-  'Netflix device-local authorization must survive central snapshot generation changes',
+  'STREAMING device-local authorization must survive central snapshot generation changes',
 );
 assert.match(
   main,
