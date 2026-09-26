@@ -105,12 +105,14 @@ function isGoogleAuthCookieName(name) {
 async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
   const netflixTarget = isNetflixTarget(target);
   const flowTarget = isGoogleFlowTarget(target);
-  if (!netflixTarget && !flowTarget) return;
+  if (!netflixTarget && !flowTarget) return { provider: null, ok: true, missing: [], rotated: [] };
 
   const client = await page.createCDPSession();
   try {
-    const result = await client.send('Storage.getCookies');
-    const installedCookies = Array.isArray(result?.cookies) ? result.cookies : [];
+    const readInstalled = async () => {
+      const result = await client.send('Storage.getCookies');
+      return Array.isArray(result?.cookies) ? result.cookies : [];
+    };
 
     if (netflixTarget) {
       const expected = new Map(
@@ -119,43 +121,67 @@ async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
           .filter((cookie) => ['netflixid', 'securenetflixid'].includes(String(cookie.name || '').toLowerCase()))
           .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
       );
-      if (expected.size) {
-        const installed = new Map(
+
+      let installedCookies = await readInstalled();
+      let installed = new Map(
+        installedCookies
+          .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+          .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
+      );
+
+      // Netflix can rotate NetflixId/SecureNetflixId immediately on the first
+      // authenticated navigation. The new values are valid and must not be
+      // treated as a failed restore merely because they differ from the
+      // captured snapshot. Give Chrome/Netflix a short window to settle and
+      // verify presence, while the caller later verifies the real page state.
+      for (let attempt = 0; attempt < 3 && expected.size > 0; attempt += 1) {
+        const missingNow = [...expected.keys()].filter((name) => !String(installed.get(name) || ''));
+        if (!missingNow.length) break;
+        await delay(700);
+        installedCookies = await readInstalled();
+        installed = new Map(
           installedCookies
             .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
             .map((cookie) => [String(cookie.name || '').toLowerCase(), String(cookie.value ?? '')]),
         );
-        const invalid = [];
-        for (const [name, expectedValue] of expected) {
-          const installedValue = installed.get(name);
-          if (!installedValue || installedValue !== expectedValue) invalid.push(name);
-        }
-        if (invalid.length) {
-          throw new Error(`Chrome no pudo conservar exactamente las cookies de autenticación de Netflix: ${invalid.join(', ')}.`);
-        }
       }
+
+      const missing = [...expected.keys()].filter((name) => !String(installed.get(name) || ''));
+      const rotated = [...expected.entries()]
+        .filter(([name, expectedValue]) => {
+          const current = String(installed.get(name) || '');
+          return Boolean(current) && current !== expectedValue;
+        })
+        .map(([name]) => name);
+
+      return {
+        provider: 'netflix',
+        ok: missing.length === 0,
+        missing,
+        rotated,
+      };
     }
 
-    if (flowTarget) {
-      const expectedNames = new Set(
-        capturedCookies
-          .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
-          .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
-          .map((cookie) => String(cookie.name || '').toLowerCase()),
-      );
-      if (expectedNames.size) {
-        const installedNames = new Set(
-          installedCookies
-            .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
-            .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
-            .map((cookie) => String(cookie.name || '').toLowerCase()),
-        );
-        const overlap = [...expectedNames].some((name) => installedNames.has(name));
-        if (!overlap) {
-          throw new Error('Chrome no pudo conservar las cookies de autenticación de Google Flow.');
-        }
-      }
-    }
+    const expectedNames = new Set(
+      capturedCookies
+        .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
+        .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
+        .map((cookie) => String(cookie.name || '').toLowerCase()),
+    );
+    const installedCookies = await readInstalled();
+    const installedNames = new Set(
+      installedCookies
+        .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname) || isGoogleAccountsDomain(cookie?.domain))
+        .filter((cookie) => isGoogleAuthCookieName(cookie?.name) && String(cookie?.value ?? ''))
+        .map((cookie) => String(cookie.name || '').toLowerCase()),
+    );
+    const overlap = expectedNames.size === 0 || [...expectedNames].some((name) => installedNames.has(name));
+    return {
+      provider: 'google-flow',
+      ok: overlap,
+      missing: overlap ? [] : [...expectedNames],
+      rotated: [],
+    };
   } finally {
     await client.detach().catch(() => null);
   }
@@ -828,7 +854,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
     // Only now load the real application. Browser-owned profile state is in
     // place before its first-party scripts start.
     await page.goto(target.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await verifyFirstPartyAuthCookies(page, target, cookies);
+    const cookieVerification = await verifyFirstPartyAuthCookies(page, target, cookies);
 
     const finalPages = await browser.pages();
     for (const extra of finalPages) {
@@ -843,6 +869,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
       indexedDbTotal: Number(indexedDb?.total || 0),
       storagePolicy: effectiveStorageStrategy,
       pageUrl: page.url(),
+      cookieVerification,
     };
   } finally {
     await browser.disconnect().catch(() => null);
