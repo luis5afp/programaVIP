@@ -71,31 +71,26 @@ jobs:
           set -euo pipefail
           EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
           MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
-          echo "Validating published desktop releases: userFLOW v$EXPECTED_USERFLOW · Session Manager >= v$MIN_SESSION_MANAGER..."
+          echo "Validating published desktop runtimes: userFLOW v$EXPECTED_USERFLOW in R2 · Session Manager >= v$MIN_SESSION_MANAGER..."
 
-          client_code="000"
           sm_code="000"
+          client_version=""
           for attempt in $(seq 1 30); do
-            client_code="$(curl --silent --output /tmp/client-release.json --write-out '%{http_code}' \
-              --header "Authorization: Bearer ${{ github.token }}" \
-              --header 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/client-v$EXPECTED_USERFLOW")"
-            sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}' \
-              --header "Authorization: Bearer ${{ github.token }}" \
-              --header 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
+            client_json="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache'               "https://userflex-admin.luis5afp.workers.dev/api/client-update/latest?ts=$attempt" || true)"
+            client_version="$(CLIENT_JSON="$client_json" node -e "try{const v=JSON.parse(process.env.CLIENT_JSON||'{}');process.stdout.write(String(v.version||''))}catch{}")"
+            sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}'               --header "Authorization: Bearer ${{ github.token }}"               --header 'Accept: application/vnd.github+json'               "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
 
-            if [ "$client_code" = "200" ] && [ "$sm_code" = "200" ]; then
-              echo "Desktop release prerequisites are published."
+            if [ "$client_version" = "$EXPECTED_USERFLOW" ] && [ "$sm_code" = "200" ]; then
+              echo "Desktop runtime prerequisites are published."
               break
             fi
 
             if [ "$attempt" -eq 30 ]; then
-              echo "Required desktop release is missing after waiting. userFLOW-http=$client_code session-manager-http=$sm_code" >&2
+              echo "Required desktop runtime is missing after waiting. userFLOW-r2=$client_version session-manager-http=$sm_code" >&2
               exit 1
             fi
 
-            echo "Desktop release still publishing (attempt $attempt/30). userFLOW-http=$client_code session-manager-http=$sm_code"
+            echo "Desktop runtime still publishing (attempt $attempt/30). userFLOW-r2=$client_version session-manager-http=$sm_code"
             sleep 10
           done
 
