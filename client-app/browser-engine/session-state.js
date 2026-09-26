@@ -737,11 +737,20 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
       const currentHost = String(location.hostname || '').toLowerCase();
       const googleAccounts = currentHost === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(currentHost);
       const flowSignedOut = targetHostname === 'flow.google.com' && (googleAccounts || loginActionVisible);
+      const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const netflixHouseholdRestriction = (targetHostname === 'netflix.com' || targetHostname.endsWith('.netflix.com'))
+        && (
+          pageText.includes('no forma parte del hogar con netflix')
+          || pageText.includes('not part of the netflix household')
+          || pageText.includes('ver temporalmente')
+          || pageText.includes('watch temporarily')
+        );
       return {
         currentUrl: href,
         loginLikeUrl: flowSignedOut
           || /(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
         flowSignedOut,
+        netflixHouseholdRestriction,
         usernameFieldVisible: Boolean(username),
         passwordFieldVisible: Boolean(password),
         usernameFilled: Boolean(username && String(username.value || '').length > 0),
@@ -753,6 +762,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
       currentUrl: page.url(),
       loginLikeUrl: /accounts\.google\.|(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(page.url()),
       flowSignedOut: targetHostname === 'flow.google.com' && /accounts\.google\./i.test(page.url()),
+      netflixHouseholdRestriction: false,
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       usernameFilled: false,
