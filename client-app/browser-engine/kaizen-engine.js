@@ -619,6 +619,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       debugPort: entry.debugPort,
       profileUrl: entry.profile.url,
       extensionStrategy: entry.runtime?.extensionStrategy || 'custom',
+      streamingProfile: String(entry.profile?.platform || '').trim().toLowerCase() === 'streaming'
+        || entry.runtime?.storageStrategy === 'netflix-local-device',
     });
   }
 
