@@ -97,13 +97,13 @@ assert.match(
 );
 assert.match(
   engine,
-  /const sessionVersionMatches = !forceRestore[\s\S]{0,260}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
-  'a local managed profile must only reuse the exact central snapshot generation',
+  /const sessionVersionMatches = !forceRestore[\s\S]{0,320}preserveDeviceLocalState[\s\S]{0,180}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
+  'STREAMING local state may outlive a central snapshot generation while other managed profiles still require an exact version match',
 );
 assert.match(
   engine,
-  /const generationMatches = \(!snapshotManaged[\s\S]{0,180}Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
-  'an already-open managed browser must also be replaced when the central snapshot generation changes',
+  /const generationMatches = \(!snapshotManaged[\s\S]{0,180}preserveDeviceLocalState[\s\S]{0,180}Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
+  'an already-open STREAMING browser must remain open across central snapshot changes until a real access failure occurs',
 );
 assert.match(
   state,
