@@ -130,7 +130,7 @@ assert.match(
 assert.match(runtime, /function isOpenAiProfile/);
 assert.match(
   runtime,
-  /openAiSnapshot[\s\S]{0,260}storageStrategy: openAiSnapshot \? 'cookies-only' : requestedStorage/,
+  /openAiSnapshot[\s\S]{0,420}const effectiveStorage = openAiSnapshot[\s\S]{0,80}\? 'cookies-only'/,
   'ChatGPT/OpenAI snapshot profiles must restore cookies only',
 );
 
