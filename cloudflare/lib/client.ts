@@ -5,6 +5,7 @@ import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usa
 import { managedExtensionsForProfiles } from './extensions';
 import {
   credentialAuthentication,
+  effectiveProfileCategory,
   proxyRuntimeUsable,
   runtimeForProfile,
   selectNetworkPolicy,
@@ -134,7 +135,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
         id: profile.id,
         name: profile.name,
         url: profile.url,
-        platform: profile.platform,
+        platform: effectiveProfileCategory(profile),
         imageUrl: profileImageUrl(profile),
         imageVersion: profile.updated_at || null,
         tags: profile.tags || [],
@@ -371,7 +372,7 @@ export async function clientLaunch(
       id: profile.id,
       name: profile.name,
       url: profile.url,
-      platform: profile.platform,
+      platform: effectiveProfileCategory(profile),
       imageUrl: profileImageUrl(profile),
       imageVersion: profile.updated_at || null,
       tags: profile.tags || [],
