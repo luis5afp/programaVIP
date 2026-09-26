@@ -666,7 +666,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   }
 }
 
-export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionStrategy = 'custom' }) {
+export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionStrategy = 'custom', streamingProfile = false }) {
   const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
   const profileTarget = new URL(profileUrl);
   const targetHostname = String(profileTarget.hostname || '').toLowerCase();
@@ -689,7 +689,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         helperVisible: false,
       };
     }
-    return await page.evaluate(({ targetHostname }) => {
+    return await page.evaluate(({ targetHostname, streamingProfile }) => {
       const visible = (element) => {
         try {
           const style = getComputedStyle(element);
@@ -745,12 +745,23 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
           || pageText.includes('ver temporalmente')
           || pageText.includes('watch temporarily')
         );
+      const streamingAccessRestriction = Boolean(
+        streamingProfile
+        && (
+          netflixHouseholdRestriction
+          || /(?:no forma parte|not part of)[^.!?]{0,120}(?:hogar|household|cuenta|account)/i.test(pageText)
+          || /(?:ver|watch)[^.!?]{0,50}(?:temporalmente|temporarily)/i.test(pageText)
+          || /(?:demasiados|too many)[^.!?]{0,60}(?:dispositivos|devices)/i.test(pageText)
+          || /(?:dispositivo|device)[^.!?]{0,90}(?:hogar|household|l[ií]mite|limit)/i.test(pageText)
+        )
+      );
       return {
         currentUrl: href,
         loginLikeUrl: flowSignedOut
           || /(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
         flowSignedOut,
         netflixHouseholdRestriction,
+        streamingAccessRestriction,
         usernameFieldVisible: Boolean(username),
         passwordFieldVisible: Boolean(password),
         usernameFilled: Boolean(username && String(username.value || '').length > 0),
@@ -758,11 +769,12 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         loginActionVisible,
         helperVisible: Boolean(document.getElementById('__userflex-credential-helper')),
       };
-    }, { targetHostname }).catch(() => ({
+    }, { targetHostname, streamingProfile: streamingProfile === true }).catch(() => ({
       currentUrl: page.url(),
       loginLikeUrl: /accounts\.google\.|(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(page.url()),
       flowSignedOut: targetHostname === 'flow.google.com' && /accounts\.google\./i.test(page.url()),
       netflixHouseholdRestriction: false,
+      streamingAccessRestriction: false,
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       usernameFilled: false,
