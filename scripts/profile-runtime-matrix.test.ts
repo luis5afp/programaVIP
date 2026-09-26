@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   credentialAuthentication,
+  effectiveProfileCategory,
   proxyRuntimeUsable,
   runtimeForProfile,
   sameOrigin,
@@ -47,6 +48,36 @@ const netflixCookiesOnly = runtimeForProfile({
   network_strategy: 'auto',
 });
 assert.equal(netflixCookiesOnly.storageStrategy, 'cookies-only');
+
+assert.equal(effectiveProfileCategory({
+  url: 'https://www.netflix.com/browse',
+  platform: 'PELICULA',
+}), 'STREAMING');
+
+const streamingCategorySnapshot = runtimeForProfile({
+  url: 'https://example-streaming.invalid/',
+  platform: 'STREAMING',
+  session_mode: 'managed-first-party',
+  auth_strategy: 'cookie-snapshot',
+  storage_strategy: 'portable-first-party',
+  network_strategy: 'auto',
+});
+assert.equal(
+  streamingCategorySnapshot.storageStrategy,
+  'netflix-local-device',
+  'STREAMING category must keep browser/device storage local while replaying the managed session',
+);
+assert.equal(effectiveProfileCategory({ url: 'https://example-streaming.invalid/', platform: 'streaming' }), 'STREAMING');
+
+const disneySnapshot = runtimeForProfile({
+  url: 'https://www.disneyplus.com/',
+  platform: 'Video',
+  session_mode: 'managed-first-party',
+  auth_strategy: 'hybrid',
+  storage_strategy: 'portable-first-party',
+});
+assert.equal(disneySnapshot.storageStrategy, 'netflix-local-device');
+assert.equal(effectiveProfileCategory({ url: 'https://www.disneyplus.com/', platform: 'Video' }), 'STREAMING');
 
 const autofill = runtimeForProfile({
   session_mode: 'managed-first-party',
