@@ -76,6 +76,21 @@ assert.match(
   'STREAMING device-local authorization must survive central snapshot generation changes',
 );
 assert.match(
+  engine,
+  /restorePolicyMatches[\s\S]{0,180}preserveDeviceLocalState/,
+  'old STREAMING markers must migrate without forcing a destructive restore',
+);
+assert.match(
+  engine,
+  /\(runtimeChanged \|\| snapshotChanged\) && !preserveDeviceLocalState/,
+  'catalog refresh must never delete STREAMING browser storage for metadata or snapshot changes',
+);
+assert.match(
+  engine,
+  /!preserveDeviceLocalState && markerPolicy !== desiredPolicy/,
+  'legacy portable markers must be accepted when a saved profile becomes STREAMING',
+);
+assert.match(
   main,
   /result\?\.profileState === 'persistent-reuse'[\s\S]{0,900}forceRestore: true/,
   'a stale persisted profile must retry once from the server snapshot',
