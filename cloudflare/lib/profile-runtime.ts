@@ -37,6 +37,15 @@ function isOpenAiProfile(profile: any) {
   }
 }
 
+function isNetflixProfile(profile: any) {
+  try {
+    const host = new URL(String(profile?.url || '')).hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'netflix.com' || host.endsWith('.netflix.com');
+  } catch {
+    return false;
+  }
+}
+
 export function runtimeForProfile(profile: any): ProfileRuntime {
   const authStrategy = (profile?.auth_strategy
     || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual')) as AuthStrategy;
@@ -44,12 +53,18 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
     || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
       ? 'local-persistent'
       : 'portable-first-party')) as StorageStrategy;
-  const openAiSnapshot = isOpenAiProfile(profile)
-    && (authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid');
+  const snapshotManaged = authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
+  const openAiSnapshot = isOpenAiProfile(profile) && snapshotManaged;
+  const netflixSnapshot = isNetflixProfile(profile) && snapshotManaged;
+  const effectiveStorage = openAiSnapshot
+    ? 'cookies-only'
+    : netflixSnapshot && requestedStorage !== 'cookies-only'
+      ? 'netflix-local-device'
+      : requestedStorage;
   return {
     browserEngine: (profile?.browser_engine || 'chrome-native') as BrowserEngine,
     authStrategy,
-    storageStrategy: openAiSnapshot ? 'cookies-only' : requestedStorage,
+    storageStrategy: effectiveStorage,
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
