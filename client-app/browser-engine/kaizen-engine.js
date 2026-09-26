@@ -333,10 +333,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
     const desiredRuntimeKey = runtimeKey(runtime);
     const desiredExtensionKey = managedExtensionKey(profile);
+    const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
+    const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
       const generationMatches = (!snapshotManaged
+        || preserveDeviceLocalState
         || (desiredSessionVersion > 0 && Number(existing.sessionVersion || 0) === desiredSessionVersion))
         && String(existing.credentialRevision || '') === desiredCredentialRevision
         && String(existing.runtimeKey || '') === desiredRuntimeKey
@@ -369,29 +372,33 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await killStrayProfileProcesses(userDataDir);
 
     let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
-    const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
-    const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    // Managed snapshots are versioned contracts. Most providers receive a clean
-    // Chromium profile when the central generation changes. Netflix is the
-    // deliberate exception: its browser/device state belongs to this PC and may
-    // contain legitimate household/temporary-access authorization established
-    // directly on this device. Never erase that local state merely because the
-    // administrator renewed the central authentication snapshot.
+    // Managed snapshots are versioned contracts. STREAMING is the deliberate
+    // exception: once this PC has a working local browser/device state, keep it
+    // across central snapshot generations. The newer central snapshot is only
+    // replayed after a real access failure triggers forceRestore. This avoids
+    // replacing a legitimately authorized device identity while still allowing
+    // recovery when the local session genuinely stops working.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
-      && desiredSessionVersion > 0
-      && Number(sessionMarker?.version || 0) === desiredSessionVersion
       && sessionMarker?.profileId === profile.id
-      && restorePolicyMatches;
+      && restorePolicyMatches
+      && (
+        preserveDeviceLocalState
+        || (
+          desiredSessionVersion > 0
+          && Number(sessionMarker?.version || 0) === desiredSessionVersion
+        )
+      );
 
     if (snapshotManaged && !sessionVersionMatches) {
       if (preserveDeviceLocalState) {
         await fsp.mkdir(userDataDir, { recursive: true });
-        // Ignore the stale marker so the new central auth snapshot is replayed,
-        // while keeping Netflix's device-local browser storage intact.
+        // This path is reached only for forceRestore or an incompatible marker.
+        // Preserve device-local browser storage, but allow the central snapshot
+        // to be replayed as a recovery attempt.
         sessionMarker = null;
       } else {
         await resetProfileDirectory(userDataDir);
