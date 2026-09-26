@@ -1588,7 +1588,7 @@ function snapshotManagedProfile(profile) {
 }
 
 function inspectionNeedsLogin(inspection) {
-  if (inspection?.netflixHouseholdRestriction === true) return false;
+  if (inspection?.netflixHouseholdRestriction === true || inspection?.streamingAccessRestriction === true) return false;
   return Boolean(
     inspection
     && (
