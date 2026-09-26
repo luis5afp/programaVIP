@@ -37,13 +37,41 @@ function isOpenAiProfile(profile: any) {
   }
 }
 
-function isNetflixProfile(profile: any) {
+function profileHost(profile: any) {
   try {
-    const host = new URL(String(profile?.url || '')).hostname.replace(/^www\./i, '').toLowerCase();
-    return host === 'netflix.com' || host.endsWith('.netflix.com');
+    return new URL(String(profile?.url || '')).hostname.replace(/^www\./i, '').toLowerCase();
   } catch {
-    return false;
+    return '';
   }
+}
+
+function isNetflixProfile(profile: any) {
+  const host = profileHost(profile);
+  return host === 'netflix.com' || host.endsWith('.netflix.com');
+}
+
+const STREAMING_HOSTS = [
+  'netflix.com',
+  'disneyplus.com',
+  'max.com',
+  'hbomax.com',
+  'primevideo.com',
+  'hulu.com',
+  'peacocktv.com',
+  'paramountplus.com',
+  'tv.apple.com',
+  'crunchyroll.com',
+  'tubitv.com',
+  'pluto.tv',
+  'vix.com',
+  'discoveryplus.com',
+];
+
+function isStreamingProfile(profile: any) {
+  const category = String(profile?.platform || '').trim().toLowerCase();
+  if (category === 'streaming') return true;
+  const host = profileHost(profile);
+  return STREAMING_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
 export function runtimeForProfile(profile: any): ProfileRuntime {
@@ -55,10 +83,10 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
       : 'portable-first-party')) as StorageStrategy;
   const snapshotManaged = authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
   const openAiSnapshot = isOpenAiProfile(profile) && snapshotManaged;
-  const netflixSnapshot = isNetflixProfile(profile) && snapshotManaged;
+  const streamingSnapshot = isStreamingProfile(profile) && snapshotManaged;
   const effectiveStorage = openAiSnapshot
     ? 'cookies-only'
-    : netflixSnapshot && requestedStorage !== 'cookies-only'
+    : streamingSnapshot && requestedStorage !== 'cookies-only'
       ? 'netflix-local-device'
       : requestedStorage;
   return {
