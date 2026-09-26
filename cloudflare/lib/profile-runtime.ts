@@ -74,6 +74,12 @@ function isStreamingProfile(profile: any) {
   return STREAMING_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+export function effectiveProfileCategory(profile: any): string | null {
+  if (isStreamingProfile(profile)) return 'STREAMING';
+  const category = String(profile?.platform || '').trim();
+  return category || null;
+}
+
 export function runtimeForProfile(profile: any): ProfileRuntime {
   const authStrategy = (profile?.auth_strategy
     || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual')) as AuthStrategy;
