@@ -26,6 +26,28 @@ const snapshot = runtimeForProfile({
 assert.equal(snapshotAuthentication(snapshot), true);
 assert.equal(credentialAuthentication(snapshot), false);
 
+const netflixSnapshot = runtimeForProfile({
+  url: 'https://www.netflix.com/browse',
+  session_mode: 'managed-first-party',
+  auth_strategy: 'cookie-snapshot',
+  storage_strategy: 'portable-first-party',
+  network_strategy: 'auto',
+});
+assert.equal(
+  netflixSnapshot.storageStrategy,
+  'netflix-local-device',
+  'existing and future Netflix snapshots must always use device-local web storage while reusing managed auth cookies',
+);
+
+const netflixCookiesOnly = runtimeForProfile({
+  url: 'https://www.netflix.com/browse',
+  session_mode: 'managed-first-party',
+  auth_strategy: 'cookie-snapshot',
+  storage_strategy: 'cookies-only',
+  network_strategy: 'auto',
+});
+assert.equal(netflixCookiesOnly.storageStrategy, 'cookies-only');
+
 const autofill = runtimeForProfile({
   session_mode: 'managed-first-party',
   auth_strategy: 'credential-autofill',
