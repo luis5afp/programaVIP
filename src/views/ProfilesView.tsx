@@ -225,6 +225,7 @@ export function ProfilesView() {
   const captureRetryInFlight = useRef(false);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
   const [authStrategy, setAuthStrategy] = useState<AuthStrategy>('manual');
+  const [categoryValue, setCategoryValue] = useState('Chat');
   const [storageStrategy, setStorageStrategy] = useState<StorageStrategy>('local-persistent');
   const [networkStrategy, setNetworkStrategy] = useState<NetworkStrategy>('client-direct');
   const [extensionStrategy, setExtensionStrategy] = useState<ExtensionStrategy>('guard-only');
@@ -379,7 +380,8 @@ export function ProfilesView() {
       || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
     setBrowserEngine(current?.browser_engine || 'chrome-native');
     setAuthStrategy(initialAuth);
-    const currentCategory = current ? profileCategory(current) : '';
+    const currentCategory = current ? profileCategory(current) : 'Chat';
+    setCategoryValue(currentCategory || 'Chat');
     setStorageStrategy(
       currentCategory === 'STREAMING' && initialAuth !== 'manual' && initialAuth !== 'credential-autofill'
         ? 'netflix-local-device'
@@ -407,6 +409,7 @@ export function ProfilesView() {
     setCookieInspecting(false);
     setBrowserEngine('chrome-native');
     setAuthStrategy('manual');
+    setCategoryValue('Chat');
     setStorageStrategy('local-persistent');
     setNetworkStrategy('client-direct');
     setExtensionStrategy('guard-only');
@@ -1422,6 +1425,12 @@ export function ProfilesView() {
                   setCookieInspection(null);
                 }}
                 onBlur={() => {
+                  if (isStreamingUrl(profileUrl)) {
+                    setCategoryValue('STREAMING');
+                    if (authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid') {
+                      setStorageStrategy('netflix-local-device');
+                    }
+                  }
                   if (cookieFile && !cookieInspecting) void inspectCookieFile(cookieFile, profileUrl);
                 }}
                 required
@@ -1437,7 +1446,15 @@ export function ProfilesView() {
                 className="input"
                 name="category"
                 list="profile-category-options"
-                defaultValue={current ? profileCategory(current) || 'Chat' : 'Chat'}
+                value={categoryValue}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setCategoryValue(value);
+                  if (value.trim().toLowerCase() === 'streaming'
+                    && (authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid')) {
+                    setStorageStrategy('netflix-local-device');
+                  }
+                }}
                 required
                 maxLength={80}
                 placeholder="Chat, Imagen, Video, STREAMING..."
@@ -1640,8 +1657,13 @@ export function ProfilesView() {
               <select className="select" value={authStrategy} title={AUTH_STRATEGY_HELP[authStrategy]} onChange={(event) => {
                 const value = event.target.value as AuthStrategy;
                 setAuthStrategy(value);
-                if (value === 'manual' || value === 'credential-autofill') setStorageStrategy('local-persistent');
-                else if (storageStrategy === 'local-persistent') setStorageStrategy('portable-first-party');
+                if (value === 'manual' || value === 'credential-autofill') {
+                  setStorageStrategy('local-persistent');
+                } else if (categoryValue.trim().toLowerCase() === 'streaming' || isStreamingUrl(profileUrl)) {
+                  setStorageStrategy('netflix-local-device');
+                } else if (storageStrategy === 'local-persistent') {
+                  setStorageStrategy('portable-first-party');
+                }
                 if (value === 'manual') setExtensionStrategy('guard-only');
                 else if (extensionStrategy === 'guard-only') setExtensionStrategy('custom');
               }}>
