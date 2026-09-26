@@ -370,13 +370,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
     const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
+    const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    // Managed snapshots are versioned contracts. A local Chromium profile may
-    // keep rolling state only while it represents the exact central generation.
-    // When an administrator renews vN -> vN+1, every client must adopt vN+1
-    // instead of silently reusing stale Google/Flow cookies from an older marker.
+    // Managed snapshots are versioned contracts. Most providers receive a clean
+    // Chromium profile when the central generation changes. Netflix is the
+    // deliberate exception: its browser/device state belongs to this PC and may
+    // contain legitimate household/temporary-access authorization established
+    // directly on this device. Never erase that local state merely because the
+    // administrator renewed the central authentication snapshot.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
       && desiredSessionVersion > 0
@@ -385,8 +388,15 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       && restorePolicyMatches;
 
     if (snapshotManaged && !sessionVersionMatches) {
-      await resetProfileDirectory(userDataDir);
-      sessionMarker = null;
+      if (preserveDeviceLocalState) {
+        await fsp.mkdir(userDataDir, { recursive: true });
+        // Ignore the stale marker so the new central auth snapshot is replayed,
+        // while keeping Netflix's device-local browser storage intact.
+        sessionMarker = null;
+      } else {
+        await resetProfileDirectory(userDataDir);
+        sessionMarker = null;
+      }
     } else {
       await fsp.mkdir(userDataDir, { recursive: true });
     }
