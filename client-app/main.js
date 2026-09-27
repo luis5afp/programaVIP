@@ -1737,8 +1737,8 @@ async function openProfile(profileId) {
       }
 
       // A login-looking page can be transient while a service redirects or
-      // hydrates. Confirm it repeatedly before revoking the original central
-      // generation. This check runs only when actual client access is failing.
+      // hydrates. Confirm it repeatedly before reporting an access warning.
+      // The server keeps the stored snapshot and never revokes it automatically.
       for (let attempt = 0; attempt < 2 && inspectionNeedsLogin(inspection); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
         inspection = await engine.inspect(clientId, profile.id).catch(() => inspection);
