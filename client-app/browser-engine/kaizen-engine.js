@@ -110,6 +110,16 @@ function managedExtensionKey(profile) {
     : '';
 }
 
+function browserGuardRevision(resourcesPath = process.resourcesPath) {
+  try {
+    const manifestPath = path.join(resourcesPath, 'browser-engine', 'extension', 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    return String(manifest?.version || 'unknown');
+  } catch {
+    return 'unknown';
+  }
+}
+
 function effectiveStoragePolicy(target, requested) {
   const host = String(target?.hostname || '').toLowerCase();
   const netflix = host === 'netflix.com' || host.endsWith('.netflix.com');
@@ -378,7 +388,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
     const desiredRuntimeKey = runtimeKey(runtime);
-    const desiredExtensionKey = managedExtensionKey(profile);
     const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
     const streamingProfile = String(profile?.platform || '').trim().toLowerCase() === 'streaming'
       || runtime.storageStrategy === 'netflix-local-device';
@@ -402,6 +411,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const thirdPartyStreamingProvider = blockedStreamingDomHosts.some((domain) =>
       host === domain || host.endsWith(`.${domain}`));
     const streamingDomEnabled = streamingProfile && !thirdPartyStreamingProvider;
+    const guardRevision = browserGuardRevision();
+    const desiredExtensionKey = [
+      managedExtensionKey(profile),
+      `guard:${guardRevision}`,
+      `streaming-dom:${streamingDomEnabled ? '1' : '0'}`,
+    ].join('|');
     // Browser-profile persistence is global, but STREAMING additionally keeps
     // using a still-working local session across central snapshot generations.
     // Other categories may replay a newer snapshot on top of the same User Data
@@ -724,7 +739,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         autofill,
         restore,
         deviceLocalAuthMigration,
-        streamingDomController,
+        streamingDomController: {
+          ...streamingDomController,
+          guardRevision,
+        },
       };
     } catch (error) {
       entry.closing = true;
