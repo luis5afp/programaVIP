@@ -385,10 +385,30 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         previousRuntime.browserEngine !== nextRuntime.browserEngine
         || previousRuntime.networkStrategy !== nextRuntime.networkStrategy
       ));
-    const invalidateSnapshot = originChanged || snapshotPolicyChanged;
+    const snapshotConfigChanged = originChanged || snapshotPolicyChanged;
     const clearCredentials = originChanged
       || (previousRuntime.authStrategy !== 'manual' && nextRuntime.authStrategy === 'manual');
-    if (invalidateSnapshot) patch.session_ready = false;
+
+    // Profile edits must never delete a stored cookie snapshot automatically.
+    // If a current or archived generation exists and the resulting runtime still
+    // uses snapshots, keep the profile marked ready. The administrator can clear
+    // the session explicitly through DELETE /api/profiles/:id/session.
+    let preservedSnapshot = false;
+    if (nextSnapshot) {
+      const [currentSessionRows, archivedSessionRows] = await Promise.all([
+        sb(
+          env,
+          `userflex_profile_sessions?select=session_version&profile_id=eq.${profileId}&limit=1`,
+        ).catch(() => []),
+        sb(
+          env,
+          `userflex_profile_session_versions?select=session_version&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
+        ).catch(() => []),
+      ]);
+      preservedSnapshot = Number(currentSessionRows?.[0]?.session_version || 0) > 0
+        || Number(archivedSessionRows?.[0]?.session_version || 0) > 0;
+      if (preservedSnapshot) patch.session_ready = true;
+    }
 
     const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
@@ -397,12 +417,6 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     });
     if (!rows?.[0]) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 
-    if (invalidateSnapshot) {
-      await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
-        method: 'DELETE',
-        headers: { Prefer: 'return=minimal' },
-      });
-    }
     if (clearCredentials) {
       // Never carry credentials into a different origin, and do not retain
       // managed secrets after the profile returns to fully manual auth.
@@ -413,12 +427,13 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     }
 
     await touchProfileClients(env, profileId);
-    if (!invalidateSnapshot && nextSnapshot && rows[0]?.enabled !== false) {
+    if (nextSnapshot && rows[0]?.enabled !== false) {
       await requestKeeperChecks(env, [profileId], 'profile-update');
     }
     await audit(env, request, 'admin', admin.userId, 'profile.update', 'profile', profileId, {
       originChanged,
-      snapshotInvalidated: invalidateSnapshot,
+      snapshotConfigChanged,
+      snapshotPreserved: preservedSnapshot,
       credentialsCleared: clearCredentials,
     });
     return json(rows[0]);
