@@ -66,6 +66,31 @@ assert.match(
   'runtime inspection must identify device restrictions for STREAMING profiles separately from login failure',
 );
 assert.match(
+  main,
+  /profile\?\.runtime\?\.deviceLocalAuth === true\) return false/,
+  'STREAMING device-local auth must bypass managed snapshot recovery in userFLOW',
+);
+assert.match(
+  engine,
+  /if \(runtime\.deviceLocalAuth === true\) return false/,
+  'browser engine must never restore a central snapshot for device-local STREAMING auth',
+);
+assert.match(
+  state,
+  /clearTransferredNetflixAuthCookies/,
+  'legacy Netflix profiles must have a one-time migration path that removes only transferred authentication cookies',
+);
+assert.match(
+  state,
+  /\['netflixid', 'securenetflixid'\]/,
+  'Netflix migration must preserve device-local state and clear only transferred auth cookies',
+);
+assert.match(
+  engine,
+  /deviceLocalAuthMigrationNeeded[\s\S]{0,500}clearTransferredNetflixAuthCookies/,
+  'existing Netflix profiles must migrate once without deleting their browser identity',
+);
+assert.match(
   engine,
   /streamingProfile:[\s\S]{0,180}storageStrategy === 'netflix-local-device'/,
   'the browser inspector must receive STREAMING policy from the effective runtime',
