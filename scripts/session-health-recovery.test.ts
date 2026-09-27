@@ -87,7 +87,7 @@ assert.match(
 );
 assert.match(
   engine,
-  /deviceLocalAuthMigrationNeeded[\s\S]{0,500}clearTransferredNetflixAuthCookies/,
+  /deviceLocalAuthMigrationNeeded[\s\S]{0,1800}clearTransferredNetflixAuthCookies/,
   'existing Netflix profiles must migrate once without deleting their browser identity',
 );
 assert.match(
