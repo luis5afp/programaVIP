@@ -219,6 +219,7 @@ export interface ProfileValidation {
     storageStrategy: StorageStrategy;
     networkStrategy: NetworkStrategy;
     extensionStrategy: ExtensionStrategy;
+    deviceLocalAuth?: boolean;
   };
   clientId: string | null;
   ready: boolean;
