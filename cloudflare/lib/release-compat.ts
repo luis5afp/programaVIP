@@ -1,4 +1,4 @@
-export const MIN_USERFLOW_VERSION = '0.3.66';
+export const MIN_USERFLOW_VERSION = '0.3.67';
 export const MIN_SESSION_MANAGER_VERSION = '0.3.47';
 
 function versionParts(value: string) {
