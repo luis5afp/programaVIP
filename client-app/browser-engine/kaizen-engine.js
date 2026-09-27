@@ -338,10 +338,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const desiredRuntimeKey = runtimeKey(runtime);
     const desiredExtensionKey = managedExtensionKey(profile);
     const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
-    // All normal user profiles are persistent by policy. STREAMING still gets
-    // provider-specific storage behavior, but no profile is automatically
-    // erased because of a program/admin/runtime/snapshot update.
-    const preserveDeviceLocalState = snapshotManaged;
+    // Browser-profile persistence is global, but STREAMING additionally keeps
+    // using a still-working local session across central snapshot generations.
+    // Other categories may replay a newer snapshot on top of the same User Data
+    // without deleting the browser profile.
+    const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
