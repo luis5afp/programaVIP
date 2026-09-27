@@ -111,15 +111,14 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
-    // Only known third-party streaming providers use device-local auth.
-    // Project-owned pages may use the STREAMING category while receiving
-    // administrator-managed cookie/session snapshots normally.
+    // Known third-party STREAMING providers preserve device-bound browser storage
+    // locally, but cookie-snapshot/hybrid profiles still receive administrator
+    // cookies. deviceLocalAuth means "keep local device state", not "disable cookies".
     deviceLocalAuth: streamingProviderSnapshot,
   };
 }
 
 export function snapshotAuthentication(runtime: ProfileRuntime) {
-  if (runtime.deviceLocalAuth === true) return false;
   return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
 }
 
