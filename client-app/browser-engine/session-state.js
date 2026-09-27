@@ -409,6 +409,132 @@ export async function connectKaizenBrowser(debugPort) {
   });
 }
 
+function streamingDomBootstrap() {
+  if (window.__userflexStreamingPersistentController) return;
+  window.__userflexStreamingPersistentController = true;
+
+  const HIDDEN_CLASS = 'userflex-streaming-hidden';
+  const STYLE_ID = '__userflex-streaming-dom-style';
+
+  const isOwnedStreamingPage = () => Boolean(
+    document.documentElement?.getAttribute('data-userflex-owned-streaming') === 'true'
+    || document.querySelector('meta[name="userflex-owned-streaming"][content="true"]')
+    || ['localhost', '127.0.0.1', '::1'].includes(String(location.hostname || '').toLowerCase())
+    || String(location.hostname || '').toLowerCase().endsWith('.userflex.test')
+  );
+
+  const selectorList = () => {
+    const declared = String(
+      document.querySelector('meta[name="userflex-streaming-overlay-selectors"]')?.getAttribute('content') || ''
+    )
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return [
+      '[data-userflex-streaming-overlay]',
+      '[data-userflex-test="streaming-restriction"]',
+      '.userflex-streaming-overlay',
+      '.userflex-streaming-test-restriction',
+      ...declared,
+    ];
+  };
+
+  const ensureStyle = () => {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `.${HIDDEN_CLASS}{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}`;
+    (document.head || document.documentElement)?.appendChild(style);
+  };
+
+  const process = () => {
+    if (!isOwnedStreamingPage()) return { enabled: false, overlays: 0, hidden: 0 };
+    ensureStyle();
+    const selectors = selectorList();
+    if (!selectors.length) return { enabled: true, overlays: 0, hidden: 0 };
+
+    let overlays = 0;
+    let hidden = 0;
+    for (const selector of selectors) {
+      let matches = [];
+      try { matches = Array.from(document.querySelectorAll(selector)); } catch { continue; }
+      for (const overlay of matches) {
+        if (!(overlay instanceof HTMLElement)) continue;
+        overlays += 1;
+        if (overlay.dataset.userflexStreamingPrepared === '1') continue;
+        overlay.dataset.userflexStreamingPrepared = '1';
+
+        const autoHide = String(overlay.getAttribute('data-userflex-auto-hide') || 'true').toLowerCase() !== 'false';
+        if (autoHide) {
+          overlay.classList.add(HIDDEN_CLASS);
+          hidden += 1;
+          continue;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.userflexStreamingClose = '1';
+        button.textContent = 'Cerrar mensaje';
+        button.addEventListener('click', () => overlay.classList.add(HIDDEN_CLASS));
+        overlay.appendChild(button);
+      }
+    }
+    window.__userflexStreamingLastResult = { enabled: true, overlays, hidden };
+    return window.__userflexStreamingLastResult;
+  };
+
+  const start = () => {
+    process();
+    if (window.__userflexStreamingPersistentObserver) return;
+    const root = document.documentElement || document;
+    const observer = new MutationObserver(() => process());
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        'data-userflex-owned-streaming',
+        'data-userflex-streaming-overlay',
+        'data-userflex-auto-hide',
+        'class',
+      ],
+    });
+    window.__userflexStreamingPersistentObserver = observer;
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+    setTimeout(start, 0);
+  } else {
+    start();
+  }
+}
+
+export async function installStreamingDomController({ debugPort }) {
+  const browser = await connectKaizenBrowser(debugPort);
+  try {
+    const pages = await browser.pages();
+    for (const page of pages) {
+      await page.evaluateOnNewDocument(streamingDomBootstrap).catch(() => null);
+      await page.evaluate(streamingDomBootstrap).catch(() => null);
+    }
+
+    if (!browser.__userflexStreamingTargetHook) {
+      browser.__userflexStreamingTargetHook = true;
+      browser.on('targetcreated', async (target) => {
+        if (target.type() !== 'page') return;
+        const page = await target.page().catch(() => null);
+        if (!page) return;
+        await page.evaluateOnNewDocument(streamingDomBootstrap).catch(() => null);
+        await page.evaluate(streamingDomBootstrap).catch(() => null);
+      });
+    }
+    return { installed: true, pages: pages.length };
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
 export async function installCredentialAutofill({ debugPort, profileUrl, credentials, extensionStrategy = 'custom' }) {
   if (!credentials?.username || !credentials?.password) return { installed: false };
   const target = new URL(profileUrl);
