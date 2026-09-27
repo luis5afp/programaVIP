@@ -731,7 +731,7 @@ export async function adminProfileSessionRoutes(
     for (const row of archivedSessions || []) profileIds.add(row.profile_id);
     for (const row of keepers || []) profileIds.add(row.profile_id);
     const credentialsById = new Map((credentials || []).map((row: any) => [row.profile_id, row]));
-    const sessionsById = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
+    const sessionsById = new Map<string, any>((sessions || []).map((row: any) => [String(row.profile_id), row]));
     for (const row of archivedSessions || []) {
       const key = String(row?.profile_id || '');
       const current = sessionsById.get(key);
