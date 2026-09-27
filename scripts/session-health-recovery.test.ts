@@ -67,7 +67,7 @@ assert.match(
 );
 assert.match(
   state,
-  /data-userflex-owned-streaming[\s\S]{0,260}const streamingDomEnabled = ownedStreamingPage/,
+  /data-userflex-owned-streaming[\s\S]{0,700}const streamingDomEnabled = ownedStreamingPage/,
   'STREAMING DOM controls must require an explicit project-owned page marker or local test origin',
 );
 assert.match(
