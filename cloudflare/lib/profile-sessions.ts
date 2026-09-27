@@ -1627,8 +1627,56 @@ export async function managedProfileCredentials(env: Env, profileId: string) {
 }
 
 export async function managedSessionMaterial(env: Env, profileId: string) {
-  const row = await sessionRow(env, profileId);
-  if (!row || !row.material_ciphertext || !row.material_iv || Number(row.session_version || 0) < 1) return null;
+  let row = await sessionRow(env, profileId);
+
+  // Compatibility recovery: older profile edits could remove the current row
+  // even though an encrypted previous generation was still preserved in the
+  // version archive. Recover the newest archived generation automatically so
+  // existing profiles resume cookie delivery without requiring a new capture.
+  if (!row?.material_ciphertext || !row?.material_iv || Number(row?.session_version || 0) < 1) {
+    const archivedRows = await sb(
+      env,
+      `userflex_profile_session_versions?select=profile_id,session_version,material_ciphertext,material_iv,material_key_version,expected_egress_ip,captured_at,validated_at&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
+    ).catch(() => []);
+    const archived = archivedRows?.[0] || null;
+    if (!archived?.material_ciphertext || !archived?.material_iv || Number(archived?.session_version || 0) < 1) return null;
+
+    const now = new Date().toISOString();
+    await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({
+        profile_id: profileId,
+        session_version: Number(archived.session_version),
+        status: 'ready',
+        material_ciphertext: archived.material_ciphertext,
+        material_iv: archived.material_iv,
+        material_key_version: archived.material_key_version || null,
+        expected_egress_ip: archived.expected_egress_ip || null,
+        last_captured_at: archived.captured_at || null,
+        last_validated_at: archived.validated_at || null,
+        updated_at: now,
+      }),
+    });
+    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ session_ready: true, updated_at: now }),
+    }).catch(() => null);
+
+    row = {
+      profile_id: profileId,
+      session_version: Number(archived.session_version),
+      status: 'ready',
+      material_ciphertext: archived.material_ciphertext,
+      material_iv: archived.material_iv,
+      material_key_version: archived.material_key_version || null,
+      expected_egress_ip: archived.expected_egress_ip || null,
+      last_captured_at: archived.captured_at || null,
+      last_validated_at: archived.validated_at || null,
+      updated_at: now,
+    };
+  }
 
   // Compatibility repair: older builds could mark a valid stored snapshot as
   // needs_auth after an automatic client/keeper check. The encrypted cookies
@@ -1644,6 +1692,12 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
       }),
     }).catch(() => null);
   }
+
+  await sb(env, `userflex_profiles?id=eq.${profileId}&session_ready=eq.false`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ session_ready: true, updated_at: new Date().toISOString() }),
+  }).catch(() => null);
 
   const raw = await decryptProxy(env, row.material_ciphertext, row.material_iv);
   let material: unknown;
