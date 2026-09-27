@@ -320,7 +320,29 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   }
 
   if (path === '/api/profiles' && method === 'GET') {
-    return json(await sb(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,created_at,updated_at&order=name.asc'));
+    const [profiles, sessions, archivedSessions] = await Promise.all([
+      sb(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,created_at,updated_at&order=name.asc'),
+      sb(env, 'userflex_profile_sessions?select=profile_id,session_version'),
+      sb(env, 'userflex_profile_session_versions?select=profile_id,session_version&order=session_version.desc'),
+    ]);
+    const currentVersions = new Map<string, number>();
+    for (const row of sessions || []) {
+      currentVersions.set(String(row.profile_id), Number(row.session_version || 0));
+    }
+    const archivedVersions = new Map<string, number>();
+    for (const row of archivedSessions || []) {
+      const key = String(row.profile_id || '');
+      if (!key || archivedVersions.has(key)) continue;
+      archivedVersions.set(key, Number(row.session_version || 0));
+    }
+    return json((profiles || []).map((profile: any) => {
+      const hasStoredSnapshot = Number(currentVersions.get(String(profile.id)) || 0) > 0
+        || Number(archivedVersions.get(String(profile.id)) || 0) > 0;
+      return {
+        ...profile,
+        session_ready: profile.session_ready === true || hasStoredSnapshot,
+      };
+    }));
   }
 
   if (path === '/api/profiles' && method === 'POST') {
