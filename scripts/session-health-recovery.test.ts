@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const engine = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
 const state = readFileSync(new URL('../client-app/browser-engine/session-state.js', import.meta.url), 'utf8');
+const guard = readFileSync(new URL('../client-app/browser-engine/extension/content.js', import.meta.url), 'utf8');
 const capture = readFileSync(new URL('../session-manager/browser-engine/capture-state.js', import.meta.url), 'utf8');
 const sessions = readFileSync(new URL('../cloudflare/lib/profile-sessions.ts', import.meta.url), 'utf8');
 const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
@@ -66,39 +67,44 @@ assert.match(
   'runtime inspection must identify device restrictions for STREAMING profiles separately from login failure',
 );
 assert.match(
-  state,
-  /data-userflex-owned-streaming[\s\S]{0,700}const streamingDomEnabled = ownedStreamingPage/,
-  'STREAMING DOM controls must require an explicit project-owned page marker or local test origin',
-);
-assert.match(
-  state,
-  /data-userflex-streaming-overlay[\s\S]{0,260}userflex-streaming-overlay/,
-  'STREAMING pages must support the project overlay contract',
-);
-assert.match(
-  state,
-  /data-userflex-auto-hide[\s\S]{0,220}userflex-streaming-hidden/,
-  'STREAMING overlays must support automatic CSS hiding',
-);
-assert.match(
-  state,
-  /meta\[name="userflex-streaming-overlay-selectors"\][\s\S]{0,260}declaredSelectors/,
-  'project-owned STREAMING pages may declare their overlay selectors without code changes in userFLOW',
-);
-assert.match(
-  state,
-  /export async function installStreamingDomController/,
-  'STREAMING pages must install a dedicated persistent DOM controller',
-);
-assert.match(
-  state,
-  /evaluateOnNewDocument\(streamingDomBootstrap\)/,
-  'STREAMING DOM controller must survive full page navigations and reloads',
+  engine,
+  /globalThis\.USERFLEX_STREAMING_DOM/,
+  'STREAMING DOM capability must be passed to the per-profile browser extension',
 );
 assert.match(
   engine,
-  /installStreamingDomController\(\{ debugPort \}\)/,
-  'browser engine must install STREAMING DOM control before the final profile navigation',
+  /blockedStreamingDomHosts[\s\S]{0,900}thirdPartyStreamingProvider/,
+  'known third-party streaming providers must stay outside project DOM automation',
+);
+assert.match(
+  guard,
+  /USERFLEX_STREAMING_DOM !== true/,
+  'STREAMING DOM script must activate from the per-profile extension flag',
+);
+assert.match(
+  guard,
+  /MutationObserver/,
+  'STREAMING DOM script must keep watching dynamic page changes',
+);
+assert.match(
+  guard,
+  /setInterval\(process, 750\)/,
+  'STREAMING DOM script must re-enforce hiding when project pages rebuild their UI',
+);
+assert.match(
+  guard,
+  /TEXT_PATTERN[\s\S]{0,1000}ver\\s\+temporalmente/,
+  'STREAMING DOM script must detect the simulated device/household message in project pages',
+);
+assert.match(
+  guard,
+  /style\.setProperty\('display', 'none', 'important'\)/,
+  'STREAMING DOM script must force-hide matched project overlays',
+);
+assert.match(
+  state,
+  /dataset\.userflexStreamingDom === 'active'/,
+  'runtime inspection must read STREAMING DOM diagnostics from the browser extension',
 );
 assert.match(
   main,
