@@ -329,6 +329,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await fsp.cp(source, target, { recursive: true });
     const safeStrategy = ['guard-only', 'main', 'google', 'custom'].includes(strategy) ? strategy : 'guard-only';
     const streamingDomEnabled = options.streamingDomEnabled === true;
+    const pageScriptsEnabled = options.pageScriptsEnabled !== false;
+    if (!pageScriptsEnabled) {
+      const manifestPath = path.join(target, 'manifest.json');
+      const manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+      manifest.content_scripts = [];
+      await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    }
     await fsp.writeFile(
       path.join(target, 'strategy.js'),
       [
@@ -411,6 +418,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const thirdPartyStreamingProvider = blockedStreamingDomHosts.some((domain) =>
       host === domain || host.endsWith(`.${domain}`));
     const streamingDomEnabled = streamingProfile && !thirdPartyStreamingProvider;
+    const providerPageIsolation = streamingProfile && thirdPartyStreamingProvider;
+    const pageCredentialHelperEnabled = credentialHelperEnabled && !providerPageIsolation;
     const guardRevision = browserGuardRevision();
     const streamingDomController = {
       installed: streamingDomEnabled,
@@ -421,20 +430,24 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       browserGuard: {
         name: 'userFLEX Browser Guard',
         version: guardRevision,
-        contentScripts: ['strategy.js', 'content.js'],
+        contentScripts: providerPageIsolation ? [] : ['strategy.js', 'content.js'],
         backgroundScript: 'background.js',
         streamingDomEnabled,
+        providerPageIsolation,
       },
-      managedExtensions: (Array.isArray(managedExtensions) ? managedExtensions : []).map((item) => ({
-        name: String(item?.name || ''),
-        version: String(item?.version || ''),
-      })),
-      credentialHelper: credentialHelperEnabled,
+      managedExtensions: providerPageIsolation
+        ? []
+        : (Array.isArray(managedExtensions) ? managedExtensions : []).map((item) => ({
+            name: String(item?.name || ''),
+            version: String(item?.version || ''),
+          })),
+      credentialHelper: pageCredentialHelperEnabled,
     };
     const desiredExtensionKey = [
       managedExtensionKey(profile),
       `guard:${guardRevision}`,
       `streaming-dom:${streamingDomEnabled ? '1' : '0'}`,
+      `provider-page-isolation:${providerPageIsolation ? '1' : '0'}`,
     ].join('|');
     // Browser-profile persistence is global, but STREAMING additionally keeps
     // using a still-working local session across central snapshot generations.
@@ -587,11 +600,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       clientId,
       profile.id,
       runtime.extensionStrategy,
-      { streamingDomEnabled },
+      {
+        streamingDomEnabled,
+        pageScriptsEnabled: !providerPageIsolation,
+      },
     );
-    const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
-      .map((item) => item?.dir)
-      .filter((dir) => typeof dir === 'string');
+    const managedExtensionDirs = providerPageIsolation
+      ? []
+      : (Array.isArray(managedExtensions) ? managedExtensions : [])
+          .map((item) => item?.dir)
+          .filter((dir) => typeof dir === 'string');
     const extensionDirs = [extensionDir, ...managedExtensionDirs].filter(Boolean);
     const capturedUserAgent = snapshotManaged && typeof delivery?.material?.browser?.userAgent === 'string'
       ? delivery.material.browser.userAgent
@@ -726,7 +744,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       // Install the helper only after the definitive managed tab exists.
       // Injecting it before Chrome finishes startup can bind it to a restored
       // stale tab instead of the tab the user actually sees.
-      if (credentialHelperEnabled) {
+      if (pageCredentialHelperEnabled) {
         autofill = await installCredentialAutofill({
           debugPort,
           profileUrl: profile.url,
