@@ -88,6 +88,42 @@ function isNetflixTarget(target) {
   return hostname === 'netflix.com' || hostname.endsWith('.netflix.com');
 }
 
+export async function clearTransferredNetflixAuthCookies({ debugPort, profileUrl }) {
+  const target = new URL(profileUrl);
+  if (!isNetflixTarget(target)) return { cleared: 0, names: [] };
+
+  const browser = await connectKaizenBrowser(debugPort);
+  try {
+    const pages = await browser.pages();
+    const page = pages.find((item) => /^https?:/i.test(item.url())) || pages[0] || await browser.newPage();
+    const client = await page.createCDPSession();
+    try {
+      const result = await client.send('Storage.getCookies');
+      const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
+      const selected = cookies.filter((cookie) =>
+        cookieDomainMatchesHost(cookie, target.hostname)
+        && ['netflixid', 'securenetflixid'].includes(String(cookie?.name || '').toLowerCase())
+      );
+      let cleared = 0;
+      for (const cookie of selected) {
+        try {
+          await client.send('Network.deleteCookies', {
+            name: String(cookie.name),
+            domain: String(cookie.domain || ''),
+            path: String(cookie.path || '/'),
+          });
+          cleared += 1;
+        } catch {}
+      }
+      return { cleared, names: selected.map((cookie) => String(cookie.name || '')) };
+    } finally {
+      await client.detach().catch(() => null);
+    }
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
 function isGoogleFlowTarget(target) {
   return String(target?.hostname || '').toLowerCase() === 'flow.google.com';
 }
