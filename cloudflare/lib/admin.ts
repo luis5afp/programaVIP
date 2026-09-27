@@ -48,7 +48,7 @@ function profileChoice(value: unknown, allowed: readonly string[], fallback: str
 
 function runtimeDefaults(body: any) {
   const legacyManaged = body?.session_mode === 'managed-first-party';
-  const auth = profileChoice(body?.auth_strategy, AUTH_STRATEGIES, legacyManaged ? 'cookie-snapshot' : 'manual', 'INVALID_AUTH_STRATEGY');
+  const auth = profileChoice(body?.auth_strategy, AUTH_STRATEGIES, legacyManaged ? 'cookie-snapshot' : 'cookie-snapshot', 'INVALID_AUTH_STRATEGY');
   return {
     browser_engine: profileChoice(body?.browser_engine, BROWSER_ENGINES, 'chrome-native', 'INVALID_BROWSER_ENGINE'),
     auth_strategy: auth,
