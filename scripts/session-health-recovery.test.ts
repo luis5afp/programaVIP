@@ -49,6 +49,21 @@ assert.match(
   'portable session restore must return cookie diagnostics without aborting the browser launch',
 );
 assert.match(
+  state,
+  /export async function ensureManagedSnapshotCookies/,
+  'userFLOW must repair administrator-managed cookies that disappear from a local profile',
+);
+assert.match(
+  state,
+  /Existing cookies win[\s\S]{0,260}only repair cookies that disappeared entirely/,
+  'cookie repair must preserve provider-rotated local cookie values and install only missing cookies',
+);
+assert.match(
+  engine,
+  /ensureManagedSnapshotCookies\(\{[\s\S]{0,260}delivery\.material/,
+  'every managed launch must be able to re-apply missing administrator cookies',
+);
+assert.match(
   main,
   /inspectionNeedsLogin\(inspection\)/,
   'client launch must evaluate whether the managed session is still authenticated',
