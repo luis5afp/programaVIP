@@ -300,8 +300,13 @@ assert.match(
 );
 assert.match(
   sessions,
-  /if \(!row \|\| !row\.material_ciphertext \|\| !row\.material_iv \|\| Number\(row\.session_version \|\| 0\) < 1\) return null/,
-  'stored encrypted session material must remain deliverable regardless of legacy status flags',
+  /userflex_profile_session_versions\?select=profile_id,session_version,material_ciphertext,material_iv/,
+  'missing current session rows must recover the newest archived encrypted cookie generation',
+);
+assert.match(
+  sessions,
+  /session_ready: true/,
+  'recovering stored cookies must repair stale profile session_ready metadata',
 );
 assert.match(
   sessions,
@@ -322,6 +327,30 @@ assert.match(
   admin,
   /profileChoice\(body\?\.auth_strategy, AUTH_STRATEGIES, 'cookie-snapshot'/,
   'new profiles must default to administrator-managed cookie snapshots',
+);
+const profilePatchStart = admin.indexOf("if (profileMatch && method === 'PATCH')");
+const profilePatchEnd = admin.indexOf("if (profileMatch && method === 'DELETE')");
+const profilePatchBlock = admin.slice(profilePatchStart, profilePatchEnd);
+assert.ok(profilePatchStart >= 0 && profilePatchEnd > profilePatchStart);
+assert.doesNotMatch(
+  profilePatchBlock,
+  /userflex_profile_sessions[^\n]*[\s\S]{0,180}method: 'DELETE'/,
+  'editing a profile must never delete its stored cookie snapshot automatically',
+);
+assert.match(
+  profilePatchBlock,
+  /preservedSnapshot[\s\S]{0,1200}patch\.session_ready = true/,
+  'profile edits must keep session_ready true when a current or archived cookie generation exists',
+);
+assert.match(
+  client,
+  /archivedSessionMap/,
+  'catalog delivery must recognize archived snapshots when current metadata was lost',
+);
+assert.match(
+  client,
+  /hasStoredSnapshot[\s\S]{0,500}runtimeForProfile/,
+  'existing profiles with stored cookies must be treated as snapshot-managed even if legacy metadata says manual',
 );
 assert.doesNotMatch(
   client,
