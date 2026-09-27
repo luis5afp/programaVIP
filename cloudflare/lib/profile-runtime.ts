@@ -85,8 +85,12 @@ export function effectiveProfileCategory(profile: any): string | null {
 }
 
 export function runtimeForProfile(profile: any): ProfileRuntime {
-  const authStrategy = (profile?.auth_strategy
-    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual')) as AuthStrategy;
+  const hasStoredSnapshot = profile?.session_ready === true;
+  const configuredAuth = profile?.auth_strategy
+    || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+  const authStrategy = (hasStoredSnapshot && configuredAuth === 'manual'
+    ? 'cookie-snapshot'
+    : configuredAuth) as AuthStrategy;
   const requestedStorage = (profile?.storage_strategy
     || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
       ? 'local-persistent'
