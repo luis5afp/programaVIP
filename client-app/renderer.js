@@ -232,6 +232,7 @@ async function launchProfile(profile, card) {
         const builtInScripts = Array.isArray(diagnostics?.browserGuard?.contentScripts)
           ? diagnostics.browserGuard.contentScripts.join(' + ')
           : 'strategy.js + content.js';
+        const pageScriptsLabel = builtInScripts || 'ninguno';
         const backgroundScript = String(diagnostics?.browserGuard?.backgroundScript || 'background.js');
         const managed = Array.isArray(diagnostics?.managedExtensions)
           ? diagnostics.managedExtensions
@@ -245,7 +246,7 @@ async function launchProfile(profile, card) {
           : '';
 
         setStreamingNotice(
-          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts userFLOW: ${builtInScripts} + ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
+          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts dentro de la página: ${pageScriptsLabel} · Servicio de fondo: ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
         );
       }
     }
