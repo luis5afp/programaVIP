@@ -143,7 +143,7 @@ assert.match(
 );
 assert.match(
   main,
-  /Detection is[\s\S]{0,180}must never hide, click through, or bypass provider UI/,
+  /It never hides, clicks through, or bypasses provider UI/,
   'provider household/device UI must never be bypassed by userFLOW',
 );
 assert.doesNotMatch(
