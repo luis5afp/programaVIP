@@ -86,6 +86,21 @@ assert.match(
   'project-owned STREAMING pages may declare their overlay selectors without code changes in userFLOW',
 );
 assert.match(
+  state,
+  /export async function installStreamingDomController/,
+  'STREAMING pages must install a dedicated persistent DOM controller',
+);
+assert.match(
+  state,
+  /evaluateOnNewDocument\(streamingDomBootstrap\)/,
+  'STREAMING DOM controller must survive full page navigations and reloads',
+);
+assert.match(
+  engine,
+  /installStreamingDomController\(\{ debugPort \}\)/,
+  'browser engine must install STREAMING DOM control before the final profile navigation',
+);
+assert.match(
   main,
   /profile\?\.runtime\?\.deviceLocalAuth === true\) return false/,
   'STREAMING device-local auth must bypass managed snapshot recovery in userFLOW',
