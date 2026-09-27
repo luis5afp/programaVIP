@@ -217,14 +217,14 @@ async function launchProfile(profile, card) {
     const result = await window.userflex.launchProfile(profile.id);
     if (!result?.ok) {
       setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
-    } else if (result?.inspection?.streamingAccessRestriction === true) {
-      setStreamingNotice(
-        'STREAMING: la sesión está abierta, pero el proveedor requiere una verificación de dispositivo/Hogar. Completa la opción oficial de la página. Este aviso de userFLOW sí se puede cerrar con ×.',
-      );
     } else if (result?.inspection?.streamingTestHarness?.enabled === true) {
-      setStreamingNotice(
-        `STREAMING LAB activo: se detectaron ${Number(result.inspection.streamingTestHarness.overlays || 0)} overlays de prueba controlados. En el laboratorio sí puedes cerrarlos con CSS/JavaScript.`,
-      );
+      const overlays = Number(result.inspection.streamingTestHarness.overlays || 0);
+      const hidden = Number(result.inspection.streamingTestHarness.hidden || 0);
+      if (overlays > 0) {
+        setStreamingNotice(
+          `STREAMING: userFLOW procesó ${overlays} elemento(s) de interfaz y ocultó automáticamente ${hidden}. Puedes cerrar este aviso con ×.`,
+        );
+      }
     }
   } finally {
     launchingProfiles.delete(profile.id);
