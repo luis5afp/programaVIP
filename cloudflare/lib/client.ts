@@ -113,7 +113,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
       const profileProxy: any = profileProxyId ? proxyMap.get(profileProxyId) : null;
       const assignmentProxy: any = assignmentProxyId ? proxyMap.get(assignmentProxyId) : null;
       const hasCredentials = credentialProfileIds.has(String(profile.id));
-      const snapshotReady = profile.session_ready === true && session?.status === 'ready';
+      const snapshotReady = profile.session_ready === true && Number(session?.session_version || 0) > 0;
       const snapshotHealth = snapshotRequired
         ? managedSessionHealth(session, keeperMap.get(profile.id))
         : { usable: true, needsAttention: false, severity: 'ok', status: 'valid', reason: null, validatedAt: null, ageMs: null };
@@ -548,34 +548,24 @@ export async function clientSessionHealth(
   const sameCentralGeneration = current?.status === 'ready'
     && reportedVersion > 0
     && reportedVersion === currentVersion;
-  const revoked = !authenticated && confirmedFailure && sameCentralGeneration;
+  const warning = !authenticated && confirmedFailure && sameCentralGeneration;
 
-  // Validation is one-time. Successful client launches do not extend a timer
-  // or revalidate the snapshot. Only a confirmed real access failure revokes
-  // the exact central generation that the client tried to use.
-  if (revoked) {
-    await Promise.all([
-      sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready&session_version=eq.${currentVersion}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          status: 'needs_auth',
-          updated_at: now,
-        }),
+  // Stored cookies/snapshots are persistent administrator assets. A client-side
+  // access check may raise a warning, but it must never revoke, disable or stop
+  // delivery of that central generation automatically. Only an explicit admin
+  // action (replace/delete snapshot) may remove it.
+  if (warning) {
+    await sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        last_status: 'needs_admin',
+        last_error: reason,
+        last_check_at: now,
+        updated_at: now,
       }),
-      sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          last_status: 'needs_admin',
-          last_error: reason,
-          last_check_at: now,
-          updated_at: now,
-        }),
-      }).catch(() => null),
-    ]);
-    await touchProfileClients(env, profileId);
-    await audit(env, request, 'client', id.clientId, 'profile.session_revoked', 'profile', profileId, {
+    }).catch(() => null);
+    await audit(env, request, 'client', id.clientId, 'profile.session_warning', 'profile', profileId, {
       deviceId: id.deviceId,
       sessionVersion: currentVersion,
       source,
@@ -589,7 +579,8 @@ export async function clientSessionHealth(
     checkedAt: now,
     reportedVersion,
     currentVersion,
-    revoked,
+    revoked: false,
+    warning,
   });
 }
 
