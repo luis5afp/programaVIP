@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import {
+  clearTransferredNetflixAuthCookies,
   closeDevtoolsTargets,
   connectKaizenBrowser,
   installCredentialAutofill,
@@ -118,6 +119,28 @@ function effectiveStoragePolicy(target, requested) {
 
 function sessionMarkerPath(userDataDir) {
   return path.join(userDataDir, '.userflex-session.json');
+}
+
+function deviceLocalAuthMarkerPath(userDataDir) {
+  return path.join(userDataDir, '.userflex-device-local-auth-v1.json');
+}
+
+async function hasDeviceLocalAuthMigration(userDataDir) {
+  try {
+    const value = JSON.parse(await fsp.readFile(deviceLocalAuthMarkerPath(userDataDir), 'utf8'));
+    return value?.version === 1;
+  } catch {
+    return false;
+  }
+}
+
+async function markDeviceLocalAuthMigration(userDataDir, profile, detail = null) {
+  await fsp.writeFile(deviceLocalAuthMarkerPath(userDataDir), JSON.stringify({
+    version: 1,
+    profileId: profile?.id || null,
+    migratedAt: new Date().toISOString(),
+    detail,
+  }, null, 2), 'utf8');
 }
 
 async function readSessionMarker(userDataDir) {
@@ -393,7 +416,15 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const userDataDir = profileDir(clientId, profile.id);
     await killStrayProfileProcesses(userDataDir);
 
-    let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
+    const netflixTarget = target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com');
+    const deviceLocalMigrationNeeded = runtime.deviceLocalAuth === true
+      && netflixTarget
+      && hasPersistentBrowserState(userDataDir)
+      && !(await hasDeviceLocalAuthMigration(userDataDir));
+
+    let sessionMarker = (snapshotManaged || runtime.deviceLocalAuth === true)
+      ? await readSessionMarker(userDataDir)
+      : null;
     const localBrowserStatePresent = snapshotManaged && hasPersistentBrowserState(userDataDir);
     const localStateWithoutMarker = snapshotManaged && !sessionMarker && localBrowserStatePresent;
     const restorePolicyMatches = !snapshotManaged
@@ -552,6 +583,21 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
+      let deviceLocalAuthMigration = null;
+      if (deviceLocalMigrationNeeded) {
+        deviceLocalAuthMigration = await clearTransferredNetflixAuthCookies({
+          debugPort,
+          profileUrl: profile.url,
+        }).catch((error) => ({
+          cleared: 0,
+          names: [],
+          error: error?.message || String(error || 'migration failed'),
+        }));
+        await markDeviceLocalAuthMigration(userDataDir, profile, deviceLocalAuthMigration).catch(() => null);
+      } else if (runtime.deviceLocalAuth === true && netflixTarget) {
+        await markDeviceLocalAuthMigration(userDataDir, profile, { cleared: 0, names: [] }).catch(() => null);
+      }
+
       if (connection?.mode === 'proxy') {
         entry.publicIp = verifiedPublicIp || connection?.proxy?.publicIp || null;
       } else if (ephemeral === true) {
@@ -639,6 +685,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         runtime,
         autofill,
         restore,
+        deviceLocalAuthMigration,
       };
     } catch (error) {
       entry.closing = true;
