@@ -41,7 +41,7 @@ assert.match(deploy, /--retry 3 --retry-all-errors/);
 const rendererSource = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
 const indexSource = readFileSync(new URL('../client-app/index.html', import.meta.url), 'utf8');
 assert.match(rendererSource, /setStreamingNotice/);
-assert.match(rendererSource, /STREAMING LAB activo/);
+assert.match(rendererSource, /STREAMING: userFLOW procesó/);
 assert.match(indexSource, /id="streaming-notice"/);
 
 console.log('Cross-component reliability hardening: OK');
