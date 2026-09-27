@@ -1671,6 +1671,19 @@ async function openProfile(profileId) {
     let sessionRecovered = false;
     let fallbackRecovered = false;
     let activeDelivery = delivery;
+
+    // Device-local STREAMING sessions are not restored from central snapshots,
+    // but we still inspect the page so userFLOW can distinguish a provider
+    // household/device restriction from an authentication failure. Detection is
+    // read-only; userFLOW must never hide, click through, or bypass provider UI.
+    if (profile?.runtime?.deviceLocalAuth === true) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1800));
+        inspection = await engine.inspect(clientId, profile.id).catch(() => inspection);
+        if (inspection?.streamingAccessRestriction === true) break;
+      }
+    }
+
     if (snapshotManagedProfile(profile)) {
       const centralSessionVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
       inspection = await engine.inspect(clientId, profile.id).catch(() => null);
