@@ -11,6 +11,7 @@ import {
   connectKaizenBrowser,
   installCredentialAutofill,
   inspectRuntimeProfile,
+  installStreamingDomController,
   navigateBrowserHome,
   restorePortableSession,
 } from './session-state.js';
@@ -583,6 +584,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
+      const streamingProfile = String(profile?.platform || '').trim().toLowerCase() === 'streaming'
+        || runtime.storageStrategy === 'netflix-local-device';
+      let streamingDomController = null;
+      if (streamingProfile) {
+        streamingDomController = await installStreamingDomController({ debugPort }).catch((error) => ({
+          installed: false,
+          error: error?.message || String(error || 'STREAMING DOM controller failed'),
+        }));
+      }
+
       let deviceLocalAuthMigration = null;
       if (deviceLocalMigrationNeeded) {
         deviceLocalAuthMigration = await clearTransferredNetflixAuthCookies({
@@ -686,6 +697,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         autofill,
         restore,
         deviceLocalAuthMigration,
+        streamingDomController,
       };
     } catch (error) {
       entry.closing = true;
