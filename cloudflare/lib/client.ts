@@ -52,7 +52,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
 
   const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults, sessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
+  const [profiles, defaults, sessions, archivedSessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
     sb(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=in.(${ids})&enabled=eq.true`,
@@ -64,6 +64,10 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     sb(
       env,
       `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_validated_at&profile_id=in.(${ids})`,
+    ),
+    sb(
+      env,
+      `userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,validated_at&profile_id=in.(${ids})&order=session_version.desc`,
     ),
     sb(
       env,
@@ -94,6 +98,12 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
   const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
   const defaultProxyMap = new Map((defaults || []).map((row: any) => [row.profile_id, row.proxy_id]));
   const sessionMap = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
+  const archivedSessionMap = new Map<string, any>();
+  for (const row of archivedSessions || []) {
+    const key = String(row?.profile_id || '');
+    if (!key || archivedSessionMap.has(key)) continue;
+    archivedSessionMap.set(key, row);
+  }
   const keeperMap = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
   const assignmentMap = new Map((assignments || []).map((row: any) => [row.profile_id, row]));
   const credentialMap = new Map<string, any>((credentials || []).map((row: any) => [String(row.profile_id), row]));
@@ -103,17 +113,34 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     .map((profileId: string) => {
       const profile: any = profileMap.get(profileId);
       if (!profile) return null;
-      const runtime = runtimeForProfile(profile);
+      const currentSession: any = sessionMap.get(profile.id);
+      const archivedSession: any = archivedSessionMap.get(String(profile.id));
+      const currentVersion = Number(currentSession?.session_version || 0);
+      const archivedVersion = Number(archivedSession?.session_version || 0);
+      const hasStoredSnapshot = currentVersion > 0 || archivedVersion > 0;
+      const session: any = currentVersion > 0
+        ? currentSession
+        : archivedVersion > 0
+          ? {
+              profile_id: profile.id,
+              session_version: archivedVersion,
+              status: 'ready',
+              expected_egress_ip: archivedSession?.expected_egress_ip || null,
+              last_validated_at: archivedSession?.validated_at || null,
+            }
+          : currentSession;
+      const runtime = runtimeForProfile(hasStoredSnapshot
+        ? { ...profile, session_ready: true }
+        : profile);
       const snapshotRequired = snapshotAuthentication(runtime);
       const credentialsRequired = credentialAuthentication(runtime);
-      const session: any = sessionMap.get(profile.id);
       const assignment: any = assignmentMap.get(profile.id);
       const assignmentProxyId = assignment?.proxy_id ? String(assignment.proxy_id) : null;
       const profileProxyId = defaultProxyMap.get(profile.id) ? String(defaultProxyMap.get(profile.id)) : null;
       const profileProxy: any = profileProxyId ? proxyMap.get(profileProxyId) : null;
       const assignmentProxy: any = assignmentProxyId ? proxyMap.get(assignmentProxyId) : null;
       const hasCredentials = credentialProfileIds.has(String(profile.id));
-      const snapshotReady = profile.session_ready === true && Number(session?.session_version || 0) > 0;
+      const snapshotReady = hasStoredSnapshot;
       const snapshotHealth = snapshotRequired
         ? managedSessionHealth(session, keeperMap.get(profile.id))
         : { usable: true, needsAttention: false, severity: 'ok', status: 'valid', reason: null, validatedAt: null, ageMs: null };
@@ -199,7 +226,7 @@ export async function clientLaunch(
     );
   }
 
-  const [memberships, assignments, profiles, defaults, keepers] = await Promise.all([
+  const [memberships, assignments, profiles, defaults, keepers, currentSessions, archivedSessions] = await Promise.all([
     sb(
       env,
       `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
@@ -220,6 +247,14 @@ export async function clientLaunch(
       env,
       `userflex_session_keepers?select=profile_id,enabled,last_status,last_error&profile_id=eq.${profileId}&limit=1`,
     ),
+    sb(
+      env,
+      `userflex_profile_sessions?select=profile_id,session_version,status&profile_id=eq.${profileId}&limit=1`,
+    ),
+    sb(
+      env,
+      `userflex_profile_session_versions?select=profile_id,session_version&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
+    ),
   ]);
   if (!memberships?.[0]) {
     throw new HttpError(403, 'PROFILE_NOT_INCLUDED_IN_PLAN', 'Este perfil no está incluido en tu plan activo.');
@@ -228,10 +263,17 @@ export async function clientLaunch(
   const assignment = assignments?.[0] || null;
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
+  const currentSession = currentSessions?.[0] || null;
+  const archivedSession = archivedSessions?.[0] || null;
+  const hasStoredSnapshot = Number(currentSession?.session_version || 0) > 0
+    || Number(archivedSession?.session_version || 0) > 0;
+  const effectiveProfile = hasStoredSnapshot
+    ? { ...profile, session_ready: true }
+    : profile;
   const extensionMap = await managedExtensionsForProfiles(env, [profileId]);
   const managedExtensions = extensionMap.get(profileId) || [];
 
-  const runtime = runtimeForProfile(profile);
+  const runtime = runtimeForProfile(effectiveProfile);
   const snapshotRequired = snapshotAuthentication(runtime);
   const credentialsRequired = credentialAuthentication(runtime);
   const defaultProxyId = defaults?.[0]?.proxy_id || null;
@@ -290,7 +332,7 @@ export async function clientLaunch(
 
   if (snapshotRequired) {
     const session = await managedSessionMaterial(env, profileId);
-    if (!session || profile.session_ready !== true) {
+    if (!session) {
       throw new HttpError(409, 'MANAGED_SESSION_NOT_READY', 'Este perfil necesita una sesión capturada antes de abrirse.');
     }
     const sessionHealth = managedSessionHealth(
