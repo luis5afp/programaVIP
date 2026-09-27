@@ -102,6 +102,21 @@ assert.match(
 );
 assert.match(
   engine,
+  /function hasPersistentBrowserState\(userDataDir\)/,
+  'the browser engine must detect persistent local browser state independently of the userFLEX marker',
+);
+assert.match(
+  engine,
+  /const localStateWithoutMarker = snapshotManaged && !sessionMarker && localBrowserStatePresent/,
+  'a missing marker after an update must not cause a good local browser profile to be overwritten',
+);
+assert.match(
+  engine,
+  /localStateWithoutMarker[\s\S]{0,420}sessionVersionMatches/,
+  'existing local browser state must be tried before replaying the central snapshot',
+);
+assert.match(
+  engine,
   /Catalog\/admin changes may revoke access[\s\S]{0,360}await close\(clientId, item\.name, 'profile_revoked'\)/,
   'catalog/admin changes may close unauthorized browsers but must preserve their local profile data',
 );
