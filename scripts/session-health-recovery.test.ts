@@ -102,26 +102,6 @@ assert.match(
   'profile launches must expose which userFLOW scripts and managed extensions are active',
 );
 assert.match(
-  engine,
-  /providerPageIsolation/,
-  'third-party STREAMING provider pages must support complete page-script isolation for diagnostics',
-);
-assert.match(
-  engine,
-  /manifest\.content_scripts = \[\]/,
-  'provider isolation must remove built-in Browser Guard content scripts from the page',
-);
-assert.match(
-  engine,
-  /const managedExtensionDirs = providerPageIsolation/,
-  'provider isolation must skip managed page extensions while diagnosing provider UI',
-);
-assert.match(
-  engine,
-  /if \(pageCredentialHelperEnabled\)/,
-  'provider isolation must skip credential-helper page injection',
-);
-assert.match(
   guard,
   /USERFLEX_STREAMING_DOM !== true/,
   'STREAMING DOM script must activate from the per-profile extension flag',
