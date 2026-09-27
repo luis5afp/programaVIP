@@ -58,7 +58,7 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
     profile_id: profileId,
     has_credentials: Boolean(credential),
     login_username: credential?.login_username || null,
-    status: session?.status === 'ready' ? 'active' : session?.status === 'unconfigured' ? 'empty' : session?.status || 'empty',
+    status: Number(session?.session_version || 0) > 0 ? 'active' : session?.status === 'unconfigured' ? 'empty' : session?.status || 'empty',
     version: Number(session?.session_version || 0),
     public_ip: session?.expected_egress_ip || null,
     captured_at: session?.last_captured_at || null,
@@ -1628,7 +1628,23 @@ export async function managedProfileCredentials(env: Env, profileId: string) {
 
 export async function managedSessionMaterial(env: Env, profileId: string) {
   const row = await sessionRow(env, profileId);
-  if (!row || row.status !== 'ready' || !row.material_ciphertext || !row.material_iv) return null;
+  if (!row || !row.material_ciphertext || !row.material_iv || Number(row.session_version || 0) < 1) return null;
+
+  // Compatibility repair: older builds could mark a valid stored snapshot as
+  // needs_auth after an automatic client/keeper check. The encrypted cookies
+  // remain authoritative until the administrator explicitly replaces or clears
+  // them, so restore that row to ready before delivery.
+  if (row.status !== 'ready') {
+    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        status: 'ready',
+        updated_at: new Date().toISOString(),
+      }),
+    }).catch(() => null);
+  }
+
   const raw = await decryptProxy(env, row.material_ciphertext, row.material_iv);
   let material: unknown;
   try {
