@@ -771,6 +771,57 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         });
       const href = location.href;
       const currentHost = String(location.hostname || '').toLowerCase();
+      const streamingTestHost = Boolean(
+        streamingProfile
+        && (
+          currentHost === 'localhost'
+          || currentHost === '127.0.0.1'
+          || currentHost === '::1'
+          || currentHost.endsWith('.userflex.test')
+        )
+      );
+
+      // University/lab harness for STREAMING. It only operates on controlled
+      // test origins and only on elements explicitly marked by our own fixture.
+      // It must never alter third-party provider pages.
+      let streamingTestHarness = { enabled: false, overlays: 0 };
+      if (streamingTestHost) {
+        const styleId = '__userflex-streaming-test-style';
+        if (!document.getElementById(styleId)) {
+          const style = document.createElement('style');
+          style.id = styleId;
+          style.textContent = '.userflex-streaming-test-hidden{display:none!important}';
+          document.head.appendChild(style);
+        }
+
+        const prepareOverlay = (overlay) => {
+          if (!(overlay instanceof HTMLElement)) return;
+          if (overlay.querySelector('[data-userflex-test-close="streaming"]')) return;
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.userflexTestClose = 'streaming';
+          button.textContent = 'Cerrar mensaje de prueba';
+          button.addEventListener('click', () => {
+            overlay.classList.add('userflex-streaming-test-hidden');
+          });
+          overlay.appendChild(button);
+        };
+
+        const selector = '[data-userflex-test="streaming-restriction"], .userflex-streaming-test-restriction';
+        const overlays = Array.from(document.querySelectorAll(selector));
+        overlays.forEach(prepareOverlay);
+
+        if (!window.__userflexStreamingTestObserver) {
+          const observer = new MutationObserver(() => {
+            document.querySelectorAll(selector).forEach(prepareOverlay);
+          });
+          observer.observe(document.documentElement, { childList: true, subtree: true });
+          window.__userflexStreamingTestObserver = observer;
+        }
+
+        streamingTestHarness = { enabled: true, overlays: overlays.length };
+      }
+
       const googleAccounts = currentHost === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(currentHost);
       const flowSignedOut = targetHostname === 'flow.google.com' && (googleAccounts || loginActionVisible);
       const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -798,6 +849,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         flowSignedOut,
         netflixHouseholdRestriction,
         streamingAccessRestriction,
+        streamingTestHarness,
         usernameFieldVisible: Boolean(username),
         passwordFieldVisible: Boolean(password),
         usernameFilled: Boolean(username && String(username.value || '').length > 0),
@@ -811,6 +863,7 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
       flowSignedOut: targetHostname === 'flow.google.com' && /accounts\.google\./i.test(page.url()),
       netflixHouseholdRestriction: false,
       streamingAccessRestriction: false,
+      streamingTestHarness: { enabled: false, overlays: 0 },
       usernameFieldVisible: false,
       passwordFieldVisible: false,
       usernameFilled: false,
