@@ -38,8 +38,8 @@ assert.match(
 );
 assert.match(
   client,
-  /const snapshotReady = profile\.session_ready === true && Number\(session\?\.session_version \|\| 0\) > 0/,
-  'catalog must keep every stored snapshot launchable independently of warning status',
+  /const snapshotReady = hasStoredSnapshot/,
+  'catalog must keep every current or archived stored snapshot launchable independently of stale profile metadata',
 );
 assert.match(client, /sessionStatus: snapshotRequired \? snapshotHealth\.status : 'valid'/);
 
