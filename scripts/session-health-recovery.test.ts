@@ -203,8 +203,8 @@ assert.match(
 );
 assert.match(
   engine,
-  /const localStateWithoutMarker = snapshotManaged && !sessionMarker && localBrowserStatePresent/,
-  'a missing marker after an update must not cause a good local browser profile to be overwritten',
+  /const localStateWithoutMarker = snapshotManaged[\s\S]{0,140}!preserveDeviceLocalState[\s\S]{0,140}!sessionMarker[\s\S]{0,140}localBrowserStatePresent/,
+  'non-STREAMING managed profiles may reuse local state without a marker, while STREAMING must still receive its cookies',
 );
 assert.match(
   engine,
@@ -248,13 +248,13 @@ assert.match(
 );
 assert.match(
   engine,
-  /const sessionVersionMatches = !forceRestore[\s\S]{0,320}preserveDeviceLocalState[\s\S]{0,180}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
-  'STREAMING local state may outlive a central snapshot generation while other managed profiles still require an exact version match',
+  /const sessionVersionMatches = !forceRestore[\s\S]{0,520}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
+  'managed profiles, including STREAMING, must apply a newer administrator cookie generation',
 );
 assert.match(
   engine,
-  /const generationMatches = \(!snapshotManaged[\s\S]{0,180}preserveDeviceLocalState[\s\S]{0,180}Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
-  'an already-open STREAMING browser must remain open across central snapshot changes until a real access failure occurs',
+  /const generationMatches = \(!snapshotManaged[\s\S]{0,260}Number\(existing\.sessionVersion \|\| 0\) === desiredSessionVersion/,
+  'an already-open managed browser must restart when a newer administrator cookie generation is available',
 );
 assert.match(
   state,
