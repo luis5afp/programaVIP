@@ -377,7 +377,7 @@ export function ProfilesView() {
     setCookieFile(null);
     setCookieInspection(null);
     const initialAuth = current?.auth_strategy
-      || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+      || (current?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : current ? 'manual' : 'cookie-snapshot');
     setBrowserEngine(current?.browser_engine || 'chrome-native');
     setAuthStrategy(initialAuth);
     const currentCategory = current ? profileCategory(current) : 'Chat';
@@ -408,11 +408,11 @@ export function ProfilesView() {
     setCookieInspection(null);
     setCookieInspecting(false);
     setBrowserEngine('chrome-native');
-    setAuthStrategy('manual');
+    setAuthStrategy('cookie-snapshot');
     setCategoryValue('Chat');
-    setStorageStrategy('local-persistent');
-    setNetworkStrategy('client-direct');
-    setExtensionStrategy('guard-only');
+    setStorageStrategy('portable-first-party');
+    setNetworkStrategy('auto');
+    setExtensionStrategy('custom');
     setSelectedPlanIds([]);
     setSelectedExtensionIds([]);
     setShowLoginUsername(false);
