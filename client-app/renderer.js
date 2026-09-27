@@ -174,6 +174,9 @@ function descriptionFor(profile) {
   if (profile?.launchReady === false) {
     return profile.unavailableReason || 'Configuración no disponible';
   }
+  if (profile?.runtime?.deviceLocalAuth === true) {
+    return `${host} · sesión local del dispositivo`;
+  }
   if (profile.sessionMode === 'managed-first-party') {
     return profile.sessionReady
       ? `${host} · sesión v${profile.sessionVersion || 1}`
