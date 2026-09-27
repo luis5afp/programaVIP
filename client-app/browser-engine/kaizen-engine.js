@@ -412,6 +412,25 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       host === domain || host.endsWith(`.${domain}`));
     const streamingDomEnabled = streamingProfile && !thirdPartyStreamingProvider;
     const guardRevision = browserGuardRevision();
+    const streamingDomController = {
+      installed: streamingDomEnabled,
+      transport: streamingDomEnabled ? 'browser-extension' : null,
+      blockedThirdPartyProvider: thirdPartyStreamingProvider,
+    };
+    const scriptDiagnostics = {
+      browserGuard: {
+        name: 'userFLEX Browser Guard',
+        version: guardRevision,
+        contentScripts: ['strategy.js', 'content.js'],
+        backgroundScript: 'background.js',
+        streamingDomEnabled,
+      },
+      managedExtensions: (Array.isArray(managedExtensions) ? managedExtensions : []).map((item) => ({
+        name: String(item?.name || ''),
+        version: String(item?.version || ''),
+      })),
+      credentialHelper: credentialHelperEnabled,
+    };
     const desiredExtensionKey = [
       managedExtensionKey(profile),
       `guard:${guardRevision}`,
@@ -442,6 +461,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           sessionVersion: Number(existing.sessionVersion || desiredSessionVersion),
           profileState: 'persistent-reuse',
           runtime,
+          streamingDomController: {
+            ...streamingDomController,
+            guardRevision,
+          },
+          scriptDiagnostics,
         };
       }
       await close(clientId, profile.id, 'profile_generation_changed');
@@ -630,12 +654,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
-      const streamingDomController = {
-        installed: streamingDomEnabled,
-        transport: streamingDomEnabled ? 'browser-extension' : null,
-        blockedThirdPartyProvider: thirdPartyStreamingProvider,
-      };
-
       let deviceLocalAuthMigration = null;
       if (deviceLocalMigrationNeeded) {
         deviceLocalAuthMigration = await clearTransferredNetflixAuthCookies({
@@ -743,6 +761,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           ...streamingDomController,
           guardRevision,
         },
+        scriptDiagnostics,
       };
     } catch (error) {
       entry.closing = true;
