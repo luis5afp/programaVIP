@@ -168,8 +168,13 @@ assert.match(
 );
 assert.match(
   engine,
-  /preserveDeviceLocalState[\s\S]{0,700}sessionMarker = null/,
-  'STREAMING device-local authorization must survive central snapshot generation changes',
+  /const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device'/,
+  'STREAMING must preserve device-bound browser storage while managed cookies remain versioned',
+);
+assert.match(
+  engine,
+  /if \(snapshotManaged && !sessionVersionMatches\)[\s\S]{0,420}invalidateSessionMarker\(userDataDir\)/,
+  'a newer STREAMING cookie generation may invalidate only the lightweight marker, never browser storage',
 );
 assert.match(
   engine,
