@@ -5,6 +5,9 @@ const loginForm = document.getElementById('login-form');
 const loginButton = document.getElementById('login-button');
 const loginError = document.getElementById('login-error');
 const catalogError = document.getElementById('catalog-error');
+const streamingNotice = document.getElementById('streaming-notice');
+const streamingNoticeText = document.getElementById('streaming-notice-text');
+const streamingNoticeClose = document.getElementById('streaming-notice-close');
 const profilesGrid = document.getElementById('profiles-grid');
 const emptyState = document.getElementById('empty-state');
 const searchInput = document.getElementById('profile-search');
@@ -43,6 +46,18 @@ function setError(element, message) {
   element.classList.remove('hidden');
 }
 
+function setStreamingNotice(message) {
+  if (!message) {
+    streamingNoticeText.textContent = '';
+    streamingNotice.classList.add('hidden');
+    return;
+  }
+  streamingNoticeText.textContent = message;
+  streamingNotice.classList.remove('hidden');
+}
+
+streamingNoticeClose.addEventListener('click', () => setStreamingNotice(''));
+
 function normalize(value) {
   return String(value || '')
     .normalize('NFD')
@@ -80,7 +95,7 @@ function catalogCategories() {
     if (!seen.has(key)) seen.set(key, label);
   }
 
-  const preferred = ['chat', 'imagen', 'video', 'audio', 'pro'];
+  const preferred = ['chat', 'imagen', 'video', 'audio', 'streaming', 'pro'];
   return [...seen.entries()]
     .map(([key, label]) => ({ key, label }))
     .sort((a, b) => {
@@ -194,6 +209,7 @@ async function launchProfile(profile, card) {
   launchingProfiles.add(profile.id);
   card.classList.add('launching');
   setError(catalogError, '');
+  setStreamingNotice('');
   const state = card.querySelector('.card-state');
   if (state) state.textContent = 'Abriendo…';
 
@@ -202,9 +218,12 @@ async function launchProfile(profile, card) {
     if (!result?.ok) {
       setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
     } else if (result?.inspection?.streamingAccessRestriction === true) {
-      setError(
-        catalogError,
-        'La sesión está abierta, pero el proveedor requiere verificar este dispositivo/Hogar. Completa la opción oficial que aparece en la página (por ejemplo, Ver temporalmente o verificar el Hogar). userFLOW no ocultará ni saltará esa verificación.',
+      setStreamingNotice(
+        'STREAMING: la sesión está abierta, pero el proveedor requiere una verificación de dispositivo/Hogar. Completa la opción oficial de la página. Este aviso de userFLOW sí se puede cerrar con ×.',
+      );
+    } else if (result?.inspection?.streamingTestHarness?.enabled === true) {
+      setStreamingNotice(
+        `STREAMING LAB activo: se detectaron ${Number(result.inspection.streamingTestHarness.overlays || 0)} overlays de prueba controlados. En el laboratorio sí puedes cerrarlos con CSS/JavaScript.`,
       );
     }
   } finally {
@@ -314,6 +333,7 @@ async function refreshCatalog() {
   refreshButton.disabled = true;
   refreshButton.classList.add('spinning');
   setError(catalogError, '');
+  setStreamingNotice('');
   const result = await window.userflex.catalog();
   refreshButton.disabled = false;
   refreshButton.classList.remove('spinning');
