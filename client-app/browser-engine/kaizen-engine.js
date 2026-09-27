@@ -6,7 +6,6 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import {
-  clearTransferredNetflixAuthCookies,
   closeDevtoolsTargets,
   connectKaizenBrowser,
   ensureManagedSnapshotCookies,
