@@ -10,6 +10,8 @@ const sessions = readFileSync(new URL('../cloudflare/lib/profile-sessions.ts', i
 const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
 const profilesView = readFileSync(new URL('../src/views/ProfilesView.tsx', import.meta.url), 'utf8');
+const healthPolicy = readFileSync(new URL('../cloudflare/lib/session-health-policy.ts', import.meta.url), 'utf8');
+const admin = readFileSync(new URL('../cloudflare/lib/admin.ts', import.meta.url), 'utf8');
 
 assert.match(
   sessions,
@@ -286,10 +288,40 @@ assert.match(
   /\/session-health\$\/i/,
   'Worker must expose the session-health route',
 );
+assert.doesNotMatch(
+  client,
+  /status: 'needs_auth'/,
+  'client health must never revoke a stored snapshot automatically',
+);
 assert.match(
   client,
-  /confirmedFailure[\s\S]{0,1200}status: 'needs_auth'/,
-  'client health must revoke only an explicitly confirmed real access failure',
+  /profile\.session_warning/,
+  'client health may record an access warning without revoking stored cookies',
+);
+assert.match(
+  sessions,
+  /if \(!row \|\| !row\.material_ciphertext \|\| !row\.material_iv \|\| Number\(row\.session_version \|\| 0\) < 1\) return null/,
+  'stored encrypted session material must remain deliverable regardless of legacy status flags',
+);
+assert.match(
+  sessions,
+  /if \(row\.status !== 'ready'\)[\s\S]{0,420}status: 'ready'/,
+  'legacy automatically flagged snapshots must be repaired back to ready before delivery',
+);
+assert.match(
+  healthPolicy,
+  /status === 'needs_auth'[\s\S]{0,420}usable: true/,
+  'legacy needs_auth must be treated as a warning, not a cookie revocation',
+);
+assert.match(
+  healthPolicy,
+  /ageMs === null[\s\S]{0,320}usable: true/,
+  'initial validation must not block delivery of stored cookies',
+);
+assert.match(
+  admin,
+  /profileChoice\(body\?\.auth_strategy, AUTH_STRATEGIES, 'cookie-snapshot'/,
+  'new profiles must default to administrator-managed cookie snapshots',
 );
 assert.doesNotMatch(
   client,
@@ -299,12 +331,17 @@ assert.doesNotMatch(
 assert.match(
   main,
   /confirmedFailure: accessFailed[\s\S]{0,420}confirmed-client-access-failure/,
-  'userFLOW must confirm a repeated access failure before requesting revocation',
+  'userFLOW may confirm a repeated access failure only to report a warning, never to revoke stored cookies',
 );
 assert.match(
   profilesView,
   /no caduca por tiempo/,
   'Admin must show that a completed initial validation does not expire by age',
+);
+assert.match(
+  profilesView,
+  /Aviso de acceso; snapshot conservado/,
+  'Admin must present access failures as warnings while the stored snapshot remains available',
 );
 assert.match(
   profilesView,
