@@ -140,8 +140,12 @@ async function writeSessionMarker(userDataDir, profile, delivery, restore) {
   return marker;
 }
 
-async function resetProfileDirectory(userDataDir) {
-  await fsp.rm(userDataDir, { recursive: true, force: true });
+async function invalidateSessionMarker(userDataDir) {
+  // Mandatory persistence invariant: automatic runtime/config/session changes
+  // must never erase the browser profile. Only the lightweight userFLEX marker
+  // may be invalidated so a newer managed snapshot can be replayed on top of
+  // the same persistent Chrome data.
+  await fsp.rm(sessionMarkerPath(userDataDir), { force: true }).catch(() => null);
   await fsp.mkdir(userDataDir, { recursive: true });
 }
 
@@ -334,7 +338,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const desiredRuntimeKey = runtimeKey(runtime);
     const desiredExtensionKey = managedExtensionKey(profile);
     const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
-    const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
+    // All normal user profiles are persistent by policy. STREAMING still gets
+    // provider-specific storage behavior, but no profile is automatically
+    // erased because of a program/admin/runtime/snapshot update.
+    const preserveDeviceLocalState = snapshotManaged;
     const key = profileKey(clientId, profile.id);
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
@@ -376,12 +383,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       || !sessionMarker
       || preserveDeviceLocalState
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    // Managed snapshots are versioned contracts. STREAMING is the deliberate
-    // exception: once this PC has a working local browser/device state, keep it
-    // across central snapshot generations. The newer central snapshot is only
-    // replayed after a real access failure triggers forceRestore. This avoids
-    // replacing a legitimately authorized device identity while still allowing
-    // recovery when the local session genuinely stops working.
+    // Managed snapshots are versioned contracts, but the browser profile is a
+    // persistent device asset. Across every category, preserve Chrome User Data
+    // through central snapshot changes, admin edits, and application updates.
+    // A newer snapshot may be replayed on top of that profile when needed, but
+    // automatic flows must never wipe the profile directory.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
       && sessionMarker?.profileId === profile.id
@@ -395,16 +401,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       );
 
     if (snapshotManaged && !sessionVersionMatches) {
-      if (preserveDeviceLocalState) {
-        await fsp.mkdir(userDataDir, { recursive: true });
-        // This path is reached only for forceRestore or an incompatible marker.
-        // Preserve device-local browser storage, but allow the central snapshot
-        // to be replayed as a recovery attempt.
-        sessionMarker = null;
-      } else {
-        await resetProfileDirectory(userDataDir);
-        sessionMarker = null;
-      }
+      // Never delete User Data here. A new snapshot, runtime migration, admin
+      // edit, or application update is not permission to destroy local browser
+      // identity. Drop only the userFLEX marker so the new snapshot can be
+      // layered onto the same persistent profile.
+      await invalidateSessionMarker(userDataDir);
+      sessionMarker = null;
     } else {
       await fsp.mkdir(userDataDir, { recursive: true });
     }
@@ -759,13 +761,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
               : 'credentials_changed';
         await close(clientId, profile.id, reason).catch(() => null);
 
-        // Extension-only changes restart Chrome so the new list is loaded, but
-        // must not erase cookies, local storage, or the persistent profile.
-        // STREAMING keeps its device-local browser identity even when runtime
-        // metadata or the central snapshot changes.
-        if ((runtimeChanged || snapshotChanged) && !preserveDeviceLocalState) {
-          await killStrayProfileProcesses(dir);
-          await fsp.rm(dir, { recursive: true, force: true });
+        // Mandatory persistence invariant: runtime/snapshot/admin changes may
+        // restart Chrome, but they never erase the local browser profile.
+        // Invalidate only the userFLEX marker when a managed snapshot needs to
+        // be reconsidered on the next launch.
+        if (runtimeChanged || snapshotChanged) {
+          await invalidateSessionMarker(dir);
         }
         invalidated.push({
           profileId: profile.id,
@@ -784,8 +785,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           || !snapshotReady
           || (!preserveDeviceLocalState && markerPolicy !== desiredPolicy);
         if (markerInvalid) {
-          await killStrayProfileProcesses(dir);
-          await fsp.rm(dir, { recursive: true, force: true });
+          await invalidateSessionMarker(dir);
           invalidated.push({
             profileId: profile.id,
             from: markerVersion,
