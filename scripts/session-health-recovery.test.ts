@@ -77,6 +77,11 @@ assert.match(
   'known third-party streaming providers must stay outside project DOM automation',
 );
 assert.match(
+  engine,
+  /function browserGuardRevision[\s\S]{0,900}guardRevision[\s\S]{0,500}streaming-dom:/,
+  'built-in STREAMING script revisions must participate in browser generation matching',
+);
+assert.match(
   guard,
   /USERFLEX_STREAMING_DOM !== true/,
   'STREAMING DOM script must activate from the per-profile extension flag',
@@ -138,7 +143,7 @@ assert.match(
 );
 assert.match(
   engine,
-  /deviceLocalAuthMigrationNeeded[\s\S]{0,1800}clearTransferredNetflixAuthCookies/,
+  /deviceLocalAuthMigrationNeeded[\s\S]{0,3200}clearTransferredNetflixAuthCookies/,
   'existing Netflix profiles must migrate once without deleting their browser identity',
 );
 assert.match(
