@@ -32,7 +32,7 @@ assert.match(client, /requestKeeperChecks\(env, profileIds, 'client-start'\)/);
 assert.match(worker, /\/api\/client\/session-checks\/request/);
 
 assert.match(admin, /requestKeeperChecks\(env, \[profileId\], 'profile-update'\)/);
-assert.match(admin, /!invalidateSnapshot && nextSnapshot/);
+assert.match(admin, /if \(nextSnapshot && rows\[0\]\?\.enabled !== false\)/);
 
 assert.match(api, /requestChecks: \(\) => request/);
 assert.doesNotMatch(app, /api\.profileSessions\.requestChecks\(\)/);
