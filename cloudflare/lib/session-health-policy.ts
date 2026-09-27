@@ -95,11 +95,11 @@ export function managedSessionHealth(
   const ageMs = validationAge(validatedAt, nowMs);
   if (ageMs === null) {
     return {
-      usable: false,
+      usable: true,
       needsAttention: true,
-      severity: 'critical',
+      severity: 'warning',
       status: 'pending_validation',
-      reason: 'La sesión está guardada pero todavía no completó su validación inicial.',
+      reason: 'La sesión está guardada y se puede entregar. La validación inicial queda como comprobación informativa y no bloquea las cookies.',
       validatedAt: null,
       ageMs: null,
     };
