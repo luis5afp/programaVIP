@@ -131,10 +131,10 @@ assert.match(
   /dataset\.userflexStreamingDom === 'active'/,
   'runtime inspection must read STREAMING DOM diagnostics from the browser extension',
 );
-assert.match(
+assert.doesNotMatch(
   main,
   /profile\?\.runtime\?\.deviceLocalAuth === true\) return false/,
-  'STREAMING device-local auth must bypass managed snapshot recovery in userFLOW',
+  'STREAMING must not bypass administrator-managed cookie snapshot recovery',
 );
 assert.match(
   main,
@@ -146,30 +146,20 @@ assert.match(
   /Detection is[\s\S]{0,180}must never hide, click through, or bypass provider UI/,
   'provider household/device UI must never be bypassed by userFLOW',
 );
-assert.match(
+assert.doesNotMatch(
   engine,
   /if \(runtime\.deviceLocalAuth === true\) return false/,
-  'browser engine must never restore a central snapshot for device-local STREAMING auth',
-);
-assert.match(
-  state,
-  /clearTransferredNetflixAuthCookies/,
-  'legacy Netflix profiles must have a one-time migration path that removes only transferred authentication cookies',
-);
-assert.match(
-  state,
-  /\['netflixid', 'securenetflixid'\]/,
-  'Netflix migration must preserve device-local state and clear only transferred auth cookies',
+  'browser engine must restore managed cookies even when STREAMING storage remains device-local',
 );
 assert.match(
   engine,
-  /deviceLocalMigrationNeeded/,
-  'existing Netflix profiles must detect whether the one-time device-local migration is needed',
+  /cookieSnapshotPreserved: true/,
+  'STREAMING migration marker must confirm administrator cookies are preserved',
 );
-assert.match(
+assert.doesNotMatch(
   engine,
   /clearTransferredNetflixAuthCookies\(\{/,
-  'existing Netflix profiles must run the one-time auth-cookie migration without deleting browser identity',
+  'STREAMING launch must never delete the administrator-managed authentication cookies',
 );
 assert.match(
   engine,
