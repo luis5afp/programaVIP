@@ -88,6 +88,83 @@ function isNetflixTarget(target) {
   return hostname === 'netflix.com' || hostname.endsWith('.netflix.com');
 }
 
+function cookieIdentity(cookie) {
+  const name = String(cookie?.name || '').toLowerCase();
+  const domain = String(cookie?.domain || '').replace(/^\./, '').toLowerCase();
+  const path = String(cookie?.path || '/');
+  return `${name}|${domain}|${path}`;
+}
+
+function cookieExpired(cookie) {
+  const expires = Number(cookie?.expires ?? cookie?.expirationDate);
+  return Number.isFinite(expires) && expires > 0 && expires * 1000 <= Date.now();
+}
+
+export async function ensureManagedSnapshotCookies({ debugPort, profileUrl, material }) {
+  const target = new URL(profileUrl);
+  const expected = flattenCookies(material)
+    .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+    .filter((cookie) => !cookieExpired(cookie));
+
+  if (!expected.length) {
+    return {
+      expected: 0,
+      presentBefore: 0,
+      installed: 0,
+      rejected: 0,
+      missingAfter: 0,
+      preservedExisting: 0,
+    };
+  }
+
+  const browser = await connectKaizenBrowser(debugPort);
+  try {
+    const pages = await browser.pages();
+    const page = pages.find((item) => /^https?:/i.test(item.url())) || pages[0] || await browser.newPage();
+    const client = await page.createCDPSession();
+
+    const readCookies = async () => {
+      try {
+        const result = await client.send('Storage.getCookies');
+        return Array.isArray(result?.cookies) ? result.cookies : [];
+      } catch {
+        return [];
+      }
+    };
+
+    try {
+      const before = await readCookies();
+      const beforeKeys = new Set(before.map(cookieIdentity));
+      const missing = expected.filter((cookie) => !beforeKeys.has(cookieIdentity(cookie)));
+      const presentBefore = expected.length - missing.length;
+
+      // Existing cookies win, even if their value differs from the administrator
+      // snapshot. Providers commonly rotate authentication cookies after a valid
+      // login. We only repair cookies that disappeared entirely.
+      const applied = missing.length
+        ? await applyCookies(browser, missing)
+        : { installed: 0, rejected: [], relaxed: [] };
+
+      const after = await readCookies();
+      const afterKeys = new Set(after.map(cookieIdentity));
+      const missingAfter = expected.filter((cookie) => !afterKeys.has(cookieIdentity(cookie))).length;
+
+      return {
+        expected: expected.length,
+        presentBefore,
+        installed: Number(applied.installed || 0),
+        rejected: Array.isArray(applied.rejected) ? applied.rejected.length : 0,
+        missingAfter,
+        preservedExisting: presentBefore,
+      };
+    } finally {
+      await client.detach().catch(() => null);
+    }
+  } finally {
+    await browser.disconnect().catch(() => null);
+  }
+}
+
 export async function clearTransferredNetflixAuthCookies({ debugPort, profileUrl }) {
   const target = new URL(profileUrl);
   if (!isNetflixTarget(target)) return { cleared: 0, names: [] };
