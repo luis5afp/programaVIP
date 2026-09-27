@@ -71,6 +71,16 @@ assert.match(
   'STREAMING device-local auth must bypass managed snapshot recovery in userFLOW',
 );
 assert.match(
+  main,
+  /profile\?\.runtime\?\.deviceLocalAuth === true[\s\S]{0,500}streamingAccessRestriction/,
+  'device-local STREAMING sessions must be inspected read-only for provider restrictions',
+);
+assert.match(
+  main,
+  /Detection is[\s\S]{0,180}must never hide, click through, or bypass provider UI/,
+  'provider household/device UI must never be bypassed by userFLOW',
+);
+assert.match(
   engine,
   /if \(runtime\.deviceLocalAuth === true\) return false/,
   'browser engine must never restore a central snapshot for device-local STREAMING auth',
