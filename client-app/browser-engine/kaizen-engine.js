@@ -11,7 +11,6 @@ import {
   connectKaizenBrowser,
   installCredentialAutofill,
   inspectRuntimeProfile,
-  installStreamingDomController,
   navigateBrowserHome,
   restorePortableSession,
 } from './session-state.js';
@@ -311,7 +310,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     safeSegment(profileId),
   );
 
-  async function prepareProfileExtension(clientId, profileId, strategy) {
+  async function prepareProfileExtension(clientId, profileId, strategy, options = {}) {
     const source = path.join(process.resourcesPath, 'browser-engine', 'extension');
     const target = profileExtensionDir(clientId, profileId);
     if (!fs.existsSync(path.join(source, 'manifest.json'))) return null;
@@ -319,9 +318,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await fsp.cp(source, target, { recursive: true });
     const safeStrategy = ['guard-only', 'main', 'google', 'custom'].includes(strategy) ? strategy : 'guard-only';
+    const streamingDomEnabled = options.streamingDomEnabled === true;
     await fsp.writeFile(
       path.join(target, 'strategy.js'),
-      `globalThis.USERFLEX_RUNTIME_STRATEGY = ${JSON.stringify(safeStrategy)};\n`,
+      [
+        `globalThis.USERFLEX_RUNTIME_STRATEGY = ${JSON.stringify(safeStrategy)};`,
+        `globalThis.USERFLEX_STREAMING_DOM = ${JSON.stringify(streamingDomEnabled)};`,
+        '',
+      ].join('\n'),
       'utf8',
     );
     return target;
@@ -376,6 +380,28 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const desiredRuntimeKey = runtimeKey(runtime);
     const desiredExtensionKey = managedExtensionKey(profile);
     const desiredStoragePolicy = effectiveStoragePolicy(target, runtime.storageStrategy);
+    const streamingProfile = String(profile?.platform || '').trim().toLowerCase() === 'streaming'
+      || runtime.storageStrategy === 'netflix-local-device';
+    const blockedStreamingDomHosts = [
+      'netflix.com',
+      'disneyplus.com',
+      'max.com',
+      'hbomax.com',
+      'primevideo.com',
+      'hulu.com',
+      'peacocktv.com',
+      'paramountplus.com',
+      'tv.apple.com',
+      'crunchyroll.com',
+      'tubitv.com',
+      'pluto.tv',
+      'vix.com',
+      'discoveryplus.com',
+    ];
+    const host = String(target.hostname || '').toLowerCase();
+    const thirdPartyStreamingProvider = blockedStreamingDomHosts.some((domain) =>
+      host === domain || host.endsWith(`.${domain}`));
+    const streamingDomEnabled = streamingProfile && !thirdPartyStreamingProvider;
     // Browser-profile persistence is global, but STREAMING additionally keeps
     // using a still-working local session across central snapshot generations.
     // Other categories may replay a newer snapshot on top of the same User Data
@@ -518,7 +544,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }
 
     const debugPort = await freePort();
-    const extensionDir = await prepareProfileExtension(clientId, profile.id, runtime.extensionStrategy);
+    const extensionDir = await prepareProfileExtension(
+      clientId,
+      profile.id,
+      runtime.extensionStrategy,
+      { streamingDomEnabled },
+    );
     const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
       .map((item) => item?.dir)
       .filter((dir) => typeof dir === 'string');
@@ -584,15 +615,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
-      const streamingProfile = String(profile?.platform || '').trim().toLowerCase() === 'streaming'
-        || runtime.storageStrategy === 'netflix-local-device';
-      let streamingDomController = null;
-      if (streamingProfile) {
-        streamingDomController = await installStreamingDomController({ debugPort }).catch((error) => ({
-          installed: false,
-          error: error?.message || String(error || 'STREAMING DOM controller failed'),
-        }));
-      }
+      const streamingDomController = {
+        installed: streamingDomEnabled,
+        transport: streamingDomEnabled ? 'browser-extension' : null,
+        blockedThirdPartyProvider: thirdPartyStreamingProvider,
+      };
 
       let deviceLocalAuthMigration = null;
       if (deviceLocalMigrationNeeded) {
