@@ -77,10 +77,12 @@ function runtimeFor(profile) {
       || (authStrategy === 'manual' || authStrategy === 'credential-autofill' ? 'local-persistent' : 'portable-first-party'),
     networkStrategy: runtime.networkStrategy || 'auto',
     extensionStrategy: runtime.extensionStrategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
+    deviceLocalAuth: runtime.deviceLocalAuth === true,
   };
 }
 
 function snapshotAuthentication(runtime) {
+  if (runtime.deviceLocalAuth === true) return false;
   return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
 }
 
