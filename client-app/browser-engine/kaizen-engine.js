@@ -9,6 +9,7 @@ import {
   clearTransferredNetflixAuthCookies,
   closeDevtoolsTargets,
   connectKaizenBrowser,
+  ensureManagedSnapshotCookies,
   installCredentialAutofill,
   inspectRuntimeProfile,
   navigateBrowserHome,
@@ -449,6 +450,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         && String(existing.runtimeKey || '') === desiredRuntimeKey
         && String(existing.extensionKey || '') === desiredExtensionKey;
       if (generationMatches) {
+        const cookieRepair = snapshotManaged && delivery?.material
+          ? await ensureManagedSnapshotCookies({
+              debugPort: existing.debugPort,
+              profileUrl: profile.url,
+              material: delivery.material,
+            }).catch(() => null)
+          : null;
         await navigateBrowserHome(existing.debugPort, profile.url, { closeExtraPages: true }).catch(() => null);
         return {
           ok: true,
@@ -464,6 +472,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             guardRevision,
           },
           scriptDiagnostics,
+          cookieRepair,
         };
       }
       await close(clientId, profile.id, 'profile_generation_changed');
@@ -682,11 +691,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         }
 
         if (sessionVersionMatches) {
-          // Local browser state is always tried first. This is intentionally
-          // true even when an old marker is absent after an app/admin upgrade.
-          // If the real page later proves that authentication no longer works,
-          // openProfile performs one forced snapshot recovery on top of this
-          // same persistent browser profile.
+          // The lightweight marker may still be current even when a site/user
+          // removed one or more cookies locally. Repair only cookies that are
+          // completely missing; never overwrite provider-rotated cookie values.
+          const cookieRepair = await ensureManagedSnapshotCookies({
+            debugPort,
+            profileUrl: profile.url,
+            material: delivery.material,
+          }).catch(() => null);
           await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
@@ -694,6 +706,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             format: sessionMarker?.format || delivery.material.format || null,
             storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
             recoveredFromLocalState: localStateWithoutMarker,
+            cookieRepair,
           };
         } else {
           restore = await restorePortableSession({
@@ -744,6 +757,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         autofill,
         restore,
         deviceLocalAuthMigration,
+        cookieRepair: restore?.cookieRepair || {
+          expected: Number(restore?.cookiesInstalled || 0) + Number(restore?.cookiesRejected || 0),
+          presentBefore: 0,
+          installed: Number(restore?.cookiesInstalled || 0),
+          rejected: Number(restore?.cookiesRejected || 0),
+          missingAfter: Number(restore?.cookiesRejected || 0),
+          preservedExisting: 0,
+        },
         streamingDomController: {
           ...streamingDomController,
           guardRevision,
