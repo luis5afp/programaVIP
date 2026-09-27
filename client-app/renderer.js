@@ -241,12 +241,16 @@ async function launchProfile(profile, card) {
           : [];
         const managedLabel = managed.length ? managed.join(', ') : 'ninguna';
         const helperLabel = diagnostics?.credentialHelper === true ? 'activo' : 'inactivo';
+        const repair = result?.cookieRepair || result?.restore?.cookieRepair || null;
+        const cookieLabel = repair
+          ? ` · Cookies snapshot: esperadas ${Number(repair.expected || 0)} · ya presentes ${Number(repair.presentBefore || 0)} · reparadas ${Number(repair.installed || 0)} · faltantes ${Number(repair.missingAfter || 0)}`
+          : '';
         const external = controller?.blockedThirdPartyProvider === true
           ? ' · página externa: control DOM bloqueado'
           : '';
 
         setStreamingNotice(
-          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts userFLOW cargados: ${pageScriptsLabel} · Servicio de fondo: ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
+          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts userFLOW cargados: ${pageScriptsLabel} · Servicio de fondo: ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${cookieLabel}${external}`,
         );
       }
     }
