@@ -67,18 +67,18 @@ assert.match(
 );
 assert.match(
   state,
-  /currentHost === 'localhost'[\s\S]{0,180}currentHost\.endsWith\('\.userflex\.test'\)/,
-  'STREAMING lab DOM controls must be limited to controlled local/test origins',
+  /const streamingDomEnabled = streamingProfile === true/,
+  'STREAMING category itself must enable DOM controls for project-owned pages',
 );
 assert.match(
   state,
-  /data-userflex-test="streaming-restriction"[\s\S]{0,180}userflex-streaming-test-restriction/,
-  'STREAMING lab must only touch explicitly marked test fixtures',
+  /data-userflex-streaming-overlay[\s\S]{0,260}userflex-streaming-overlay/,
+  'STREAMING pages must support the project overlay contract',
 );
 assert.match(
   state,
-  /It must never alter third-party provider pages/,
-  'STREAMING lab must document the third-party-page safety boundary',
+  /data-userflex-auto-hide[\s\S]{0,220}userflex-streaming-hidden/,
+  'STREAMING overlays must support automatic CSS hiding',
 );
 assert.match(
   main,
