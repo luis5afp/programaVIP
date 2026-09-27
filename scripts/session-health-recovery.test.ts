@@ -67,8 +67,8 @@ assert.match(
 );
 assert.match(
   state,
-  /const streamingDomEnabled = streamingProfile === true/,
-  'STREAMING category itself must enable DOM controls for project-owned pages',
+  /data-userflex-owned-streaming[\s\S]{0,260}const streamingDomEnabled = ownedStreamingPage/,
+  'STREAMING DOM controls must require an explicit project-owned page marker or local test origin',
 );
 assert.match(
   state,
@@ -79,6 +79,11 @@ assert.match(
   state,
   /data-userflex-auto-hide[\s\S]{0,220}userflex-streaming-hidden/,
   'STREAMING overlays must support automatic CSS hiding',
+);
+assert.match(
+  state,
+  /meta\[name="userflex-streaming-overlay-selectors"\][\s\S]{0,260}declaredSelectors/,
+  'project-owned STREAMING pages may declare their overlay selectors without code changes in userFLOW',
 );
 assert.match(
   main,
