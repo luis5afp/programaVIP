@@ -70,12 +70,16 @@ const streamingCategorySnapshot = runtimeForProfile({
 });
 assert.equal(
   streamingCategorySnapshot.storageStrategy,
-  'netflix-local-device',
-  'STREAMING category must keep browser/device storage local',
+  'portable-first-party',
+  'project-owned STREAMING pages must keep their managed snapshot portable',
 );
 assert.equal(effectiveProfileCategory({ url: 'https://example-streaming.invalid/', platform: 'streaming' }), 'STREAMING');
-assert.equal(streamingCategorySnapshot.deviceLocalAuth, true);
-assert.equal(snapshotAuthentication(streamingCategorySnapshot), false);
+assert.equal(streamingCategorySnapshot.deviceLocalAuth, false);
+assert.equal(
+  snapshotAuthentication(streamingCategorySnapshot),
+  true,
+  'project-owned STREAMING pages must receive the administrator-managed session snapshot',
+);
 
 
 const disneySnapshot = runtimeForProfile({
