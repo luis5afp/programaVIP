@@ -45,6 +45,9 @@ assert.match(rendererSource, /STREAMING DOM:/);
 assert.match(rendererSource, /Browser Guard/);
 assert.match(rendererSource, /Detectados:/);
 assert.match(rendererSource, /Ocultados:/);
+assert.match(rendererSource, /Scripts userFLOW:/);
+assert.match(rendererSource, /Extensiones administradas:/);
+assert.match(rendererSource, /Autofill:/);
 assert.match(indexSource, /id="streaming-notice"/);
 
 console.log('Cross-component reliability hardening: OK');
