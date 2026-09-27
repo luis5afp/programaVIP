@@ -37,7 +37,13 @@ const netflixSnapshot = runtimeForProfile({
 assert.equal(
   netflixSnapshot.storageStrategy,
   'netflix-local-device',
-  'existing and future Netflix snapshots must always use device-local web storage while reusing managed auth cookies',
+  'Netflix must keep browser/device storage local',
+);
+assert.equal(netflixSnapshot.deviceLocalAuth, true);
+assert.equal(
+  snapshotAuthentication(netflixSnapshot),
+  false,
+  'Netflix authentication must remain local to the client device instead of replaying an admin snapshot',
 );
 
 const netflixCookiesOnly = runtimeForProfile({
@@ -65,9 +71,12 @@ const streamingCategorySnapshot = runtimeForProfile({
 assert.equal(
   streamingCategorySnapshot.storageStrategy,
   'netflix-local-device',
-  'STREAMING category must keep browser/device storage local while replaying the managed session',
+  'STREAMING category must keep browser/device storage local',
 );
 assert.equal(effectiveProfileCategory({ url: 'https://example-streaming.invalid/', platform: 'streaming' }), 'STREAMING');
+assert.equal(streamingCategorySnapshot.deviceLocalAuth, true);
+assert.equal(snapshotAuthentication(streamingCategorySnapshot), false);
+
 
 const disneySnapshot = runtimeForProfile({
   url: 'https://www.disneyplus.com/',
@@ -77,6 +86,9 @@ const disneySnapshot = runtimeForProfile({
   storage_strategy: 'portable-first-party',
 });
 assert.equal(disneySnapshot.storageStrategy, 'netflix-local-device');
+assert.equal(disneySnapshot.deviceLocalAuth, true);
+assert.equal(snapshotAuthentication(disneySnapshot), false);
+assert.equal(credentialAuthentication(disneySnapshot), true);
 assert.equal(effectiveProfileCategory({ url: 'https://www.disneyplus.com/', platform: 'Video' }), 'STREAMING');
 
 const autofill = runtimeForProfile({
