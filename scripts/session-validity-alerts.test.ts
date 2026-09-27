@@ -9,7 +9,11 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/components/Layout.tsx', import.meta.url), 'utf8');
 
 assert.match(policy, /session\.status === 'needs_auth'/);
-assert.match(policy, /status: 'needs_renewal'/);
+assert.match(
+  policy,
+  /session\.status === 'needs_auth'[\s\S]{0,320}usable: true/,
+  'legacy needs_auth is a warning and never blocks delivery of stored cookies',
+);
 assert.match(policy, /status: 'pending_validation'/);
 assert.match(policy, /Validation is intentionally one-time/);
 assert.doesNotMatch(policy, /SESSION_VALIDATION_WARN_MS/);
@@ -30,7 +34,12 @@ assert.match(
 assert.match(
   client,
   /managedSessionHealth\([\s\S]{0,450}MANAGED_SESSION_VALIDATION_REQUIRED/,
-  'server launch must enforce the managed-session validity policy',
+  'server launch still rejects profiles with no stored session material',
+);
+assert.match(
+  client,
+  /const snapshotReady = profile\.session_ready === true && Number\(session\?\.session_version \|\| 0\) > 0/,
+  'catalog must keep every stored snapshot launchable independently of warning status',
 );
 assert.match(client, /sessionStatus: snapshotRequired \? snapshotHealth\.status : 'valid'/);
 
@@ -40,7 +49,7 @@ assert.match(sessions, /warningCount:/);
 assert.match(
   sessions,
   /last_status: 'needs_admin'/,
-  'Keeper can block a session after confirmed login loss',
+  'Keeper may record a login warning without revoking the stored snapshot',
 );
 assert.doesNotMatch(
   sessions,
@@ -49,8 +58,18 @@ assert.doesNotMatch(
 );
 assert.match(
   client,
-  /confirmedFailure[\s\S]{0,1500}touchProfileClients\(env, profileId\)/,
-  'clients should be notified when a real access failure revokes a session',
+  /profile\.session_warning/,
+  'real access failures are recorded as warnings instead of automatic revocations',
+);
+assert.match(
+  client,
+  /revoked: false/,
+  'client health must explicitly report that stored cookies were not revoked',
+);
+assert.doesNotMatch(
+  client,
+  /status: 'needs_auth'/,
+  'client health must never write an automatic needs_auth revocation',
 );
 
 assert.match(renderer, /Requiere renovación/);
