@@ -7,14 +7,14 @@ import {
   versionAtLeast,
 } from '../cloudflare/lib/release-compat.ts';
 
-assert.equal(compareVersions('0.3.62', '0.3.62'), 0);
-assert.equal(compareVersions('0.3.62', '0.3.37'), 1);
-assert.equal(compareVersions('0.3.47', '0.3.62'), -1);
+assert.equal(compareVersions('0.3.63', '0.3.63'), 0);
+assert.equal(compareVersions('0.3.63', '0.3.37'), 1);
+assert.equal(compareVersions('0.3.47', '0.3.63'), -1);
 assert.equal(compareVersions('0.4.0', '0.3.99'), 1);
 assert.equal(compareVersions('1.0.0', '0.99.99'), 1);
 assert.equal(compareVersions('bad', '0.3.22'), null);
 
-assert.equal(versionAtLeast('0.3.62', MIN_USERFLOW_VERSION), true);
+assert.equal(versionAtLeast('0.3.63', MIN_USERFLOW_VERSION), true);
 assert.equal(versionAtLeast('0.3.47', MIN_USERFLOW_VERSION), false);
 assert.equal(versionAtLeast('0.3.47', MIN_SESSION_MANAGER_VERSION), true);
 assert.equal(versionAtLeast('0.3.46', MIN_SESSION_MANAGER_VERSION), false);
@@ -23,11 +23,11 @@ const clientPackage = JSON.parse(readFileSync(new URL('../client-app/package.jso
 const sessionPackage = JSON.parse(readFileSync(new URL('../session-manager/package.json', import.meta.url), 'utf8'));
 const sessionInstaller = readFileSync(new URL('../session-manager/build/installer.nsh', import.meta.url), 'utf8');
 
-assert.equal(clientPackage.version, '0.3.62');
+assert.equal(clientPackage.version, '0.3.63');
 assert.equal(sessionPackage.version, '0.3.47');
 assert.equal(clientPackage.build?.nsis?.deleteAppDataOnUninstall, false, 'userFLOW installer must preserve local browser/user data during upgrades and uninstall by default');
 
-assert.equal(MIN_USERFLOW_VERSION, '0.3.62');
+assert.equal(MIN_USERFLOW_VERSION, '0.3.63');
 assert.equal(MIN_SESSION_MANAGER_VERSION, '0.3.47');
 assert.equal(sessionPackage.build.nsis.include, 'build/installer.nsh');
 assert.match(sessionInstaller, /taskkill\.exe \/F \/T \/IM \"userFLEX Session Manager\.exe\"/);
