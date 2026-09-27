@@ -16,6 +16,7 @@ export type ProfileRuntime = {
   storageStrategy: StorageStrategy;
   networkStrategy: NetworkStrategy;
   extensionStrategy: ExtensionStrategy;
+  deviceLocalAuth: boolean;
 };
 
 export type NetworkPolicy = {
@@ -102,10 +103,17 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
+    // Streaming providers frequently bind authorization to a specific browser,
+    // device and/or household. Do not transplant a captured authenticated
+    // session from the admin machine into a client device. The client keeps its
+    // own persistent browser session and uses the managed snapshot only as an
+    // admin-side record, never as device authentication.
+    deviceLocalAuth: isStreamingProfile(profile) && snapshotManaged,
   };
 }
 
 export function snapshotAuthentication(runtime: ProfileRuntime) {
+  if (runtime.deviceLocalAuth === true) return false;
   return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
 }
 
