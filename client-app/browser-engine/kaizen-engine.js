@@ -83,7 +83,6 @@ function runtimeFor(profile) {
 }
 
 function snapshotAuthentication(runtime) {
-  if (runtime.deviceLocalAuth === true) return false;
   return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
 }
 
@@ -445,7 +444,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const existing = processes.get(key);
     if (existing && existing.process?.exitCode === null) {
       const generationMatches = (!snapshotManaged
-        || preserveDeviceLocalState
         || (desiredSessionVersion > 0 && Number(existing.sessionVersion || 0) === desiredSessionVersion))
         && String(existing.credentialRevision || '') === desiredCredentialRevision
         && String(existing.runtimeKey || '') === desiredRuntimeKey
@@ -483,16 +481,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await killStrayProfileProcesses(userDataDir);
 
     const netflixTarget = target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com');
-    const deviceLocalMigrationNeeded = runtime.deviceLocalAuth === true
-      && netflixTarget
-      && hasPersistentBrowserState(userDataDir)
-      && !(await hasDeviceLocalAuthMigration(userDataDir));
+    const deviceLocalMigrationNeeded = false;
 
     let sessionMarker = (snapshotManaged || runtime.deviceLocalAuth === true)
       ? await readSessionMarker(userDataDir)
       : null;
     const localBrowserStatePresent = snapshotManaged && hasPersistentBrowserState(userDataDir);
-    const localStateWithoutMarker = snapshotManaged && !sessionMarker && localBrowserStatePresent;
+    const localStateWithoutMarker = snapshotManaged
+      && !preserveDeviceLocalState
+      && !sessionMarker
+      && localBrowserStatePresent;
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || preserveDeviceLocalState
@@ -510,11 +508,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           sessionMarker?.profileId === profile.id
           && restorePolicyMatches
           && (
-            preserveDeviceLocalState
-            || (
-              desiredSessionVersion > 0
-              && Number(sessionMarker?.version || 0) === desiredSessionVersion
-            )
+            desiredSessionVersion > 0
+            && Number(sessionMarker?.version || 0) === desiredSessionVersion
           )
         )
       );
@@ -655,18 +650,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await browser.disconnect().catch(() => null);
 
       let deviceLocalAuthMigration = null;
-      if (deviceLocalMigrationNeeded) {
-        deviceLocalAuthMigration = await clearTransferredNetflixAuthCookies({
-          debugPort,
-          profileUrl: profile.url,
-        }).catch((error) => ({
-          cleared: 0,
-          names: [],
-          error: error?.message || String(error || 'migration failed'),
-        }));
-        await markDeviceLocalAuthMigration(userDataDir, profile, deviceLocalAuthMigration).catch(() => null);
-      } else if (runtime.deviceLocalAuth === true && netflixTarget) {
-        await markDeviceLocalAuthMigration(userDataDir, profile, { cleared: 0, names: [] }).catch(() => null);
+      if (runtime.deviceLocalAuth === true && netflixTarget) {
+        // STREAMING keeps device-bound storage local while accepting the current
+        // administrator-managed cookie generation. Never clear those auth cookies.
+        await markDeviceLocalAuthMigration(userDataDir, profile, { cleared: 0, names: [], cookieSnapshotPreserved: true }).catch(() => null);
       }
 
       if (connection?.mode === 'proxy') {
