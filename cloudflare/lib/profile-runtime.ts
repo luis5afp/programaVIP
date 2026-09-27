@@ -68,11 +68,14 @@ const STREAMING_HOSTS = [
   'discoveryplus.com',
 ];
 
-function isStreamingProfile(profile: any) {
-  const category = String(profile?.platform || '').trim().toLowerCase();
-  if (category === 'streaming') return true;
+function isStreamingProviderProfile(profile: any) {
   const host = profileHost(profile);
   return STREAMING_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function isStreamingProfile(profile: any) {
+  const category = String(profile?.platform || '').trim().toLowerCase();
+  return category === 'streaming' || isStreamingProviderProfile(profile);
 }
 
 export function effectiveProfileCategory(profile: any): string | null {
@@ -90,12 +93,17 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
       : 'portable-first-party')) as StorageStrategy;
   const snapshotManaged = authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
   const openAiSnapshot = isOpenAiProfile(profile) && snapshotManaged;
-  const streamingSnapshot = isStreamingProfile(profile) && snapshotManaged;
+  const streamingProviderSnapshot = isStreamingProviderProfile(profile) && snapshotManaged;
+  const projectStreamingSnapshot = !isStreamingProviderProfile(profile)
+    && String(profile?.platform || '').trim().toLowerCase() === 'streaming'
+    && snapshotManaged;
   const effectiveStorage = openAiSnapshot
     ? 'cookies-only'
-    : streamingSnapshot && requestedStorage !== 'cookies-only'
+    : streamingProviderSnapshot && requestedStorage !== 'cookies-only'
       ? 'netflix-local-device'
-      : requestedStorage;
+      : projectStreamingSnapshot && requestedStorage === 'netflix-local-device'
+        ? 'portable-first-party'
+        : requestedStorage;
   return {
     browserEngine: (profile?.browser_engine || 'chrome-native') as BrowserEngine,
     authStrategy,
@@ -103,12 +111,10 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
-    // Streaming providers frequently bind authorization to a specific browser,
-    // device and/or household. Do not transplant a captured authenticated
-    // session from the admin machine into a client device. The client keeps its
-    // own persistent browser session and uses the managed snapshot only as an
-    // admin-side record, never as device authentication.
-    deviceLocalAuth: isStreamingProfile(profile) && snapshotManaged,
+    // Only known third-party streaming providers use device-local auth.
+    // Project-owned pages may use the STREAMING category while receiving
+    // administrator-managed cookie/session snapshots normally.
+    deviceLocalAuth: streamingProviderSnapshot,
   };
 }
 
