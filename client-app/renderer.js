@@ -246,7 +246,7 @@ async function launchProfile(profile, card) {
           : '';
 
         setStreamingNotice(
-          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts dentro de la página: ${pageScriptsLabel} · Servicio de fondo: ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
+          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts userFLOW cargados: ${pageScriptsLabel} · Servicio de fondo: ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
         );
       }
     }
