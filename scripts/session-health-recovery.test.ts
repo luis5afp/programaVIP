@@ -66,6 +66,21 @@ assert.match(
   'runtime inspection must identify device restrictions for STREAMING profiles separately from login failure',
 );
 assert.match(
+  state,
+  /currentHost === 'localhost'[\s\S]{0,180}currentHost\.endsWith\('\.userflex\.test'\)/,
+  'STREAMING lab DOM controls must be limited to controlled local/test origins',
+);
+assert.match(
+  state,
+  /data-userflex-test="streaming-restriction"[\s\S]{0,180}userflex-streaming-test-restriction/,
+  'STREAMING lab must only touch explicitly marked test fixtures',
+);
+assert.match(
+  state,
+  /It must never alter third-party provider pages/,
+  'STREAMING lab must document the third-party-page safety boundary',
+);
+assert.match(
   main,
   /profile\?\.runtime\?\.deviceLocalAuth === true\) return false/,
   'STREAMING device-local auth must bypass managed snapshot recovery in userFLOW',
