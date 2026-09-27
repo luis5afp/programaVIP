@@ -181,7 +181,7 @@ function keeperBadge(session: ProfileSessionState | null) {
     return {
       tone: 'bad' as const,
       compact: 'Acceso: renovar',
-      detail: `Acceso revocado por fallo real${keeper?.last_error ? ` · ${keeper.last_error}` : ''}`,
+      detail: `Aviso de acceso; snapshot conservado${keeper?.last_error ? ` · ${keeper.last_error}` : ''}`,
     };
   }
   return {
