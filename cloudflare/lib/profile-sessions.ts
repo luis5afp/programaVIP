@@ -719,17 +719,33 @@ export async function adminProfileSessionRoutes(
   }
 
   if (path === '/api/profile-session-states' && method === 'GET') {
-    const [credentials, sessions, keepers] = await Promise.all([
+    const [credentials, sessions, archivedSessions, keepers] = await Promise.all([
       sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
       sb(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
+      sb(env, 'userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,captured_at,validated_at&order=session_version.desc'),
       sb(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,session_manager_version,session_manager_version_seen_at,updated_at'),
     ]);
     const profileIds = new Set<string>();
     for (const row of credentials || []) profileIds.add(row.profile_id);
     for (const row of sessions || []) profileIds.add(row.profile_id);
+    for (const row of archivedSessions || []) profileIds.add(row.profile_id);
     for (const row of keepers || []) profileIds.add(row.profile_id);
     const credentialsById = new Map((credentials || []).map((row: any) => [row.profile_id, row]));
     const sessionsById = new Map((sessions || []).map((row: any) => [row.profile_id, row]));
+    for (const row of archivedSessions || []) {
+      const key = String(row?.profile_id || '');
+      const current = sessionsById.get(key);
+      if (!key || Number(current?.session_version || 0) > 0) continue;
+      sessionsById.set(key, {
+        profile_id: key,
+        session_version: Number(row.session_version || 0),
+        status: 'ready',
+        expected_egress_ip: row.expected_egress_ip || null,
+        last_captured_at: row.captured_at || null,
+        last_validated_at: row.validated_at || null,
+        updated_at: row.captured_at || null,
+      });
+    }
     const keepersById = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
     return json([...profileIds].map((profileId) => safeState(
       profileId,
@@ -740,10 +756,10 @@ export async function adminProfileSessionRoutes(
   }
 
   if (path === '/api/profile-session-alerts' && method === 'GET') {
-    const [profiles, sessions, keepers] = await Promise.all([
+    const [profiles, sessions, archivedSessions, keepers] = await Promise.all([
       sb(
         env,
-        'userflex_profiles?select=id,name,enabled,session_mode,auth_strategy,browser_engine,storage_strategy,network_strategy,extension_strategy&enabled=eq.true&order=name.asc',
+        'userflex_profiles?select=id,name,enabled,session_mode,session_ready,auth_strategy,browser_engine,storage_strategy,network_strategy,extension_strategy&enabled=eq.true&order=name.asc',
       ),
       sb(
         env,
@@ -751,13 +767,35 @@ export async function adminProfileSessionRoutes(
       ),
       sb(
         env,
+        'userflex_profile_session_versions?select=profile_id,session_version,captured_at,validated_at&order=session_version.desc',
+      ),
+      sb(
+        env,
         'userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_seen_at,last_check_at,last_refresh_at',
       ),
     ]);
     const sessionsById = new Map<string, any>((sessions || []).map((row: any) => [String(row.profile_id), row]));
+    for (const row of archivedSessions || []) {
+      const key = String(row?.profile_id || '');
+      const current = sessionsById.get(key);
+      if (!key || Number(current?.session_version || 0) > 0) continue;
+      sessionsById.set(key, {
+        profile_id: key,
+        session_version: Number(row.session_version || 0),
+        status: 'ready',
+        last_validated_at: row.validated_at || null,
+        last_captured_at: row.captured_at || null,
+        updated_at: row.captured_at || null,
+      });
+    }
     const keepersById = new Map<string, any>((keepers || []).map((row: any) => [String(row.profile_id), row]));
     const alerts = (profiles || [])
-      .filter((profile: any) => snapshotAuthentication(runtimeForProfile(profile)))
+      .filter((profile: any) => {
+        const session = sessionsById.get(String(profile.id)) || null;
+        return snapshotAuthentication(runtimeForProfile(
+          Number(session?.session_version || 0) > 0 ? { ...profile, session_ready: true } : profile,
+        ));
+      })
       .map((profile: any) => {
         const session = sessionsById.get(String(profile.id)) || null;
         const keeper = keepersById.get(String(profile.id)) || null;
