@@ -392,7 +392,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const streamingProfile = String(profile?.platform || '').trim().toLowerCase() === 'streaming'
       || runtime.storageStrategy === 'netflix-local-device';
     const blockedStreamingDomHosts = [
-      'netflix.com',
       'disneyplus.com',
       'max.com',
       'hbomax.com',
