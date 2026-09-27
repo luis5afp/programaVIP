@@ -217,12 +217,23 @@ async function launchProfile(profile, card) {
     const result = await window.userflex.launchProfile(profile.id);
     if (!result?.ok) {
       setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
-    } else if (result?.inspection?.streamingTestHarness?.enabled === true) {
-      const overlays = Number(result.inspection.streamingTestHarness.overlays || 0);
-      const hidden = Number(result.inspection.streamingTestHarness.hidden || 0);
-      if (overlays > 0) {
+    } else {
+      const streamingProfile = categoryKey(categoryLabel(profile)) === 'streaming'
+        || profile?.runtime?.storageStrategy === 'netflix-local-device';
+
+      if (streamingProfile) {
+        const controller = result?.streamingDomController || {};
+        const inspection = result?.inspection?.streamingTestHarness || {};
+        const active = controller?.installed === true;
+        const overlays = Number(inspection?.overlays || 0);
+        const hidden = Number(inspection?.hidden || 0);
+        const guard = String(controller?.guardRevision || 'desconocido');
+        const external = controller?.blockedThirdPartyProvider === true
+          ? ' · página externa: control DOM bloqueado'
+          : '';
+
         setStreamingNotice(
-          `STREAMING: userFLOW procesó ${overlays} elemento(s) de interfaz y ocultó automáticamente ${hidden}. Puedes cerrar este aviso con ×.`,
+          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
         );
       }
     }
