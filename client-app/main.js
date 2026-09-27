@@ -1582,7 +1582,6 @@ function detachIfOutside(profileId, point) {
 }
 
 function snapshotManagedProfile(profile) {
-  if (profile?.runtime?.deviceLocalAuth === true) return false;
   const authStrategy = profile?.runtime?.authStrategy
     || (profile?.sessionMode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
   return authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
@@ -1672,10 +1671,10 @@ async function openProfile(profileId) {
     let fallbackRecovered = false;
     let activeDelivery = delivery;
 
-    // Device-local STREAMING sessions are not restored from central snapshots,
-    // but we still inspect the page so userFLOW can distinguish a provider
-    // household/device restriction from an authentication failure. Detection is
-    // read-only; userFLOW must never hide, click through, or bypass provider UI.
+    // STREAMING keeps device-bound browser storage local, while managed cookies
+    // can still be restored from the administrator snapshot. This inspection
+    // only distinguishes provider restrictions from a real login failure.
+    // It never hides, clicks through, or bypasses provider UI.
     if (profile?.runtime?.deviceLocalAuth === true) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1800));
