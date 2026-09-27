@@ -199,7 +199,14 @@ async function launchProfile(profile, card) {
 
   try {
     const result = await window.userflex.launchProfile(profile.id);
-    if (!result?.ok) setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
+    if (!result?.ok) {
+      setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
+    } else if (result?.inspection?.streamingAccessRestriction === true) {
+      setError(
+        catalogError,
+        'La sesión está abierta, pero el proveedor requiere verificar este dispositivo/Hogar. Completa la opción oficial que aparece en la página (por ejemplo, Ver temporalmente o verificar el Hogar). userFLOW no ocultará ni saltará esa verificación.',
+      );
+    }
   } finally {
     launchingProfiles.delete(profile.id);
     card.classList.remove('launching');
