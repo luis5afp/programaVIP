@@ -102,6 +102,16 @@ assert.match(
 );
 assert.match(
   engine,
+  /Catalog\/admin changes may revoke access[\s\S]{0,360}await close\(clientId, item\.name, 'profile_revoked'\)/,
+  'catalog/admin changes may close unauthorized browsers but must preserve their local profile data',
+);
+assert.doesNotMatch(
+  engine,
+  /reconcileAuthorizedProfiles[\s\S]{0,900}removeLocalProfile\(/,
+  'catalog reconciliation must never destructively delete local browser profiles',
+);
+assert.match(
+  engine,
   /!preserveDeviceLocalState && markerPolicy !== desiredPolicy/,
   'legacy portable markers must be accepted when a saved profile becomes STREAMING',
 );
