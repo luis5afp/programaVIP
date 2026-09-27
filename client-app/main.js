@@ -1582,6 +1582,7 @@ function detachIfOutside(profileId, point) {
 }
 
 function snapshotManagedProfile(profile) {
+  if (profile?.runtime?.deviceLocalAuth === true) return false;
   const authStrategy = profile?.runtime?.authStrategy
     || (profile?.sessionMode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
   return authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
