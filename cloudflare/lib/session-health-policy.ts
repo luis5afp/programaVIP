@@ -55,11 +55,12 @@ export function managedSessionHealth(
 
   if (session.status === 'needs_auth') {
     return {
-      usable: false,
+      usable: true,
       needsAttention: true,
-      severity: 'critical',
-      status: 'needs_renewal',
-      reason: keeper?.last_error || 'Un acceso real del cliente confirmó que esta sesión ya no permite entrar con normalidad.',
+      severity: 'warning',
+      status: 'valid',
+      reason: keeper?.last_error
+        || 'Se detectó un posible fallo de acceso, pero el snapshot guardado se conserva y seguirá entregándose hasta que el administrador lo reemplace o lo borre.',
       validatedAt: session.last_validated_at || null,
       ageMs: validationAge(session.last_validated_at, nowMs),
     };
@@ -79,11 +80,12 @@ export function managedSessionHealth(
 
   if (keeper?.enabled === true && keeper?.last_status === 'needs_admin') {
     return {
-      usable: false,
+      usable: true,
       needsAttention: true,
-      severity: 'critical',
-      status: 'needs_renewal',
-      reason: keeper?.last_error || 'La web volvió a solicitar inicio de sesión durante un acceso real.',
+      severity: 'warning',
+      status: 'valid',
+      reason: keeper?.last_error
+        || 'Session Manager detectó un posible fallo de acceso. El snapshot guardado no se revoca automáticamente.',
       validatedAt: session.last_validated_at || null,
       ageMs: validationAge(session.last_validated_at, nowMs),
     };
