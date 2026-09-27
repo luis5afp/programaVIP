@@ -19,6 +19,19 @@ assert.equal(manual.storageStrategy, 'local-persistent');
 assert.equal(snapshotAuthentication(manual), false);
 assert.equal(credentialAuthentication(manual), false);
 
+const legacyManualWithSnapshot = runtimeForProfile({
+  session_mode: 'manual-login',
+  auth_strategy: 'manual',
+  session_ready: true,
+  network_strategy: 'auto',
+});
+assert.equal(
+  legacyManualWithSnapshot.authStrategy,
+  'cookie-snapshot',
+  'an existing profile with a stored snapshot must keep receiving administrator cookies even if legacy metadata says manual',
+);
+assert.equal(snapshotAuthentication(legacyManualWithSnapshot), true);
+
 const snapshot = runtimeForProfile({
   session_mode: 'managed-first-party',
   auth_strategy: 'cookie-snapshot',
