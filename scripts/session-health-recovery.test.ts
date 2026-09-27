@@ -78,8 +78,28 @@ assert.match(
 );
 assert.match(
   engine,
-  /function browserGuardRevision[\s\S]{0,900}guardRevision[\s\S]{0,500}streaming-dom:/,
-  'built-in STREAMING script revisions must participate in browser generation matching',
+  /function browserGuardRevision/,
+  'browser guard revision helper must exist',
+);
+assert.match(
+  engine,
+  /const guardRevision = browserGuardRevision\(\)/,
+  'browser guard revision must be read during launch',
+);
+assert.match(
+  engine,
+  /`guard:\$\{guardRevision\}`/,
+  'browser guard revision must participate in browser generation matching',
+);
+assert.match(
+  engine,
+  /`streaming-dom:\$\{streamingDomEnabled \? '1' : '0'\}`/,
+  'STREAMING DOM state must participate in browser generation matching',
+);
+assert.match(
+  engine,
+  /scriptDiagnostics/,
+  'profile launches must expose which userFLOW scripts and managed extensions are active',
 );
 assert.match(
   guard,
