@@ -42,8 +42,8 @@ assert.equal(
 assert.equal(netflixSnapshot.deviceLocalAuth, true);
 assert.equal(
   snapshotAuthentication(netflixSnapshot),
-  false,
-  'Netflix authentication must remain local to the client device instead of replaying an admin snapshot',
+  true,
+  'STREAMING providers must receive administrator-managed cookies while keeping device-bound storage local',
 );
 
 const netflixCookiesOnly = runtimeForProfile({
@@ -91,7 +91,7 @@ const disneySnapshot = runtimeForProfile({
 });
 assert.equal(disneySnapshot.storageStrategy, 'netflix-local-device');
 assert.equal(disneySnapshot.deviceLocalAuth, true);
-assert.equal(snapshotAuthentication(disneySnapshot), false);
+assert.equal(snapshotAuthentication(disneySnapshot), true);
 assert.equal(credentialAuthentication(disneySnapshot), true);
 assert.equal(effectiveProfileCategory({ url: 'https://www.disneyplus.com/', platform: 'Video' }), 'STREAMING');
 
