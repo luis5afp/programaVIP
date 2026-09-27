@@ -82,8 +82,23 @@ assert.match(
 );
 assert.match(
   engine,
-  /\(runtimeChanged \|\| snapshotChanged\) && !preserveDeviceLocalState/,
-  'catalog refresh must never delete STREAMING browser storage for metadata or snapshot changes',
+  /if \(runtimeChanged \|\| snapshotChanged\) \{[\s\S]{0,120}invalidateSessionMarker\(dir\)/,
+  'catalog refresh may invalidate only the userFLEX marker and must preserve browser storage for every category',
+);
+assert.doesNotMatch(
+  engine,
+  /if \(runtimeChanged \|\| snapshotChanged\) \{[\s\S]{0,180}fsp\.rm\(dir/,
+  'runtime, snapshot, admin, or application changes must never erase a local browser profile automatically',
+);
+assert.doesNotMatch(
+  engine,
+  /resetProfileDirectory/,
+  'automatic profile resets are forbidden by the persistence invariant',
+);
+assert.match(
+  engine,
+  /Mandatory persistence invariant:[\s\S]{0,220}must never erase the browser profile/,
+  'browser persistence must be documented and enforced as a mandatory invariant',
 );
 assert.match(
   engine,
