@@ -708,16 +708,20 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     try {
       entries = await fsp.readdir(root, { withFileTypes: true });
     } catch {
-      return { removed: [] };
+      return { removed: [], preserved: [] };
     }
 
-    const removed = [];
+    const preserved = [];
     for (const item of entries) {
       if (!item.isDirectory() || allowed.has(item.name)) continue;
-      await removeLocalProfile(clientId, item.name, 'profile_revoked');
-      removed.push(item.name);
+      // Catalog/admin changes may revoke access to a profile, but they must not
+      // destroy the browser data on disk. Close any running browser and retain
+      // the local directory in case access is restored later. Destructive
+      // deletion is reserved for explicit local cleanup/logout actions.
+      await close(clientId, item.name, 'profile_revoked').catch(() => null);
+      preserved.push(item.name);
     }
-    return { removed };
+    return { removed: [], preserved };
   }
 
   async function reconcileCatalogProfiles(clientId, profiles = []) {
