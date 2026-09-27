@@ -149,6 +149,18 @@ async function invalidateSessionMarker(userDataDir) {
   await fsp.mkdir(userDataDir, { recursive: true });
 }
 
+function hasPersistentBrowserState(userDataDir) {
+  const profileDir = path.join(userDataDir, 'Default');
+  const candidates = [
+    path.join(profileDir, 'Network', 'Cookies'),
+    path.join(profileDir, 'Cookies'),
+    path.join(profileDir, 'Local Storage'),
+    path.join(profileDir, 'IndexedDB'),
+    path.join(profileDir, 'Service Worker'),
+  ];
+  return candidates.some((candidate) => fs.existsSync(candidate));
+}
+
 function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], userAgent = null }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -380,6 +392,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await killStrayProfileProcesses(userDataDir);
 
     let sessionMarker = snapshotManaged ? await readSessionMarker(userDataDir) : null;
+    const localBrowserStatePresent = snapshotManaged && hasPersistentBrowserState(userDataDir);
+    const localStateWithoutMarker = snapshotManaged && !sessionMarker && localBrowserStatePresent;
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || preserveDeviceLocalState
@@ -391,13 +405,18 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     // automatic flows must never wipe the profile directory.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
-      && sessionMarker?.profileId === profile.id
-      && restorePolicyMatches
       && (
-        preserveDeviceLocalState
+        localStateWithoutMarker
         || (
-          desiredSessionVersion > 0
-          && Number(sessionMarker?.version || 0) === desiredSessionVersion
+          sessionMarker?.profileId === profile.id
+          && restorePolicyMatches
+          && (
+            preserveDeviceLocalState
+            || (
+              desiredSessionVersion > 0
+              && Number(sessionMarker?.version || 0) === desiredSessionVersion
+            )
+          )
         )
       );
 
@@ -557,12 +576,18 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         }
 
         if (sessionVersionMatches) {
+          // Local browser state is always tried first. This is intentionally
+          // true even when an old marker is absent after an app/admin upgrade.
+          // If the real page later proves that authentication no longer works,
+          // openProfile performs one forced snapshot recovery on top of this
+          // same persistent browser profile.
           await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
             version: Number(sessionMarker?.version || desiredSessionVersion),
             format: sessionMarker?.format || delivery.material.format || null,
             storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
+            recoveredFromLocalState: localStateWithoutMarker,
           };
         } else {
           restore = await restorePortableSession({
