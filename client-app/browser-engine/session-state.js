@@ -771,12 +771,22 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         });
       const href = location.href;
       const currentHost = String(location.hostname || '').toLowerCase();
-      const streamingDomEnabled = streamingProfile === true;
+      const ownedStreamingPage = Boolean(
+        streamingProfile === true
+        && (
+          document.documentElement?.getAttribute('data-userflex-owned-streaming') === 'true'
+          || document.querySelector('meta[name="userflex-owned-streaming"][content="true"]')
+          || currentHost === 'localhost'
+          || currentHost === '127.0.0.1'
+          || currentHost === '::1'
+          || currentHost.endsWith('.userflex.test')
+        )
+      );
+      const streamingDomEnabled = ownedStreamingPage;
 
-      // STREAMING is reserved for pages owned by this project, so the category
-      // itself is the trust boundary for DOM controls. Any page assigned to
-      // STREAMING can opt an overlay into userFLOW control by using one of the
-      // documented data attributes/classes below.
+      // STREAMING DOM control is active only on pages that explicitly identify
+      // themselves as project-owned (or local/test hosts). This keeps the lab
+      // reliable while preventing accidental modification of third-party sites.
       let streamingTestHarness = { enabled: false, overlays: 0, hidden: 0 };
       if (streamingDomEnabled) {
         const styleId = '__userflex-streaming-dom-style';
@@ -787,11 +797,19 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
           document.head.appendChild(style);
         }
 
+        const declaredSelectors = String(
+          document.querySelector('meta[name="userflex-streaming-overlay-selectors"]')?.getAttribute('content') || ''
+        )
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+
         const selector = [
           '[data-userflex-streaming-overlay]',
           '[data-userflex-test="streaming-restriction"]',
           '.userflex-streaming-overlay',
           '.userflex-streaming-test-restriction',
+          ...declaredSelectors,
         ].join(',');
 
         const prepareOverlay = (overlay) => {
