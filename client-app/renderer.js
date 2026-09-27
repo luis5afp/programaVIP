@@ -228,12 +228,24 @@ async function launchProfile(profile, card) {
         const overlays = Number(inspection?.overlays || 0);
         const hidden = Number(inspection?.hidden || 0);
         const guard = String(controller?.guardRevision || 'desconocido');
+        const diagnostics = result?.scriptDiagnostics || {};
+        const builtInScripts = Array.isArray(diagnostics?.browserGuard?.contentScripts)
+          ? diagnostics.browserGuard.contentScripts.join(' + ')
+          : 'strategy.js + content.js';
+        const backgroundScript = String(diagnostics?.browserGuard?.backgroundScript || 'background.js');
+        const managed = Array.isArray(diagnostics?.managedExtensions)
+          ? diagnostics.managedExtensions
+              .map((item) => [item?.name, item?.version ? `v${item.version}` : ''].filter(Boolean).join(' '))
+              .filter(Boolean)
+          : [];
+        const managedLabel = managed.length ? managed.join(', ') : 'ninguna';
+        const helperLabel = diagnostics?.credentialHelper === true ? 'activo' : 'inactivo';
         const external = controller?.blockedThirdPartyProvider === true
           ? ' · página externa: control DOM bloqueado'
           : '';
 
         setStreamingNotice(
-          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
+          `STREAMING DOM: ${active ? 'activo' : 'desactivado'} · Browser Guard ${guard} · Scripts userFLOW: ${builtInScripts} + ${backgroundScript} · Extensiones administradas: ${managedLabel} · Autofill: ${helperLabel} · Detectados: ${overlays} · Ocultados: ${hidden}${external}`,
         );
       }
     }
