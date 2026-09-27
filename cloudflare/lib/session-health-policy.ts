@@ -105,9 +105,9 @@ export function managedSessionHealth(
     };
   }
 
-  // Validation is intentionally one-time. A validated session never expires
-  // because of age. It is revoked only when a real client access confirms that
-  // authentication no longer works.
+  // Validation is intentionally one-time. A stored snapshot never expires or
+  // revokes itself because of age or automatic access checks. It remains
+  // deliverable until an administrator explicitly replaces or deletes it.
   return {
     usable: true,
     needsAttention: false,
