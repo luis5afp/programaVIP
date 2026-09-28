@@ -116,18 +116,31 @@ jobs:
             echo "health=$health"
             if HEALTH="$health" EXPECTED_USERFLOW="$EXPECTED_USERFLOW" MIN_SESSION_MANAGER="$MIN_SESSION_MANAGER" node - <<'NODE'
           const value = JSON.parse(process.env.HEALTH || '{}');
+          const parseVersion = (input) => {
+            const match = String(input || '').match(/^(\d+)\.(\d+)\.(\d+)/);
+            return match ? match.slice(1).map(Number) : null;
+          };
+          const compareVersions = (left, right) => {
+            const a = parseVersion(left);
+            const b = parseVersion(right);
+            if (!a || !b) return null;
+            for (let i = 0; i < 3; i += 1) {
+              if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+            }
+            return 0;
+          };
           if (value.ok !== true) process.exit(1);
           if (value.databaseConfigured !== true) process.exit(1);
           if (value.databaseBackend !== 'neon') process.exit(1);
           if (value.databaseReachable !== true) process.exit(1);
           if (value.updateStorage !== 'cloudflare-r2') process.exit(1);
           if (value.profileImageStorage !== 'cloudflare-r2') process.exit(1);
-          if (value.minimumClientVersion !== process.env.EXPECTED_USERFLOW) process.exit(1);
+          if (compareVersions(process.env.EXPECTED_USERFLOW, value.minimumClientVersion) < 0) process.exit(1);
           if (value.minimumSessionManagerVersion !== process.env.MIN_SESSION_MANAGER) process.exit(1);
           NODE
             then
               ready=1
-              echo "Production Worker is active with userFLOW >= v$EXPECTED_USERFLOW and Session Manager >= v$MIN_SESSION_MANAGER after propagation attempt $attempt."
+              echo "Production Worker is active and accepts packaged userFLOW v$EXPECTED_USERFLOW with Session Manager >= v$MIN_SESSION_MANAGER after propagation attempt $attempt."
               break
             fi
             echo "Waiting for Cloudflare propagation ($attempt/30)..."
