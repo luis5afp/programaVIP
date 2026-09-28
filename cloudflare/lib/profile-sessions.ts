@@ -35,7 +35,7 @@ import {
   encryptProxy,
   json,
   optional,
-  sb,
+  db,
   sha,
   text,
   token,
@@ -82,7 +82,7 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
 }
 
 async function profileRow(env: Env, profileId: string) {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profiles?select=id,name,url,session_mode,session_ready,enabled,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
   );
@@ -92,13 +92,13 @@ async function profileRow(env: Env, profileId: string) {
 }
 
 async function defaultProxy(env: Env, profileId: string) {
-  const defaults = await sb(
+  const defaults = await db(
     env,
     `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
   );
   const proxyId = defaults?.[0]?.proxy_id;
   if (!proxyId) return null;
-  const proxies = await sb(
+  const proxies = await db(
     env,
     `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip&id=eq.${proxyId}&limit=1`,
   );
@@ -128,7 +128,7 @@ async function liveValidateCaptureProxy(env: Env, proxy: any) {
     password,
   });
 
-  await sb(env, `userflex_proxies?id=eq.${proxy.id}`, {
+  await db(env, `userflex_proxies?id=eq.${proxy.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
@@ -167,7 +167,7 @@ async function liveValidateCaptureProxy(env: Env, proxy: any) {
 }
 
 async function credentialRow(env: Env, profileId: string) {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_credentials?select=profile_id,login_username,password_ciphertext,password_iv,key_version,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
@@ -175,7 +175,7 @@ async function credentialRow(env: Env, profileId: string) {
 }
 
 async function sessionRow(env: Env, profileId: string) {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,material_key_version,expected_egress_ip,last_captured_at,last_validated_at,updated_at&profile_id=eq.${profileId}&limit=1`,
   );
@@ -185,7 +185,7 @@ async function sessionRow(env: Env, profileId: string) {
 async function keeperRow(env: Env, rawToken: string) {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_KEEPER_TOKEN');
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_check_at,last_refresh_at,session_manager_version,session_manager_version_seen_at&token_hash=eq.${tokenHash}&limit=1`,
   );
@@ -203,7 +203,7 @@ async function registerSessionKeeper(
   const rawToken = token(32);
   const tokenHash = await sha(`userflex-session-keeper:${rawToken}`);
   const now = new Date().toISOString();
-  await sb(env, 'userflex_session_keepers?on_conflict=profile_id', {
+  await db(env, 'userflex_session_keepers?on_conflict=profile_id', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify({
@@ -227,7 +227,7 @@ async function registerSessionKeeper(
 
 async function archiveCurrentSession(env: Env, row: any) {
   if (!row?.profile_id || !row?.material_ciphertext || !row?.material_iv || Number(row?.session_version || 0) < 1) return;
-  await sb(env, 'userflex_profile_session_versions?on_conflict=profile_id,session_version', {
+  await db(env, 'userflex_profile_session_versions?on_conflict=profile_id,session_version', {
     method: 'POST',
     headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
     body: JSON.stringify({
@@ -242,13 +242,13 @@ async function archiveCurrentSession(env: Env, row: any) {
     }),
   }).catch(() => null);
 
-  const versions = await sb(
+  const versions = await db(
     env,
     `userflex_profile_session_versions?select=id&profile_id=eq.${row.profile_id}&order=session_version.desc`,
   ).catch(() => []);
   const stale = (versions || []).slice(3).map((item: any) => String(item.id)).filter(Boolean);
   if (stale.length) {
-    await sb(env, `userflex_profile_session_versions?id=in.(${stale.join(',')})`, {
+    await db(env, `userflex_profile_session_versions?id=in.(${stale.join(',')})`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     }).catch(() => null);
@@ -271,7 +271,7 @@ async function storeSessionSnapshot(
   await archiveCurrentSession(env, existing);
   const version = Number(existing?.session_version || 0) + 1;
   const now = new Date().toISOString();
-  await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
+  await db(env, 'userflex_profile_sessions?on_conflict=profile_id', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify({
@@ -287,7 +287,7 @@ async function storeSessionSnapshot(
       updated_at: now,
     }),
   });
-  await sb(env, `userflex_profiles?id=eq.${profile.id}`, {
+  await db(env, `userflex_profiles?id=eq.${profile.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ session_ready: true, updated_at: now }),
@@ -379,7 +379,7 @@ export function validateCapturedMaterial(profile: any, material: any) {
 
 async function proxyRecord(env: Env, proxyId: string | null) {
   if (!proxyId) return null;
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_proxies?select=id,name,host,port,username,password_ciphertext,password_iv,enabled,proxy_type,validation_status,public_ip&id=eq.${proxyId}&limit=1`,
   );
@@ -393,7 +393,7 @@ async function profileValidationNetwork(env: Env, profile: any, clientId: string
   let assignmentProxyId: string | null = null;
 
   if (clientId) {
-    const rows = await sb(
+    const rows = await db(
       env,
       `userflex_assignments?select=proxy_id&client_id=eq.${clientId}&profile_id=eq.${profile.id}&enabled=eq.true&limit=1`,
     );
@@ -514,12 +514,12 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
 
   try {
     const [globalExtensions, profileMemberships] = await Promise.all([
-      sb(env, 'userflex_extensions?select=id,name,enabled,validation_status,scope&scope=eq.global&order=name.asc'),
-      sb(env, `userflex_profile_extensions?select=extension_id&profile_id=eq.${profile.id}`),
+      db(env, 'userflex_extensions?select=id,name,enabled,validation_status,scope&scope=eq.global&order=name.asc'),
+      db(env, `userflex_profile_extensions?select=extension_id&profile_id=eq.${profile.id}`),
     ]);
     const selectiveIds = (profileMemberships || []).map((row: any) => row.extension_id);
     const selectiveExtensions = selectiveIds.length
-      ? await sb(env, `userflex_extensions?select=id,name,enabled,validation_status,scope&id=in.(${selectiveIds.join(',')})&order=name.asc`)
+      ? await db(env, `userflex_extensions?select=id,name,enabled,validation_status,scope&id=in.(${selectiveIds.join(',')})&order=name.asc`)
       : [];
     const configuredExtensions = [...(globalExtensions || []), ...(selectiveExtensions || [])];
     const activeExtensions = configuredExtensions.filter((row: any) => row.enabled === true && row.validation_status === 'runtime_valid');
@@ -617,7 +617,7 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
 async function validationJob(env: Env, rawToken: string, allowRunning = true) {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_VALIDATION_TOKEN');
   const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,expires_at,started_at,completed_at&token_hash=eq.${tokenHash}&limit=1`,
   );
@@ -625,7 +625,7 @@ async function validationJob(env: Env, rawToken: string, allowRunning = true) {
   if (!job || !['pending', 'running'].includes(job.status)) throw new HttpError(401, 'VALIDATION_TOKEN_INVALID');
   if (!allowRunning && job.status !== 'pending') throw new HttpError(401, 'VALIDATION_TOKEN_ALREADY_USED');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
-    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
@@ -720,10 +720,10 @@ export async function adminProfileSessionRoutes(
 
   if (path === '/api/profile-session-states' && method === 'GET') {
     const [credentials, sessions, archivedSessions, keepers] = await Promise.all([
-      sb(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
-      sb(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
-      sb(env, 'userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,captured_at,validated_at&order=session_version.desc'),
-      sb(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,session_manager_version,session_manager_version_seen_at,updated_at'),
+      db(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
+      db(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
+      db(env, 'userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,captured_at,validated_at&order=session_version.desc'),
+      db(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,session_manager_version,session_manager_version_seen_at,updated_at'),
     ]);
     const profileIds = new Set<string>();
     for (const row of credentials || []) profileIds.add(row.profile_id);
@@ -757,19 +757,19 @@ export async function adminProfileSessionRoutes(
 
   if (path === '/api/profile-session-alerts' && method === 'GET') {
     const [profiles, sessions, archivedSessions, keepers] = await Promise.all([
-      sb(
+      db(
         env,
         'userflex_profiles?select=id,name,enabled,session_mode,session_ready,auth_strategy,browser_engine,storage_strategy,network_strategy,extension_strategy&enabled=eq.true&order=name.asc',
       ),
-      sb(
+      db(
         env,
         'userflex_profile_sessions?select=profile_id,session_version,status,last_validated_at,last_captured_at,updated_at',
       ),
-      sb(
+      db(
         env,
         'userflex_profile_session_versions?select=profile_id,session_version,captured_at,validated_at&order=session_version.desc',
       ),
-      sb(
+      db(
         env,
         'userflex_session_keepers?select=profile_id,enabled,last_status,last_error,last_seen_at,last_check_at,last_refresh_at',
       ),
@@ -858,7 +858,7 @@ export async function adminProfileSessionRoutes(
       throw new HttpError(400, 'PASSWORD_REQUIRED', 'Ingresa la contraseña para preparar la sesión administrada.');
     }
 
-    await sb(env, 'userflex_profile_credentials?on_conflict=profile_id', {
+    await db(env, 'userflex_profile_credentials?on_conflict=profile_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({
@@ -868,7 +868,7 @@ export async function adminProfileSessionRoutes(
         updated_at: new Date().toISOString(),
       }),
     });
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ updated_at: new Date().toISOString() }),
@@ -893,11 +893,11 @@ export async function adminProfileSessionRoutes(
         'La estrategia actual exige credenciales. Cambia primero la autenticación a snapshot o manual.',
       );
     }
-    await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ updated_at: new Date().toISOString() }),
@@ -936,12 +936,12 @@ export async function adminProfileSessionRoutes(
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-profile-validation:${rawToken}`);
     const expiresAt = new Date(Date.now() + VALIDATION_TTL_MS).toISOString();
-    await sb(env, `userflex_profile_validation_jobs?profile_id=eq.${profileId}&status=in.(pending,running)`, {
+    await db(env, `userflex_profile_validation_jobs?profile_id=eq.${profileId}&status=in.(pending,running)`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired', completed_at: new Date().toISOString() }),
     });
-    const jobs = await sb(env, 'userflex_profile_validation_jobs', {
+    const jobs = await db(env, 'userflex_profile_validation_jobs', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({
@@ -973,7 +973,7 @@ export async function adminProfileSessionRoutes(
   const validationJobMatch = path.match(/^\/api\/profile-tests\/([0-9a-f-]{36})$/i);
   if (validationJobMatch && method === 'GET') {
     const jobId = uuid(validationJobMatch[1], 'jobId');
-    const rows = await sb(
+    const rows = await db(
       env,
       `userflex_profile_validation_jobs?select=id,profile_id,client_id,status,result,error,expires_at,started_at,completed_at,created_at&id=eq.${jobId}&limit=1`,
     );
@@ -981,7 +981,7 @@ export async function adminProfileSessionRoutes(
     if (!job) throw new HttpError(404, 'VALIDATION_JOB_NOT_FOUND');
     if (['pending', 'running'].includes(job.status) && new Date(job.expires_at).getTime() <= Date.now()) {
       const completedAt = new Date().toISOString();
-      await sb(env, `userflex_profile_validation_jobs?id=eq.${jobId}`, {
+      await db(env, `userflex_profile_validation_jobs?id=eq.${jobId}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ status: 'expired', completed_at: completedAt }),
@@ -1058,7 +1058,7 @@ export async function adminProfileSessionRoutes(
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-session-guest:${rawToken}`);
     const expiresAt = new Date(Date.now() + CAPTURE_TTL_MS).toISOString();
-    const jobs = await sb(env, 'userflex_profile_session_jobs', {
+    const jobs = await db(env, 'userflex_profile_session_jobs', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({ profile_id: profileId, token_hash: tokenHash, expires_at: expiresAt }),
@@ -1100,12 +1100,12 @@ export async function adminProfileSessionRoutes(
     const rawToken = token(32);
     const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
     const expiresAt = new Date(Date.now() + CAPTURE_TTL_MS).toISOString();
-    await sb(env, `userflex_profile_session_jobs?profile_id=eq.${profileId}&status=eq.pending`, {
+    await db(env, `userflex_profile_session_jobs?profile_id=eq.${profileId}&status=eq.pending`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired' }),
     });
-    const jobs = await sb(env, 'userflex_profile_session_jobs', {
+    const jobs = await db(env, 'userflex_profile_session_jobs', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({ profile_id: profileId, token_hash: tokenHash, expires_at: expiresAt }),
@@ -1127,15 +1127,15 @@ export async function adminProfileSessionRoutes(
   if (clearMatch && method === 'DELETE') {
     const profileId = uuid(clearMatch[1], 'profileId');
     await profileRow(env, profileId);
-    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
-    await sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     }).catch(() => null);
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_ready: false, updated_at: new Date().toISOString() }),
@@ -1151,14 +1151,14 @@ export async function adminProfileSessionRoutes(
 async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'complete') {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_CAPTURE_TOKEN');
   const tokenHash = await sha(`userflex-session-capture:${rawToken}`);
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_session_jobs?select=id,profile_id,status,expires_at,used_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const job = rows?.[0];
   if (!job || job.status !== 'pending') throw new HttpError(401, 'CAPTURE_TOKEN_INVALID');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
-    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired' }),
@@ -1169,7 +1169,7 @@ async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'comp
   if (phase === 'bootstrap') {
     if (job.used_at) throw new HttpError(401, 'CAPTURE_TOKEN_ALREADY_USED', 'Este enlace de captura ya fue aceptado por Session Manager. Si Chromium no se abrió, vuelve al panel y genera un enlace nuevo.');
     const claimedAt = new Date().toISOString();
-    const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
+    const claimed = await db(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({ used_at: claimedAt }),
@@ -1185,14 +1185,14 @@ async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'comp
 async function guestJob(env: Env, rawToken: string) {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(401, 'INVALID_GUEST_TOKEN');
   const tokenHash = await sha(`userflex-session-guest:${rawToken}`);
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_session_jobs?select=id,profile_id,status,expires_at,used_at&token_hash=eq.${tokenHash}&limit=1`,
   );
   const job = rows?.[0];
   if (!job || job.status !== 'pending') throw new HttpError(401, 'GUEST_TOKEN_INVALID');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
-    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired' }),
@@ -1202,7 +1202,7 @@ async function guestJob(env: Env, rawToken: string) {
   if (job.used_at) throw new HttpError(401, 'GUEST_TOKEN_ALREADY_USED');
 
   const claimedAt = new Date().toISOString();
-  const claimed = await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
+  const claimed = await db(env, `userflex_profile_session_jobs?id=eq.${job.id}&status=eq.pending&used_at=is.null`, {
     method: 'PATCH',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify({ used_at: claimedAt, status: 'completed' }),
@@ -1228,7 +1228,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     }
 
     const now = new Date().toISOString();
-    const claimed = await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}&status=eq.pending`, {
+    const claimed = await db(env, `userflex_profile_validation_jobs?id=eq.${job.id}&status=eq.pending`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({ status: 'running', started_at: now }),
@@ -1323,7 +1323,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       throw new HttpError(413, 'VALIDATION_RESULT_TOO_LARGE');
     }
     const now = new Date().toISOString();
-    await sb(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1342,7 +1342,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       'hybrid-login-not-detected',
     ].includes(sessionOutcome);
     if (sessionChecked && sessionOutcome === 'snapshot-authenticated') {
-      await sb(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
+      await db(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
@@ -1360,7 +1360,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const job = await guestJob(env, rawToken);
-    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_manager_version: sessionManagerVersion }),
@@ -1405,7 +1405,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const body = await bodyJson(request);
     const rawToken = text(body.token, 'token', 128);
     const job = await captureJob(env, rawToken, 'bootstrap');
-    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_manager_version: sessionManagerVersion }),
@@ -1471,7 +1471,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       validatedAt: authenticated ? now : null,
     });
     const keeperToken = await registerSessionKeeper(env, job.profile_id, sessionManagerVersion, authenticated);
-    await sb(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_profile_session_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'completed' }),
@@ -1493,7 +1493,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const rawToken = text(body.token, 'token', 128);
     const keeper = await keeperRow(env, rawToken);
     const now = new Date().toISOString();
-    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+    await db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1524,7 +1524,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
     if (!['cookie-snapshot', 'hybrid'].includes(authStrategy)) {
       const now = new Date().toISOString();
-      await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+      await db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
@@ -1537,7 +1537,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       throw new HttpError(401, 'KEEPER_DISABLED', 'Este perfil ya no necesita Session Keeper.');
     }
     const keeperSeenAt = new Date().toISOString();
-    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+    await db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1592,7 +1592,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
 
     if (!authenticated) {
       await Promise.all([
-        sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+        db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
           method: 'PATCH',
           headers: { Prefer: 'return=minimal' },
           body: JSON.stringify({
@@ -1605,7 +1605,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
             updated_at: now,
           }),
         }),
-        sb(env, `userflex_profile_sessions?profile_id=eq.${keeper.profile_id}&status=eq.ready`, {
+        db(env, `userflex_profile_sessions?profile_id=eq.${keeper.profile_id}&status=eq.ready`, {
           method: 'PATCH',
           headers: { Prefer: 'return=minimal' },
           body: JSON.stringify({
@@ -1626,7 +1626,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       validatedAt: now,
       notifyClients: false,
     });
-    await sb(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
+    await db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1672,7 +1672,7 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
   // version archive. Recover the newest archived generation automatically so
   // existing profiles resume cookie delivery without requiring a new capture.
   if (!row?.material_ciphertext || !row?.material_iv || Number(row?.session_version || 0) < 1) {
-    const archivedRows = await sb(
+    const archivedRows = await db(
       env,
       `userflex_profile_session_versions?select=profile_id,session_version,material_ciphertext,material_iv,material_key_version,expected_egress_ip,captured_at,validated_at&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
     ).catch(() => []);
@@ -1680,7 +1680,7 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
     if (!archived?.material_ciphertext || !archived?.material_iv || Number(archived?.session_version || 0) < 1) return null;
 
     const now = new Date().toISOString();
-    await sb(env, 'userflex_profile_sessions?on_conflict=profile_id', {
+    await db(env, 'userflex_profile_sessions?on_conflict=profile_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({
@@ -1696,7 +1696,7 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
         updated_at: now,
       }),
     });
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_ready: true, updated_at: now }),
@@ -1721,7 +1721,7 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
   // remain authoritative until the administrator explicitly replaces or clears
   // them, so restore that row to ready before delivery.
   if (row.status !== 'ready') {
-    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1731,7 +1731,7 @@ export async function managedSessionMaterial(env: Env, profileId: string) {
     }).catch(() => null);
   }
 
-  await sb(env, `userflex_profiles?id=eq.${profileId}&session_ready=eq.false`, {
+  await db(env, `userflex_profiles?id=eq.${profileId}&session_ready=eq.false`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ session_ready: true, updated_at: new Date().toISOString() }),

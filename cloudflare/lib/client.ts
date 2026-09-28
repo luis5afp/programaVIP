@@ -1,5 +1,5 @@
 import { ClientIdentity } from './auth';
-import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, json, sb } from './core';
+import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, json, db } from './core';
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import { managedExtensionsForProfiles } from './extensions';
@@ -33,7 +33,7 @@ function profileImageUrl(profile: any) {
 }
 
 export async function clientCatalog(request: Request, env: Env, id: ClientIdentity) {
-  const memberships = await sb(
+  const memberships = await db(
     env,
     `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&order=created_at.asc`,
   );
@@ -53,31 +53,31 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
   const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
   const [profiles, defaults, sessions, archivedSessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
-    sb(
+    db(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=in.(${ids})&enabled=eq.true`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_proxy_defaults?select=profile_id,proxy_id&profile_id=in.(${ids})`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_validated_at&profile_id=in.(${ids})`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,validated_at&profile_id=in.(${ids})&order=session_version.desc`,
     ),
-    sb(
+    db(
       env,
       `userflex_session_keepers?select=profile_id,enabled,last_status,last_error&profile_id=in.(${ids})`,
     ),
-    sb(
+    db(
       env,
       `userflex_assignments?select=profile_id,proxy_id&client_id=eq.${id.clientId}&profile_id=in.(${ids})&enabled=eq.true`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_credentials?select=profile_id,updated_at&profile_id=in.(${ids})`,
     ),
@@ -89,7 +89,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     ...(assignments || []).map((row: any) => String(row.proxy_id || '')).filter(Boolean),
   ])];
   const proxyRows = proxyIds.length
-    ? await sb(
+    ? await db(
         env,
         `userflex_proxies?select=id,proxy_type,validation_status,public_ip,enabled&id=in.(${proxyIds.join(',')})`,
       )
@@ -227,31 +227,31 @@ export async function clientLaunch(
   }
 
   const [memberships, assignments, profiles, defaults, keepers, currentSessions, archivedSessions] = await Promise.all([
-    sb(
+    db(
       env,
       `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_assignments?select=id,proxy_id&client_id=eq.${id.clientId}&profile_id=eq.${profileId}&enabled=eq.true&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=eq.${profileId}&enabled=eq.true&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_session_keepers?select=profile_id,enabled,last_status,last_error&profile_id=eq.${profileId}&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_sessions?select=profile_id,session_version,status&profile_id=eq.${profileId}&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_profile_session_versions?select=profile_id,session_version&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
     ),
@@ -291,7 +291,7 @@ export async function clientLaunch(
   let effectiveProxy: any = null;
 
   if (effectiveProxyId) {
-    const rows = await sb(
+    const rows = await db(
       env,
       `userflex_proxies?select=id,host,port,username,password_ciphertext,password_iv,proxy_type,validation_status,public_ip,enabled&id=eq.${effectiveProxyId}&limit=1`,
     );
@@ -449,11 +449,11 @@ export async function clientSessionFallback(
   }
 
   const [memberships, profiles] = await Promise.all([
-    sb(
+    db(
       env,
       `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
     ),
-    sb(
+    db(
       env,
       `userflex_profiles?select=id,name,url,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&enabled=eq.true&limit=1`,
     ),
@@ -464,7 +464,7 @@ export async function clientSessionFallback(
   const profile = profiles?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 
-  const versions = await sb(
+  const versions = await db(
     env,
     `userflex_profile_session_versions?select=session_version,material_ciphertext,material_iv,material_key_version,expected_egress_ip,captured_at,validated_at&profile_id=eq.${profileId}&session_version=lt.${beforeVersion}&order=session_version.desc&limit=1`,
   );
@@ -508,7 +508,7 @@ export async function clientRequestSessionChecks(
     throw new HttpError(426, 'CLIENT_UPDATE_REQUIRED', `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`);
   }
 
-  const memberships = await sb(
+  const memberships = await db(
     env,
     `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}`,
   );
@@ -534,7 +534,7 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
   }
 
   const sessionExpiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
-  await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
+  await db(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ expires_at: sessionExpiresAt, last_seen_at: new Date().toISOString() }),
@@ -563,7 +563,7 @@ export async function clientSessionHealth(
   if (!versionAtLeast(clientVersion, MIN_USERFLOW_VERSION)) {
     throw new HttpError(426, 'CLIENT_UPDATE_REQUIRED', `Actualiza userFLOW a v${MIN_USERFLOW_VERSION} o superior.`);
   }
-  const memberships = await sb(
+  const memberships = await db(
     env,
     `userflex_plan_profiles?select=profile_id&plan_id=eq.${id.plan.id}&profile_id=eq.${profileId}&limit=1`,
   );
@@ -580,7 +580,7 @@ export async function clientSessionHealth(
     ? body.reason.trim().slice(0, 1000)
     : 'El cliente confirmó que la sesión ya no permite acceder con normalidad.';
 
-  const currentRows = await sb(
+  const currentRows = await db(
     env,
     `userflex_profile_sessions?select=session_version,status,last_validated_at&profile_id=eq.${profileId}&limit=1`,
   );
@@ -597,7 +597,7 @@ export async function clientSessionHealth(
   // delivery of that central generation automatically. Only an explicit admin
   // action (replace/delete snapshot) may remove it.
   if (warning) {
-    await sb(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -628,7 +628,7 @@ export async function clientSessionHealth(
 
 export async function clientLogout(env: Env, id: ClientIdentity) {
   await closeOpenProfileUsageForSession(env, id.sessionId, 'logout');
-  await sb(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
+  await db(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ revoked_at: new Date().toISOString() }),

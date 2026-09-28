@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const migration = readFileSync(new URL('../supabase/migrations/20260921130000_userflex_session_keeper.sql', import.meta.url), 'utf8');
+const migration = readFileSync(new URL('../database/migrations/20260921130000_userflex_session_keeper.sql', import.meta.url), 'utf8');
 const sessions = readFileSync(new URL('../cloudflare/lib/profile-sessions.ts', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
 const manager = readFileSync(new URL('../session-manager/main.js', import.meta.url), 'utf8');

@@ -19,7 +19,7 @@ import {
   HttpError,
   adminCookie,
   json,
-  sb,
+  db,
   requireSameOriginWrite,
   securityHeaders,
   withSecurity,
@@ -51,7 +51,7 @@ async function api(request: Request, env: Env): Promise<Response> {
     let databaseReachable = false;
     let databaseError: string | null = null;
     try {
-      const probe = await sb(env, 'vsixteen_users?select=id&limit=1');
+      const probe = await db(env, 'vsixteen_users?select=id&limit=1');
       databaseReachable = Array.isArray(probe);
     } catch (error) {
       databaseError = error instanceof HttpError ? error.code : 'DATABASE_PROBE_FAILED';

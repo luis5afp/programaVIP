@@ -1,4 +1,4 @@
-import { Env, sb } from './core';
+import { Env, db } from './core';
 
 function uniqueIds(values: string[]): string[] {
   return [...new Set(values.map((value) => String(value || '')).filter(Boolean))];
@@ -12,7 +12,7 @@ export async function touchClientsConfig(env: Env, clientIds: string[]): Promise
   const ids = uniqueIds(clientIds);
   if (!ids.length) return;
   const revision = new Date().toISOString();
-  await sb(env, `userflex_clients?id=in.(${ids.join(',')})`, {
+  await db(env, `userflex_clients?id=in.(${ids.join(',')})`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ updated_at: revision }),
@@ -22,7 +22,7 @@ export async function touchClientsConfig(env: Env, clientIds: string[]): Promise
 export async function clientIdsForPlans(env: Env, planIds: string[]): Promise<string[]> {
   const ids = uniqueIds(planIds);
   if (!ids.length) return [];
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_subscriptions?select=client_id&status=eq.active&plan_id=in.(${ids.join(',')})`,
   );
@@ -30,7 +30,7 @@ export async function clientIdsForPlans(env: Env, planIds: string[]): Promise<st
 }
 
 export async function clientIdsForProfile(env: Env, profileId: string): Promise<string[]> {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_plan_profiles?select=plan_id&profile_id=eq.${profileId}`,
   );
@@ -39,8 +39,8 @@ export async function clientIdsForProfile(env: Env, profileId: string): Promise<
 
 export async function clientIdsForProxy(env: Env, proxyId: string): Promise<string[]> {
   const [assignments, defaults] = await Promise.all([
-    sb(env, `userflex_assignments?select=client_id&proxy_id=eq.${proxyId}`),
-    sb(env, `userflex_profile_proxy_defaults?select=profile_id&proxy_id=eq.${proxyId}`),
+    db(env, `userflex_assignments?select=client_id&proxy_id=eq.${proxyId}`),
+    db(env, `userflex_profile_proxy_defaults?select=profile_id&proxy_id=eq.${proxyId}`),
   ]);
   const direct = (assignments || []).map((row: any) => String(row.client_id));
   const inherited: string[] = [];

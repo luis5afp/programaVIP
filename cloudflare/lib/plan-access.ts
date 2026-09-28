@@ -7,7 +7,7 @@ import {
   bodyJson,
   integer,
   json,
-  sb,
+  db,
   text,
   uuid,
 } from './core';
@@ -25,20 +25,20 @@ function selectedProfileIds(value: unknown): string[] {
 }
 
 async function verifyProfiles(env: Env, ids: string[]) {
-  const rows = await sb(env, `userflex_profiles?select=id&id=in.(${ids.join(',')})`);
+  const rows = await db(env, `userflex_profiles?select=id&id=in.(${ids.join(',')})`);
   if (rows.length !== ids.length) {
     throw new HttpError(400, 'PLAN_PROFILE_NOT_FOUND', 'Uno de los perfiles seleccionados ya no existe.');
   }
 }
 
 async function planDetails(env: Env, rows?: any[]) {
-  const plans = rows || await sb(
+  const plans = rows || await db(
     env,
     'userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&order=name.asc',
   );
   if (!plans.length) return [];
   const ids = plans.map((plan: any) => plan.id).join(',');
-  const access = await sb(
+  const access = await db(
     env,
     `userflex_plan_profiles?select=plan_id,profile_id&plan_id=in.(${ids})&order=created_at.asc`,
   );
@@ -52,23 +52,23 @@ async function planDetails(env: Env, rows?: any[]) {
 }
 
 async function replacePlanProfiles(env: Env, planId: string, profileIds: string[]) {
-  await sb(env, `userflex_plan_profiles?plan_id=eq.${planId}`, {
+  await db(env, `userflex_plan_profiles?plan_id=eq.${planId}`, {
     method: 'DELETE',
     headers: { Prefer: 'return=minimal' },
   });
-  await sb(env, 'userflex_plan_profiles', {
+  await db(env, 'userflex_plan_profiles', {
     method: 'POST',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify(profileIds.map((profileId) => ({ plan_id: planId, profile_id: profileId }))),
   });
-  await sb(env, 'rpc/userflex_disable_disallowed_assignments', {
+  await db(env, 'rpc/userflex_disable_disallowed_assignments', {
     method: 'POST',
     body: JSON.stringify({ p_plan_id: planId }),
   });
 }
 
 async function requirePlanAllowsAssignment(env: Env, clientId: string, profileId: string) {
-  const result = await sb(env, 'rpc/userflex_plan_allows_profile', {
+  const result = await db(env, 'rpc/userflex_plan_allows_profile', {
     method: 'POST',
     body: JSON.stringify({ p_client_id: clientId, p_profile_id: profileId }),
   });
@@ -83,7 +83,7 @@ async function requirePlanAllowsAssignment(env: Env, clientId: string, profileId
 }
 
 async function assignmentResponse(env: Env, id: string) {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled,created_at,updated_at&id=eq.${id}&limit=1`,
   );
@@ -113,7 +113,7 @@ export async function planAccessRoutes(
       max_profiles: integer(body.max_profiles, 1, 500, 'max_profiles'),
       enabled: body.enabled !== false,
     };
-    const rows = await sb(env, 'userflex_plans', {
+    const rows = await db(env, 'userflex_plans', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(row),
@@ -123,7 +123,7 @@ export async function planAccessRoutes(
     try {
       await replacePlanProfiles(env, plan.id, profileIds);
     } catch (error) {
-      await sb(env, `userflex_plans?id=eq.${plan.id}`, {
+      await db(env, `userflex_plans?id=eq.${plan.id}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
       }).catch(() => null);
@@ -152,7 +152,7 @@ export async function planAccessRoutes(
     if (body.max_profiles !== undefined) patch.max_profiles = integer(body.max_profiles, 1, 500, 'max_profiles');
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
 
-    const rows = await sb(env, `userflex_plans?id=eq.${planId}`, {
+    const rows = await db(env, `userflex_plans?id=eq.${planId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),
@@ -169,7 +169,7 @@ export async function planAccessRoutes(
 
   if (planMatch && method === 'DELETE') {
     const planId = uuid(planMatch[1], 'planId');
-    await sb(env, `userflex_plans?id=eq.${planId}`, {
+    await db(env, `userflex_plans?id=eq.${planId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
@@ -184,7 +184,7 @@ export async function planAccessRoutes(
     const proxyId = body.proxyId ? uuid(body.proxyId, 'proxyId') : null;
     const enabled = body.enabled !== false;
     if (enabled) await requirePlanAllowsAssignment(env, clientId, profileId);
-    const result = await sb(env, 'rpc/userflex_upsert_assignment', {
+    const result = await db(env, 'rpc/userflex_upsert_assignment', {
       method: 'POST',
       body: JSON.stringify({
         p_client_id: clientId,
@@ -207,7 +207,7 @@ export async function planAccessRoutes(
   const assignmentMatch = path.match(/^\/api\/assignments\/([0-9a-f-]{36})$/i);
   if (assignmentMatch && method === 'PATCH') {
     const assignmentId = uuid(assignmentMatch[1], 'assignmentId');
-    const existingRows = await sb(
+    const existingRows = await db(
       env,
       `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled&id=eq.${assignmentId}&limit=1`,
     );
@@ -221,7 +221,7 @@ export async function planAccessRoutes(
         : null;
     const enabled = body.enabled === undefined ? existing.enabled === true : Boolean(body.enabled);
     if (enabled) await requirePlanAllowsAssignment(env, existing.client_id, existing.profile_id);
-    const result = await sb(env, 'rpc/userflex_upsert_assignment', {
+    const result = await db(env, 'rpc/userflex_upsert_assignment', {
       method: 'POST',
       body: JSON.stringify({
         p_client_id: existing.client_id,

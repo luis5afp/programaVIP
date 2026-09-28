@@ -1,7 +1,7 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import type { AdminIdentity } from './auth';
 import type { ClientIdentity } from './auth';
-import { Env, HttpError, audit, bodyJson, json, optional, sb, sha, text, token, uuid } from './core';
+import { Env, HttpError, audit, bodyJson, json, optional, db, sha, text, token, uuid } from './core';
 import { touchProfileClients } from './client-revalidation';
 
 const BUCKET = 'userflex-extension-packages';
@@ -311,7 +311,7 @@ function extensionPublic(row: any) {
 }
 
 async function extensionRow(env: Env, extensionId: string): Promise<ExtensionRow> {
-  const rows = await sb(env, `userflex_extensions?select=*&id=eq.${extensionId}&limit=1`);
+  const rows = await db(env, `userflex_extensions?select=*&id=eq.${extensionId}&limit=1`);
   if (!rows?.[0]) throw new HttpError(404, 'EXTENSION_NOT_FOUND', 'La extensión no existe.');
   return rows[0] as ExtensionRow;
 }
@@ -321,17 +321,17 @@ function scopeValue(value: unknown): 'global' | 'selective' {
 }
 
 async function touchExtensionProfiles(env: Env, extensionId: string) {
-  const memberships = await sb(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
+  const memberships = await db(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
   await Promise.all((memberships || []).map((row: any) => touchProfileClients(env, row.profile_id).catch(() => null)));
   const extension = await extensionRow(env, extensionId).catch(() => null);
   if (extension?.scope === 'global') {
-    const profiles = await sb(env, 'userflex_profiles?select=id');
+    const profiles = await db(env, 'userflex_profiles?select=id');
     await Promise.all((profiles || []).map((row: any) => touchProfileClients(env, row.id).catch(() => null)));
   }
 }
 
 async function touchAllProfiles(env: Env) {
-  const profiles = await sb(env, 'userflex_profiles?select=id');
+  const profiles = await db(env, 'userflex_profiles?select=id');
   await Promise.all((profiles || []).map((row: any) => touchProfileClients(env, row.id).catch(() => null)));
 }
 
@@ -364,12 +364,12 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
   await ensureExtensionSchema(env);
 
   if (path === '/api/extensions' && method === 'GET') {
-    const rows = await sb(env, 'userflex_extensions?select=*&order=name.asc');
+    const rows = await db(env, 'userflex_extensions?select=*&order=name.asc');
     return json((rows || []).map(extensionPublic));
   }
 
   if (path === '/api/profile-extension-memberships' && method === 'GET') {
-    return json(await sb(env, 'userflex_profile_extensions?select=profile_id,extension_id,created_at&order=created_at.asc'));
+    return json(await db(env, 'userflex_profile_extensions?select=profile_id,extension_id,created_at&order=created_at.asc'));
   }
 
   if (path === '/api/extensions' && method === 'POST') {
@@ -382,7 +382,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     await uploadPackage(env, objectPath, bytes);
 
     try {
-      const rows = await sb(env, 'userflex_extensions', {
+      const rows = await db(env, 'userflex_extensions', {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
@@ -421,7 +421,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const objectPath = `${extensionId}/${sha256}.zip`;
     await uploadPackage(env, objectPath, bytes);
     try {
-      const rows = await sb(env, `userflex_extensions?id=eq.${extensionId}`, {
+      const rows = await db(env, `userflex_extensions?id=eq.${extensionId}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
@@ -458,14 +458,14 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const body = await bodyJson(request, 64 * 1024);
     const values = Array.isArray(body.profileIds) ? body.profileIds : [];
     const profileIds = [...new Set(values.map((value: unknown) => uuid(value, 'profileId')))].slice(0, 500);
-    const previousMemberships = await sb(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
+    const previousMemberships = await db(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
     const previousProfileIds = (previousMemberships || []).map((row: any) => row.profile_id);
-    await sb(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
+    await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
     if (extension.scope === 'selective' && profileIds.length) {
-      await sb(env, 'userflex_profile_extensions', {
+      await db(env, 'userflex_profile_extensions', {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify(profileIds.map((profileId) => ({ profile_id: profileId, extension_id: extensionId }))),
@@ -486,19 +486,19 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const values = Array.isArray(body.extensionIds) ? body.extensionIds : [];
     const extensionIds = [...new Set(values.map((value: unknown) => uuid(value, 'extensionId')))].slice(0, 500);
     if (extensionIds.length) {
-      const rows = await sb(env, `userflex_extensions?select=id,scope,enabled,validation_status&id=in.(${extensionIds.join(',')})`);
+      const rows = await db(env, `userflex_extensions?select=id,scope,enabled,validation_status&id=in.(${extensionIds.join(',')})`);
       const eligible = new Set((rows || [])
         .filter((row: any) => row.scope === 'selective' && row.validation_status === 'runtime_valid')
         .map((row: any) => row.id));
       const invalid = extensionIds.filter((id) => !eligible.has(id));
       if (invalid.length) throw new HttpError(409, 'EXTENSION_NOT_SELECTABLE', 'Una o más extensiones todavía no están verificadas en userFLOW.');
     }
-    await sb(env, `userflex_profile_extensions?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_profile_extensions?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
     if (extensionIds.length) {
-      await sb(env, 'userflex_profile_extensions', {
+      await db(env, 'userflex_profile_extensions', {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify(extensionIds.map((extensionId) => ({ profile_id: profileId, extension_id: extensionId }))),
@@ -520,7 +520,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const tokenHash = await sha(rawToken);
     const jobId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + VALIDATION_TTL_MS).toISOString();
-    await sb(env, 'userflex_extension_validation_jobs', {
+    await db(env, 'userflex_extension_validation_jobs', {
       method: 'POST',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -544,7 +544,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
   const testStatusMatch = path.match(/^\/api\/extension-tests\/([0-9a-f-]{36})$/i);
   if (testStatusMatch && method === 'GET') {
     const jobId = uuid(testStatusMatch[1], 'jobId');
-    const rows = await sb(env, `userflex_extension_validation_jobs?select=id,extension_id,status,result,error,expires_at,created_at,updated_at&id=eq.${jobId}&limit=1`);
+    const rows = await db(env, `userflex_extension_validation_jobs?select=id,extension_id,status,result,error,expires_at,created_at,updated_at&id=eq.${jobId}&limit=1`);
     if (!rows?.[0]) throw new HttpError(404, 'EXTENSION_TEST_NOT_FOUND');
     return json({ ok: true, job: rows[0] });
   }
@@ -564,13 +564,13 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
       }
       patch.enabled = Boolean(body.enabled);
     }
-    const rows = await sb(env, `userflex_extensions?id=eq.${extensionId}`, {
+    const rows = await db(env, `userflex_extensions?id=eq.${extensionId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),
     });
     if (patch.scope === 'global') {
-      await sb(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
+      await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
       });
@@ -588,7 +588,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const extensionId = uuid(extensionMatch[1], 'extensionId');
     const current = await extensionRow(env, extensionId);
     await touchExtensionProfiles(env, extensionId);
-    await sb(env, `userflex_extensions?id=eq.${extensionId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_extensions?id=eq.${extensionId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await removePackage(env, current.package_path);
     await audit(env, request, 'admin', admin.userId, 'extension.delete', 'extension', extensionId);
     return json({ ok: true });
@@ -600,11 +600,11 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
 async function testJobByToken(env: Env, rawToken: string) {
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(rawToken)) throw new HttpError(400, 'EXTENSION_TEST_TOKEN_INVALID');
   const tokenHash = await sha(rawToken);
-  const rows = await sb(env, `userflex_extension_validation_jobs?select=*&token_hash=eq.${tokenHash}&limit=1`);
+  const rows = await db(env, `userflex_extension_validation_jobs?select=*&token_hash=eq.${tokenHash}&limit=1`);
   const job = rows?.[0];
   if (!job) throw new HttpError(404, 'EXTENSION_TEST_NOT_FOUND');
   if (new Date(job.expires_at).getTime() <= Date.now()) {
-    await sb(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired', updated_at: new Date().toISOString() }),
@@ -626,7 +626,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
     const rawToken = text(body.token, 'token', 100);
     const job = await testJobByToken(env, rawToken);
     const extension = await extensionRow(env, job.extension_id);
-    await sb(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'running', updated_at: new Date().toISOString() }),
@@ -669,7 +669,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
     const passed = result.ok === true && result.loaded === true;
     const error = passed ? null : optional(body.error || result.error || 'Chrome no confirmó la carga de la extensión.', 1000);
     const now = new Date().toISOString();
-    await sb(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
+    await db(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -679,7 +679,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
         updated_at: now,
       }),
     });
-    await sb(env, `userflex_extensions?id=eq.${extension.id}`, {
+    await db(env, `userflex_extensions?id=eq.${extension.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -707,12 +707,12 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
   if (!ids.length) return result;
 
   const [globalRows, memberships] = await Promise.all([
-    sb(env, "userflex_extensions?select=id,name,version,package_sha256,package_size&scope=eq.global&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc"),
-    sb(env, `userflex_profile_extensions?select=profile_id,extension_id&profile_id=in.(${ids.join(',')})`),
+    db(env, "userflex_extensions?select=id,name,version,package_sha256,package_size&scope=eq.global&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc"),
+    db(env, `userflex_profile_extensions?select=profile_id,extension_id&profile_id=in.(${ids.join(',')})`),
   ]);
   const selectiveIds = [...new Set((memberships || []).map((row: any) => row.extension_id))];
   const selectiveRows = selectiveIds.length
-    ? await sb(env, `userflex_extensions?select=id,name,version,package_sha256,package_size&id=in.(${selectiveIds.join(',')})&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc`)
+    ? await db(env, `userflex_extensions?select=id,name,version,package_sha256,package_size&id=in.(${selectiveIds.join(',')})&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc`)
     : [];
   const selectiveMap = new Map((selectiveRows || []).map((row: any) => [row.id, row]));
 
@@ -753,13 +753,13 @@ export async function clientExtensionPackage(request: Request, env: Env, identit
     throw new HttpError(409, 'EXTENSION_VERSION_CHANGED', 'La extensión cambió de versión. Actualiza la configuración antes de descargarla.');
   }
 
-  const memberships = await sb(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${identity.plan.id}`);
+  const memberships = await db(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${identity.plan.id}`);
   const profileIds = (memberships || []).map((row: any) => row.profile_id);
   if (!profileIds.length) throw new HttpError(403, 'EXTENSION_NOT_AUTHORIZED');
 
   let authorized = extension.scope === 'global';
   if (!authorized) {
-    const rows = await sb(
+    const rows = await db(
       env,
       `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}&profile_id=in.(${profileIds.join(',')})&limit=1`,
     );

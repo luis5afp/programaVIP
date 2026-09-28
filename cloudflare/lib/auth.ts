@@ -15,7 +15,7 @@ import {
   loginGuard,
   passwordVerify,
   resetGuard,
-  sb,
+  db,
   sha,
   text,
   token,
@@ -85,7 +85,7 @@ async function verifyAdminPassword(env: Env, user: any, password: string) {
   const encoded = typeof user?.password_hash === 'string' ? user.password_hash : '';
   if (!encoded) return false;
   if (/^\$2[aby]\$/.test(encoded)) {
-    const result = await sb(env, 'rpc/userflex_verify_admin_password', {
+    const result = await db(env, 'rpc/userflex_verify_admin_password', {
       method: 'POST',
       body: JSON.stringify({ p_user_id: user.id, p_password: password }),
     });
@@ -97,7 +97,7 @@ async function verifyAdminPassword(env: Env, user: any, password: string) {
 async function verifyClientPassword(env: Env, cred: any, password: string) {
   if (typeof cred?.password_hash !== 'string') return false;
   if (/^\$2[aby]\$/.test(cred.password_hash)) {
-    const result = await sb(env, 'rpc/userflex_verify_client_password', {
+    const result = await db(env, 'rpc/userflex_verify_client_password', {
       method: 'POST',
       body: JSON.stringify({ p_client_id: cred.client_id, p_password: password }),
     });
@@ -107,7 +107,7 @@ async function verifyClientPassword(env: Env, cred: any, password: string) {
 }
 
 async function getAdminProfile(env: Env, userId: string): Promise<AdminProfile | null> {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_admin_profiles?select=user_id,display_name,email,role,last_login_at&user_id=eq.${userId}&limit=1`,
   );
@@ -120,11 +120,11 @@ async function ensureAdminProfile(env: Env, user: { id: string; username: string
 
   // Safe one-time bootstrap: before any explicit userFLEX administrator exists,
   // the first already-authorized legacy admin becomes the initial owner.
-  const existing = await sb(env, 'userflex_admin_profiles?select=user_id&limit=1');
+  const existing = await db(env, 'userflex_admin_profiles?select=user_id&limit=1');
   if (existing?.length) return null;
 
   const email = user.username.includes('@') ? user.username.toLowerCase() : null;
-  const created = await sb(env, 'userflex_admin_profiles', {
+  const created = await db(env, 'userflex_admin_profiles', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify({
@@ -152,13 +152,13 @@ export async function requireAdmin(request: Request, env: Env): Promise<AdminIde
   const raw = cookie(request, ADMIN_COOKIE);
   if (!raw || raw.length < 32 || raw.length > 128) throw new HttpError(401, 'UNAUTHENTICATED');
   const hash = await sha(raw);
-  const rows = await sb(
+  const rows = await db(
     env,
     `vsixteen_login_sessions?select=id,user_id,expires_at&token_hash=eq.${hash}&revoked_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`,
   );
   const session = rows?.[0];
   if (!session) throw new HttpError(401, 'UNAUTHENTICATED');
-  const users = await sb(
+  const users = await db(
     env,
     `vsixteen_users?select=id,username,enabled&id=eq.${session.user_id}&enabled=eq.true&limit=1`,
   );
@@ -168,7 +168,7 @@ export async function requireAdmin(request: Request, env: Env): Promise<AdminIde
   if (!profile) throw new HttpError(403, 'ADMIN_ACCESS_REVOKED', 'Esta cuenta no tiene acceso al panel userFLEX.');
   const refreshedAt = new Date().toISOString();
   const refreshedExpiresAt = new Date(Date.now() + ADMIN_MAX_AGE * 1000).toISOString();
-  void sb(env, `vsixteen_login_sessions?id=eq.${session.id}`, {
+  void db(env, `vsixteen_login_sessions?id=eq.${session.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ last_seen_at: refreshedAt, expires_at: refreshedExpiresAt }),
@@ -203,7 +203,7 @@ async function directAdminLogin(request: Request, env: Env, user: any, password:
   // bcrypt after a successful login. The plaintext password exists only for
   // this request and is never stored or logged.
   if (typeof user?.password_hash === 'string' && user.password_hash.startsWith('scrypt$')) {
-    await sb(env, 'rpc/userflex_set_admin_password', {
+    await db(env, 'rpc/userflex_set_admin_password', {
       method: 'POST',
       body: JSON.stringify({ p_user_id: user.id, p_password: password }),
     }).catch((error) => {
@@ -217,13 +217,13 @@ async function directAdminLogin(request: Request, env: Env, user: any, password:
   const raw = token();
   const hash = await sha(raw);
   const expiresAt = new Date(Date.now() + ADMIN_MAX_AGE * 1000).toISOString();
-  await sb(env, 'vsixteen_login_sessions', {
+  await db(env, 'vsixteen_login_sessions', {
     method: 'POST',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ user_id: user.id, token_hash: hash, expires_at: expiresAt }),
   });
   const now = new Date().toISOString();
-  await sb(env, `userflex_admin_profiles?user_id=eq.${user.id}`, {
+  await db(env, `userflex_admin_profiles?user_id=eq.${user.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ last_login_at: now, updated_at: now }),
@@ -240,7 +240,7 @@ export async function adminLogin(request: Request, env: Env) {
   const username = text(body.username, 'username', 120);
   const password = typeof body.password === 'string' ? body.password : '';
   if (!password || password.length > 512) throw new HttpError(400, 'INVALID_CREDENTIALS');
-  const localUsers = await sb(
+  const localUsers = await db(
     env,
     `vsixteen_users?select=id,username,password_hash,enabled&username=eq.${encodeURIComponent(username)}&limit=1`,
   );
@@ -263,10 +263,10 @@ export async function adminLogin(request: Request, env: Env) {
   if (!match) throw new HttpError(503, 'AUTH_SESSION_MISSING');
   const raw = decodeURIComponent(match[1]);
   const hash = await sha(raw);
-  const sessions = await sb(env, `vsixteen_login_sessions?select=id,user_id&token_hash=eq.${hash}&limit=1`);
+  const sessions = await db(env, `vsixteen_login_sessions?select=id,user_id&token_hash=eq.${hash}&limit=1`);
   const session = sessions?.[0];
   if (!session?.user_id) throw new HttpError(503, 'AUTH_SESSION_MISSING');
-  const users = await sb(
+  const users = await db(
     env,
     `vsixteen_users?select=id,username,enabled&id=eq.${session.user_id}&enabled=eq.true&limit=1`,
   );
@@ -274,7 +274,7 @@ export async function adminLogin(request: Request, env: Env) {
   if (!user) throw new HttpError(503, 'AUTH_SESSION_MISSING');
   const profile = await ensureAdminProfile(env, user);
   if (!profile) {
-    await sb(env, `vsixteen_login_sessions?id=eq.${session.id}`, {
+    await db(env, `vsixteen_login_sessions?id=eq.${session.id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -283,7 +283,7 @@ export async function adminLogin(request: Request, env: Env) {
   }
   await resetGuard(env, guard);
   const now = new Date().toISOString();
-  await sb(env, `userflex_admin_profiles?user_id=eq.${user.id}`, {
+  await db(env, `userflex_admin_profiles?user_id=eq.${user.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ last_login_at: now, updated_at: now }),
@@ -298,7 +298,7 @@ export async function adminLogout(request: Request, env: Env) {
   const raw = cookie(request, ADMIN_COOKIE);
   if (raw) {
     const hash = await sha(raw);
-    await sb(env, `vsixteen_login_sessions?token_hash=eq.${hash}`, {
+    await db(env, `vsixteen_login_sessions?token_hash=eq.${hash}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -309,13 +309,13 @@ export async function adminLogout(request: Request, env: Env) {
 
 export async function entitlement(env: Env, clientId: string) {
   const now = encodeURIComponent(new Date().toISOString());
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_subscriptions?select=id,client_id,plan_id,starts_at,expires_at,status,offline_grace_minutes&client_id=eq.${clientId}&status=eq.active&starts_at=lte.${now}&expires_at=gt.${now}&order=expires_at.desc&limit=1`,
   );
   const subscription = rows?.[0];
   if (!subscription) throw new HttpError(403, 'SUBSCRIPTION_INACTIVE', 'La suscripción no está activa.');
-  const plans = await sb(
+  const plans = await db(
     env,
     `userflex_plans?select=id,name,duration_days,max_profiles,enabled&id=eq.${subscription.plan_id}&enabled=eq.true&limit=1`,
   );
@@ -329,18 +329,18 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
   if (!match) throw new HttpError(401, 'CLIENT_UNAUTHENTICATED');
   const hash = await sha(match[1]);
   const now = encodeURIComponent(new Date().toISOString());
-  const sessions = await sb(
+  const sessions = await db(
     env,
     `userflex_client_sessions?select=id,client_id,device_id&token_hash=eq.${hash}&revoked_at=is.null&expires_at=gt.${now}&limit=1`,
   );
   const session = sessions?.[0];
   if (!session) throw new HttpError(401, 'CLIENT_UNAUTHENTICATED');
-  const clients = await sb(
+  const clients = await db(
     env,
     `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,updated_at&id=eq.${session.client_id}&status=eq.active&limit=1`,
   );
   if (!clients?.[0]) throw new HttpError(403, 'CLIENT_SUSPENDED');
-  const devices = await sb(
+  const devices = await db(
     env,
     `userflex_devices?select=id&id=eq.${session.device_id}&client_id=eq.${session.client_id}&status=eq.active&limit=1`,
   );
@@ -348,13 +348,13 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
   const { subscription, plan } = await entitlement(env, session.client_id);
   const stamp = new Date().toISOString();
   const clientIp = request.headers.get('cf-connecting-ip');
-  void sb(env, `userflex_client_sessions?id=eq.${session.id}`, {
+  void db(env, `userflex_client_sessions?id=eq.${session.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ last_seen_at: stamp }),
   }).catch(() => {});
   const userflowVersion = observedUserflowVersion(request);
-  void sb(env, `userflex_devices?id=eq.${session.device_id}`, {
+  void db(env, `userflex_devices?id=eq.${session.device_id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
@@ -382,15 +382,15 @@ export async function clientLogin(request: Request, env: Env) {
   const deviceName = text(body.deviceName, 'deviceName', 120);
   const os = typeof body.os === 'string' ? body.os.trim().slice(0, 120) : null;
   if (!password || password.length > 256) throw new HttpError(401, 'INVALID_CLIENT_CREDENTIALS');
-  let rows = await sb(
+  let rows = await db(
     env,
     `userflex_client_credentials?select=client_id,username,password_hash&username=eq.${encodeURIComponent(identifier)}&limit=1`,
   );
   let cred = rows?.[0];
   if (!cred) {
-    const c = await sb(env, `userflex_clients?select=id&email=eq.${encodeURIComponent(identifier)}&limit=1`);
+    const c = await db(env, `userflex_clients?select=id&email=eq.${encodeURIComponent(identifier)}&limit=1`);
     if (c?.[0]) {
-      rows = await sb(
+      rows = await db(
         env,
         `userflex_client_credentials?select=client_id,username,password_hash&client_id=eq.${c[0].id}&limit=1`,
       );
@@ -401,7 +401,7 @@ export async function clientLogin(request: Request, env: Env) {
     throw new HttpError(401, 'INVALID_CLIENT_CREDENTIALS');
   }
   await resetGuard(env, guard);
-  const clients = await sb(
+  const clients = await db(
     env,
     `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,updated_at&id=eq.${cred.client_id}&limit=1`,
   );
@@ -409,7 +409,7 @@ export async function clientLogin(request: Request, env: Env) {
   if (!client || client.status !== 'active') throw new HttpError(403, 'CLIENT_SUSPENDED');
   const { subscription, plan } = await entitlement(env, client.id);
   const deviceHash = await sha(`userflex-device:${deviceKey}`);
-  const registered = await sb(env, 'rpc/userflex_register_device', {
+  const registered = await db(env, 'rpc/userflex_register_device', {
     method: 'POST',
     body: JSON.stringify({
       p_client_id: client.id,
@@ -428,7 +428,7 @@ export async function clientLogin(request: Request, env: Env) {
   const clientIp = request.headers.get('cf-connecting-ip');
   const loginStamp = new Date().toISOString();
   const userflowVersion = observedUserflowVersion(request);
-  await sb(env, `userflex_devices?id=eq.${device.id}`, {
+  await db(env, `userflex_devices?id=eq.${device.id}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
@@ -440,7 +440,7 @@ export async function clientLogin(request: Request, env: Env) {
   const raw = token();
   const hash = await sha(raw);
   const expiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
-  await sb(env, 'userflex_client_sessions', {
+  await db(env, 'userflex_client_sessions', {
     method: 'POST',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({

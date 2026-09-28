@@ -1,6 +1,6 @@
 import { AdminIdentity } from './auth';
 import { touchPlanClients } from './client-revalidation';
-import { Env, HttpError, audit, bodyJson, json, sb, uuid } from './core';
+import { Env, HttpError, audit, bodyJson, json, db, uuid } from './core';
 
 function selectedPlanIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -12,21 +12,21 @@ function selectedPlanIds(value: unknown): string[] {
 }
 
 async function verifyProfile(env: Env, profileId: string) {
-  const rows = await sb(env, `userflex_profiles?select=id&id=eq.${profileId}&limit=1`);
+  const rows = await db(env, `userflex_profiles?select=id&id=eq.${profileId}&limit=1`);
   if (!rows?.[0]) throw new HttpError(404, 'PROFILE_NOT_FOUND');
 }
 
 async function verifyPlans(env: Env, ids: string[]) {
   if (!ids.length) return;
-  const rows = await sb(env, `userflex_plans?select=id&id=in.(${ids.join(',')})`);
+  const rows = await db(env, `userflex_plans?select=id&id=in.(${ids.join(',')})`);
   if (rows.length !== ids.length) {
     throw new HttpError(400, 'PROFILE_PLAN_NOT_FOUND', 'Uno de los planes seleccionados ya no existe.');
   }
 }
 
 async function syncPlanProfileCount(env: Env, planId: string) {
-  const rows = await sb(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${planId}`);
-  await sb(env, `userflex_plans?id=eq.${planId}`, {
+  const rows = await db(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${planId}`);
+  await db(env, `userflex_plans?id=eq.${planId}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
@@ -37,19 +37,19 @@ async function syncPlanProfileCount(env: Env, planId: string) {
 }
 
 async function replaceProfilePlans(env: Env, profileId: string, planIds: string[]) {
-  const existing = await sb(
+  const existing = await db(
     env,
     `userflex_plan_profiles?select=plan_id&profile_id=eq.${profileId}`,
   );
   const previousPlanIds = existing.map((row: any) => String(row.plan_id));
 
-  await sb(env, `userflex_plan_profiles?profile_id=eq.${profileId}`, {
+  await db(env, `userflex_plan_profiles?profile_id=eq.${profileId}`, {
     method: 'DELETE',
     headers: { Prefer: 'return=minimal' },
   });
 
   if (planIds.length) {
-    await sb(env, 'userflex_plan_profiles', {
+    await db(env, 'userflex_plan_profiles', {
       method: 'POST',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(planIds.map((planId) => ({ plan_id: planId, profile_id: profileId }))),
@@ -60,7 +60,7 @@ async function replaceProfilePlans(env: Env, profileId: string, planIds: string[
   await Promise.all(
     affectedPlanIds.map(async (planId) => {
       await syncPlanProfileCount(env, planId);
-      await sb(env, 'rpc/userflex_disable_disallowed_assignments', {
+      await db(env, 'rpc/userflex_disable_disallowed_assignments', {
         method: 'POST',
         body: JSON.stringify({ p_plan_id: planId }),
       });
@@ -79,7 +79,7 @@ export async function profilePlanAccessRoutes(
   const method = request.method.toUpperCase();
 
   if (path === '/api/profile-plan-memberships' && method === 'GET') {
-    return json(await sb(
+    return json(await db(
       env,
       'userflex_plan_profiles?select=profile_id,plan_id,created_at&order=created_at.asc',
     ));

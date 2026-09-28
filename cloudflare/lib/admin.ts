@@ -24,7 +24,7 @@ import {
   json,
   optional,
   passwordHash,
-  sb,
+  db,
   text,
   uuid,
 } from './core';
@@ -70,15 +70,15 @@ function proxyHost(value: unknown): string {
 }
 
 async function clientDetails(env: Env, rows?: any[]) {
-  const clients = rows || (await sb(env, 'userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&order=created_at.desc'));
+  const clients = rows || (await db(env, 'userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&order=created_at.desc'));
   if (!clients?.length) return [];
 
   const ids = clients.map((client: any) => client.id).join(',');
-  const credentials = await sb(env, `userflex_client_credentials?select=client_id,username&client_id=in.(${ids})`);
-  const subscriptions = await sb(env, `userflex_subscriptions?select=id,client_id,plan_id,starts_at,expires_at,status,offline_grace_minutes,created_at,updated_at&client_id=in.(${ids})&order=created_at.desc`);
+  const credentials = await db(env, `userflex_client_credentials?select=client_id,username&client_id=in.(${ids})`);
+  const subscriptions = await db(env, `userflex_subscriptions?select=id,client_id,plan_id,starts_at,expires_at,status,offline_grace_minutes,created_at,updated_at&client_id=in.(${ids})&order=created_at.desc`);
   const planIds = [...new Set((subscriptions || []).map((subscription: any) => subscription.plan_id))];
   const plans = planIds.length
-    ? await sb(env, `userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&id=in.(${planIds.join(',')})`)
+    ? await db(env, `userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&id=in.(${planIds.join(',')})`)
     : [];
   const plansById = new Map(plans.map((plan: any) => [plan.id, plan]));
 
@@ -112,7 +112,7 @@ function safeProxy(proxy: any) {
 }
 
 async function assignmentResponse(env: Env, id: string) {
-  const rows = await sb(env, `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled,created_at,updated_at&id=eq.${id}&limit=1`);
+  const rows = await db(env, `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled,created_at,updated_at&id=eq.${id}&limit=1`);
   return rows?.[0] || null;
 }
 
@@ -123,12 +123,12 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (path === '/api/dashboard' && method === 'GET') {
     const [clients, plans, profiles, proxies, devices, assignments] = await Promise.all([
-      sb(env, 'userflex_clients?select=id,status'),
-      sb(env, 'userflex_plans?select=id'),
-      sb(env, 'userflex_profiles?select=id'),
-      sb(env, 'userflex_proxies?select=id'),
-      sb(env, 'userflex_devices?select=id,status'),
-      sb(env, 'userflex_assignments?select=id'),
+      db(env, 'userflex_clients?select=id,status'),
+      db(env, 'userflex_plans?select=id'),
+      db(env, 'userflex_profiles?select=id'),
+      db(env, 'userflex_proxies?select=id'),
+      db(env, 'userflex_devices?select=id,status'),
+      db(env, 'userflex_assignments?select=id'),
     ]);
     return json({
       clients: clients.length,
@@ -158,7 +158,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (new Date(expiresAt) <= new Date(startsAt)) throw new HttpError(400, 'INVALID_SUBSCRIPTION_RANGE');
 
     const passwordHashValue = await passwordHash(typeof body.password === 'string' ? body.password : '');
-    const result = await sb(env, 'rpc/userflex_create_client', {
+    const result = await db(env, 'rpc/userflex_create_client', {
       method: 'POST',
       body: JSON.stringify({
         p_name: name,
@@ -172,13 +172,13 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       }),
     });
     const id = Array.isArray(result) ? result[0] : result;
-    await sb(env, `userflex_clients?id=eq.${id}`, {
+    await db(env, `userflex_clients?id=eq.${id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ max_devices: maxDevices, updated_at: new Date().toISOString() }),
     });
     await audit(env, request, 'admin', admin.userId, 'client.create', 'client', String(id), { maxDevices });
-    const rows = await sb(env, `userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&id=eq.${id}&limit=1`);
+    const rows = await db(env, `userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&id=eq.${id}&limit=1`);
     return json((await clientDetails(env, rows))[0], 201);
   }
 
@@ -188,7 +188,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const body = await bodyJson(request);
     const username = text(body.username, 'username', 80).toLowerCase();
     const passwordHashValue = await passwordHash(typeof body.password === 'string' ? body.password : '');
-    await sb(env, 'userflex_client_credentials?on_conflict=client_id', {
+    await db(env, 'userflex_client_credentials?on_conflict=client_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({
@@ -198,7 +198,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         updated_at: new Date().toISOString(),
       }),
     });
-    await sb(env, `userflex_client_sessions?client_id=eq.${clientId}&revoked_at=is.null`, {
+    await db(env, `userflex_client_sessions?client_id=eq.${clientId}&revoked_at=is.null`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -217,7 +217,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const startsAt = iso(body.startsAt, 'startsAt');
     const expiresAt = iso(body.expiresAt, 'expiresAt');
     if (new Date(expiresAt) <= new Date(startsAt)) throw new HttpError(400, 'INVALID_SUBSCRIPTION_RANGE');
-    await sb(env, 'rpc/userflex_replace_subscription', {
+    await db(env, 'rpc/userflex_replace_subscription', {
       method: 'POST',
       body: JSON.stringify({
         p_client_id: clientId,
@@ -249,14 +249,14 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       if (!['active', 'suspended'].includes(body.status)) throw new HttpError(400, 'INVALID_STATUS');
       patch.status = body.status;
     }
-    const rows = await sb(env, `userflex_clients?id=eq.${clientId}`, {
+    const rows = await db(env, `userflex_clients?id=eq.${clientId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),
     });
     if (!rows?.[0]) throw new HttpError(404, 'CLIENT_NOT_FOUND');
     if (patch.status === 'suspended') {
-      await sb(env, `userflex_client_sessions?client_id=eq.${clientId}&revoked_at=is.null`, {
+      await db(env, `userflex_client_sessions?client_id=eq.${clientId}&revoked_at=is.null`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -270,13 +270,13 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (clientMatch && method === 'DELETE') {
     const clientId = uuid(clientMatch[1], 'clientId');
     await closeOpenProfileUsageForClient(env, clientId, 'client_deleted');
-    await sb(env, `userflex_clients?id=eq.${clientId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_clients?id=eq.${clientId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await audit(env, request, 'admin', admin.userId, 'client.delete', 'client', clientId);
     return json({ ok: true });
   }
 
   if (path === '/api/plans' && method === 'GET') {
-    return json(await sb(env, 'userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&order=name.asc'));
+    return json(await db(env, 'userflex_plans?select=id,name,duration_days,max_profiles,enabled,created_at,updated_at&order=name.asc'));
   }
 
   if (path === '/api/plans' && method === 'POST') {
@@ -288,7 +288,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       max_profiles: integer(body.max_profiles, 1, 500, 'max_profiles'),
       enabled: body.enabled !== false,
     };
-    const rows = await sb(env, 'userflex_plans', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+    const rows = await db(env, 'userflex_plans', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
     await audit(env, request, 'admin', admin.userId, 'plan.create', 'plan', rows[0].id);
     return json(rows[0], 201);
   }
@@ -303,7 +303,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (body.max_devices !== undefined) patch.max_devices = integer(body.max_devices, 1, 50, 'max_devices');
     if (body.max_profiles !== undefined) patch.max_profiles = integer(body.max_profiles, 1, 500, 'max_profiles');
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
-    const rows = await sb(env, `userflex_plans?id=eq.${planId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
+    const rows = await db(env, `userflex_plans?id=eq.${planId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
     if (!rows?.[0]) throw new HttpError(404, 'PLAN_NOT_FOUND');
     await touchPlanClients(env, [planId]);
     await audit(env, request, 'admin', admin.userId, 'plan.update', 'plan', planId);
@@ -313,7 +313,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (planMatch && method === 'DELETE') {
     const planId = uuid(planMatch[1], 'planId');
     const affectedClientIds = await clientIdsForPlans(env, [planId]);
-    await sb(env, `userflex_plans?id=eq.${planId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_plans?id=eq.${planId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'plan.delete', 'plan', planId);
     return json({ ok: true });
@@ -321,9 +321,9 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (path === '/api/profiles' && method === 'GET') {
     const [profiles, sessions, archivedSessions] = await Promise.all([
-      sb(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,created_at,updated_at&order=name.asc'),
-      sb(env, 'userflex_profile_sessions?select=profile_id,session_version'),
-      sb(env, 'userflex_profile_session_versions?select=profile_id,session_version&order=session_version.desc'),
+      db(env, 'userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,created_at,updated_at&order=name.asc'),
+      db(env, 'userflex_profile_sessions?select=profile_id,session_version'),
+      db(env, 'userflex_profile_session_versions?select=profile_id,session_version&order=session_version.desc'),
     ]);
     const currentVersions = new Map<string, number>();
     for (const row of sessions || []) {
@@ -358,7 +358,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       ...runtime,
       session_ready: false,
     };
-    const rows = await sb(env, 'userflex_profiles', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+    const rows = await db(env, 'userflex_profiles', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
     await audit(env, request, 'admin', admin.userId, 'profile.create', 'profile', rows[0].id);
     return json(rows[0], 201);
   }
@@ -367,7 +367,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (profileMatch && method === 'PATCH') {
     const profileId = uuid(profileMatch[1], 'profileId');
     const body = await bodyJson(request);
-    const existingRows = await sb(
+    const existingRows = await db(
       env,
       `userflex_profiles?select=id,url,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
     );
@@ -418,11 +418,11 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     let preservedSnapshot = false;
     if (nextSnapshot) {
       const [currentSessionRows, archivedSessionRows] = await Promise.all([
-        sb(
+        db(
           env,
           `userflex_profile_sessions?select=session_version&profile_id=eq.${profileId}&limit=1`,
         ).catch(() => []),
-        sb(
+        db(
           env,
           `userflex_profile_session_versions?select=session_version&profile_id=eq.${profileId}&order=session_version.desc&limit=1`,
         ).catch(() => []),
@@ -432,7 +432,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       if (preservedSnapshot) patch.session_ready = true;
     }
 
-    const rows = await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    const rows = await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),
@@ -442,7 +442,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (clearCredentials) {
       // Never carry credentials into a different origin, and do not retain
       // managed secrets after the profile returns to fully manual auth.
-      await sb(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
+      await db(env, `userflex_profile_credentials?profile_id=eq.${profileId}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
       });
@@ -464,14 +464,14 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (profileMatch && method === 'DELETE') {
     const profileId = uuid(profileMatch[1], 'profileId');
     const affectedClientIds = await clientIdsForProfile(env, profileId);
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_profiles?id=eq.${profileId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'profile.delete', 'profile', profileId);
     return json({ ok: true });
   }
 
   if (path === '/api/proxies' && method === 'GET') {
-    return json((await sb(env, 'userflex_proxies?select=id,name,host,port,username,password_ciphertext,enabled,created_at,updated_at&order=name.asc')).map(safeProxy));
+    return json((await db(env, 'userflex_proxies?select=id,name,host,port,username,password_ciphertext,enabled,created_at,updated_at&order=name.asc')).map(safeProxy));
   }
 
   if (path === '/api/proxies' && method === 'POST') {
@@ -487,7 +487,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       const secret = await encryptProxy(env, text(body.password, 'password', 512));
       Object.assign(row, { password_ciphertext: secret.ciphertext, password_iv: secret.iv, key_version: secret.keyVersion });
     }
-    const rows = await sb(env, 'userflex_proxies', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+    const rows = await db(env, 'userflex_proxies', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
     await audit(env, request, 'admin', admin.userId, 'proxy.create', 'proxy', rows[0].id, { host: rows[0].host, port: rows[0].port, hasPassword: Boolean(rows[0].password_ciphertext) });
     return json(safeProxy(rows[0]), 201);
   }
@@ -512,7 +512,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
       patch.password_iv = secret.iv;
       patch.key_version = secret.keyVersion;
     }
-    const rows = await sb(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
+    const rows = await db(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch) });
     if (!rows?.[0]) throw new HttpError(404, 'PROXY_NOT_FOUND');
     await touchProxyClients(env, proxyId);
     await audit(env, request, 'admin', admin.userId, 'proxy.update', 'proxy', proxyId, { host: rows[0].host, port: rows[0].port, hasPassword: Boolean(rows[0].password_ciphertext) });
@@ -522,21 +522,21 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   if (proxyMatch && method === 'DELETE') {
     const proxyId = uuid(proxyMatch[1], 'proxyId');
     const affectedClientIds = await clientIdsForProxy(env, proxyId);
-    await sb(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_proxies?id=eq.${proxyId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     await touchClientsConfig(env, affectedClientIds);
     await audit(env, request, 'admin', admin.userId, 'proxy.delete', 'proxy', proxyId);
     return json({ ok: true });
   }
 
   if (path === '/api/assignments' && method === 'GET') {
-    const rows = await sb(env, 'userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled,created_at,updated_at&order=created_at.desc');
+    const rows = await db(env, 'userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled,created_at,updated_at&order=created_at.desc');
     const clientIds = [...new Set(rows.map((row: any) => row.client_id))];
     const profileIds = [...new Set(rows.map((row: any) => row.profile_id))];
     const proxyIds = [...new Set(rows.map((row: any) => row.proxy_id).filter(Boolean))];
     const [clients, profiles, proxies] = await Promise.all([
-      clientIds.length ? sb(env, `userflex_clients?select=id,name,email&id=in.(${clientIds.join(',')})`) : [],
-      profileIds.length ? sb(env, `userflex_profiles?select=id,name,url&id=in.(${profileIds.join(',')})`) : [],
-      proxyIds.length ? sb(env, `userflex_proxies?select=id,name,host,port&id=in.(${proxyIds.join(',')})`) : [],
+      clientIds.length ? db(env, `userflex_clients?select=id,name,email&id=in.(${clientIds.join(',')})`) : [],
+      profileIds.length ? db(env, `userflex_profiles?select=id,name,url&id=in.(${profileIds.join(',')})`) : [],
+      proxyIds.length ? db(env, `userflex_proxies?select=id,name,host,port&id=in.(${proxyIds.join(',')})`) : [],
     ]);
     const clientsById = new Map(clients.map((item: any) => [item.id, item]));
     const profilesById = new Map(profiles.map((item: any) => [item.id, item]));
@@ -550,7 +550,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const profileId = uuid(body.profileId, 'profileId');
     const proxyId = body.proxyId ? uuid(body.proxyId, 'proxyId') : null;
     const enabled = body.enabled !== false;
-    const result = await sb(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: clientId, p_profile_id: profileId, p_proxy_id: proxyId, p_enabled: enabled }) });
+    const result = await db(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: clientId, p_profile_id: profileId, p_proxy_id: proxyId, p_enabled: enabled }) });
     const id = String(Array.isArray(result) ? result[0] : result);
     const row = await assignmentResponse(env, id);
     await touchClientConfig(env, clientId);
@@ -561,13 +561,13 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   const assignmentMatch = path.match(/^\/api\/assignments\/([0-9a-f-]{36})$/i);
   if (assignmentMatch && method === 'PATCH') {
     const assignmentId = uuid(assignmentMatch[1], 'assignmentId');
-    const existingRows = await sb(env, `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled&id=eq.${assignmentId}&limit=1`);
+    const existingRows = await db(env, `userflex_assignments?select=id,client_id,profile_id,proxy_id,enabled&id=eq.${assignmentId}&limit=1`);
     const existing = existingRows?.[0];
     if (!existing) throw new HttpError(404, 'ASSIGNMENT_NOT_FOUND');
     const body = await bodyJson(request);
     const proxyId = body.proxyId === undefined ? existing.proxy_id : body.proxyId ? uuid(body.proxyId, 'proxyId') : null;
     const enabled = body.enabled === undefined ? existing.enabled === true : Boolean(body.enabled);
-    const result = await sb(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: existing.client_id, p_profile_id: existing.profile_id, p_proxy_id: proxyId, p_enabled: enabled }) });
+    const result = await db(env, 'rpc/userflex_upsert_assignment', { method: 'POST', body: JSON.stringify({ p_client_id: existing.client_id, p_profile_id: existing.profile_id, p_proxy_id: proxyId, p_enabled: enabled }) });
     const id = String(Array.isArray(result) ? result[0] : result);
     await touchClientConfig(env, existing.client_id);
     await audit(env, request, 'admin', admin.userId, 'assignment.update', 'assignment', id, { proxyAssigned: Boolean(proxyId), enabled });
@@ -576,18 +576,18 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (assignmentMatch && method === 'DELETE') {
     const assignmentId = uuid(assignmentMatch[1], 'assignmentId');
-    const existingRows = await sb(env, `userflex_assignments?select=client_id&id=eq.${assignmentId}&limit=1`);
+    const existingRows = await db(env, `userflex_assignments?select=client_id&id=eq.${assignmentId}&limit=1`);
     const existing = existingRows?.[0];
-    await sb(env, `userflex_assignments?id=eq.${assignmentId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+    await db(env, `userflex_assignments?id=eq.${assignmentId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
     if (existing?.client_id) await touchClientConfig(env, existing.client_id);
     await audit(env, request, 'admin', admin.userId, 'assignment.delete', 'assignment', assignmentId);
     return json({ ok: true });
   }
 
   if (path === '/api/devices' && method === 'GET') {
-    const rows = await sb(env, 'userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,userflow_version,userflow_version_seen_at,created_at&order=last_seen_at.desc.nullslast');
+    const rows = await db(env, 'userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,userflow_version,userflow_version_seen_at,created_at&order=last_seen_at.desc.nullslast');
     const clientIds = [...new Set(rows.map((row: any) => row.client_id))];
-    const clients = clientIds.length ? await sb(env, `userflex_clients?select=id,name,email&id=in.(${clientIds.join(',')})`) : [];
+    const clients = clientIds.length ? await db(env, `userflex_clients?select=id,name,email&id=in.(${clientIds.join(',')})`) : [];
     const clientsById = new Map(clients.map((item: any) => [item.id, item]));
     return json(rows.map((row: any) => ({ ...row, client: clientsById.get(row.client_id) })));
   }
@@ -595,10 +595,10 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   const revokeMatch = path.match(/^\/api\/devices\/([0-9a-f-]{36})\/revoke$/i);
   if (revokeMatch && method === 'POST') {
     const deviceId = uuid(revokeMatch[1], 'deviceId');
-    const rows = await sb(env, `userflex_devices?id=eq.${deviceId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ status: 'revoked', updated_at: new Date().toISOString() }) });
+    const rows = await db(env, `userflex_devices?id=eq.${deviceId}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ status: 'revoked', updated_at: new Date().toISOString() }) });
     const device = rows?.[0];
     if (!device) throw new HttpError(404, 'DEVICE_NOT_FOUND');
-    await sb(env, `userflex_client_sessions?device_id=eq.${device.id}&revoked_at=is.null`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
+    await db(env, `userflex_client_sessions?device_id=eq.${device.id}&revoked_at=is.null`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ revoked_at: new Date().toISOString() }) });
     await closeOpenProfileUsageForDevice(env, device.id, 'device_revoked');
     await touchClientConfig(env, device.client_id);
     await audit(env, request, 'admin', admin.userId, 'device.revoke', 'device', device.id, { clientId: device.client_id });
@@ -608,12 +608,12 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   const reactivateMatch = path.match(/^\/api\/devices\/([0-9a-f-]{36})\/reactivate$/i);
   if (reactivateMatch && method === 'POST') {
     const deviceId = uuid(reactivateMatch[1], 'deviceId');
-    const result = await sb(env, 'rpc/userflex_reactivate_device', { method: 'POST', body: JSON.stringify({ p_device_id: deviceId }) });
+    const result = await db(env, 'rpc/userflex_reactivate_device', { method: 'POST', body: JSON.stringify({ p_device_id: deviceId }) });
     const row = Array.isArray(result) ? result[0] : result;
     if (!row) throw new HttpError(404, 'DEVICE_NOT_FOUND');
     if (row.status === 'limit_reached') throw new HttpError(409, 'DEVICE_LIMIT_REACHED', 'El plan ya alcanzó el máximo de dispositivos.');
     if (row.status === 'subscription_inactive') throw new HttpError(409, 'SUBSCRIPTION_INACTIVE', 'El cliente no tiene una suscripción activa.');
-    const rows = await sb(env, `userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,userflow_version,userflow_version_seen_at,created_at&id=eq.${deviceId}&limit=1`);
+    const rows = await db(env, `userflex_devices?select=id,client_id,name,os,status,last_ip,last_seen_at,userflow_version,userflow_version_seen_at,created_at&id=eq.${deviceId}&limit=1`);
     if (rows?.[0]?.client_id) await touchClientConfig(env, rows[0].client_id);
     await audit(env, request, 'admin', admin.userId, 'device.reactivate', 'device', deviceId);
     return json(rows?.[0]);
@@ -621,7 +621,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
 
   if (path === '/api/audit' && method === 'GET') {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 100), 1), 500);
-    return json(await sb(env, `userflex_audit_logs?select=id,actor_type,actor_id,action,entity_type,entity_id,ip_hash,details,created_at&order=created_at.desc&limit=${limit}`));
+    return json(await db(env, `userflex_audit_logs?select=id,actor_type,actor_id,action,entity_type,entity_id,ip_hash,details,created_at&order=created_at.desc&limit=${limit}`));
   }
 
   throw new HttpError(404, 'NOT_FOUND');

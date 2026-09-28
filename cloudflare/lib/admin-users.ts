@@ -1,5 +1,5 @@
 import type { AdminIdentity } from './auth';
-import { Env, HttpError, audit, bodyJson, json, optional, sb, text, uuid } from './core';
+import { Env, HttpError, audit, bodyJson, json, optional, db, text, uuid } from './core';
 
 type AdminRole = 'owner' | 'admin';
 
@@ -48,7 +48,7 @@ function serialize(profile: AdminProfile, user: CredentialUser) {
 }
 
 async function getProfile(env: Env, userId: string): Promise<AdminProfile | null> {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_admin_profiles?select=user_id,display_name,email,role,last_login_at,created_by,created_at,updated_at&user_id=eq.${userId}&limit=1`,
   );
@@ -56,7 +56,7 @@ async function getProfile(env: Env, userId: string): Promise<AdminProfile | null
 }
 
 async function getCredentialUser(env: Env, userId: string): Promise<CredentialUser | null> {
-  const rows = await sb(
+  const rows = await db(
     env,
     `vsixteen_users?select=id,username,enabled,created_at,updated_at&id=eq.${userId}&limit=1`,
   );
@@ -70,13 +70,13 @@ async function getAdminRecord(env: Env, userId: string) {
 }
 
 async function listRecords(env: Env) {
-  const profiles: AdminProfile[] = await sb(
+  const profiles: AdminProfile[] = await db(
     env,
     'userflex_admin_profiles?select=user_id,display_name,email,role,last_login_at,created_by,created_at,updated_at&order=created_at.asc',
   );
   if (!profiles?.length) return [];
   const ids = profiles.map((profile) => profile.user_id).join(',');
-  const users: CredentialUser[] = await sb(
+  const users: CredentialUser[] = await db(
     env,
     `vsixteen_users?select=id,username,enabled,created_at,updated_at&id=in.(${ids})`,
   );
@@ -88,13 +88,13 @@ async function listRecords(env: Env) {
 }
 
 async function activeOwnerCount(env: Env) {
-  const profiles: AdminProfile[] = await sb(
+  const profiles: AdminProfile[] = await db(
     env,
     'userflex_admin_profiles?select=user_id,display_name,email,role,last_login_at,created_by,created_at,updated_at&role=eq.owner',
   );
   if (!profiles?.length) return 0;
   const ids = profiles.map((profile) => profile.user_id).join(',');
-  const users: Array<{ id: string; enabled: boolean }> = await sb(
+  const users: Array<{ id: string; enabled: boolean }> = await db(
     env,
     `vsixteen_users?select=id,enabled&id=in.(${ids})&enabled=eq.true`,
   );
@@ -103,7 +103,7 @@ async function activeOwnerCount(env: Env) {
 
 async function revokeOtherSessions(env: Env, userId: string, keepSessionId?: string) {
   const suffix = keepSessionId ? `&id=neq.${keepSessionId}` : '';
-  await sb(env, `vsixteen_login_sessions?user_id=eq.${userId}&revoked_at=is.null${suffix}`, {
+  await db(env, `vsixteen_login_sessions?user_id=eq.${userId}&revoked_at=is.null${suffix}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ revoked_at: new Date().toISOString() }),
@@ -122,7 +122,7 @@ async function createAdmin(request: Request, env: Env, admin: AdminIdentity) {
     throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 6 caracteres.');
   }
 
-  const created = await sb(env, 'rpc/userflex_create_admin_user', {
+  const created = await db(env, 'rpc/userflex_create_admin_user', {
     method: 'POST',
     body: JSON.stringify({
       p_username: username,
@@ -171,7 +171,7 @@ async function updateAdmin(request: Request, env: Env, admin: AdminIdentity, use
   const stamp = new Date().toISOString();
   if (Object.keys(profilePatch).length) {
     profilePatch.updated_at = stamp;
-    await sb(env, `userflex_admin_profiles?user_id=eq.${userId}`, {
+    await db(env, `userflex_admin_profiles?user_id=eq.${userId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(profilePatch),
@@ -179,7 +179,7 @@ async function updateAdmin(request: Request, env: Env, admin: AdminIdentity, use
   }
   if (Object.keys(userPatch).length) {
     userPatch.updated_at = stamp;
-    await sb(env, `vsixteen_users?id=eq.${userId}`, {
+    await db(env, `vsixteen_users?id=eq.${userId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(userPatch),
@@ -202,7 +202,7 @@ async function setAdminPassword(request: Request, env: Env, admin: AdminIdentity
   if (password.length < 6 || password.length > 256) {
     throw new HttpError(400, 'WEAK_PASSWORD', 'La contraseña debe tener al menos 6 caracteres.');
   }
-  await sb(env, 'rpc/userflex_set_admin_password', {
+  await db(env, 'rpc/userflex_set_admin_password', {
     method: 'POST',
     body: JSON.stringify({ p_user_id: userId, p_password: password }),
   });
@@ -224,7 +224,7 @@ async function deleteAdmin(request: Request, env: Env, admin: AdminIdentity, use
     username: current.user.username,
     role: current.profile.role,
   });
-  await sb(env, `vsixteen_users?id=eq.${userId}`, {
+  await db(env, `vsixteen_users?id=eq.${userId}`, {
     method: 'DELETE',
     headers: { Prefer: 'return=minimal' },
   });

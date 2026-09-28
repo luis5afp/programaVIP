@@ -1,6 +1,6 @@
 import type { AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
-import { Env, HttpError, audit, bodyJson, json, sb, uuid } from './core';
+import { Env, HttpError, audit, bodyJson, json, db, uuid } from './core';
 import { runtimeForProfile, snapshotAuthentication } from './profile-runtime';
 
 export async function profileProxyDefaultRoutes(
@@ -14,7 +14,7 @@ export async function profileProxyDefaultRoutes(
 
   if (path === '/api/profile-proxy-defaults' && method === 'GET') {
     return json(
-      await sb(
+      await db(
         env,
         'userflex_profile_proxy_defaults?select=profile_id,proxy_id,updated_at&order=updated_at.desc',
       ),
@@ -28,13 +28,13 @@ export async function profileProxyDefaultRoutes(
   const body = await bodyJson(request);
   const proxyId = body.proxyId ? uuid(body.proxyId, 'proxyId') : null;
 
-  const profileRows = await sb(
+  const profileRows = await db(
     env,
     `userflex_profiles?select=id,session_ready,session_mode,auth_strategy,network_strategy&id=eq.${profileId}&limit=1`,
   );
   const profile = profileRows?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND');
-  const currentDefaults = await sb(
+  const currentDefaults = await db(
     env,
     `userflex_profile_proxy_defaults?select=proxy_id&profile_id=eq.${profileId}&limit=1`,
   );
@@ -47,7 +47,7 @@ export async function profileProxyDefaultRoutes(
   const markSnapshotForRevalidation = async () => {
     if (!requiresManagedSnapshotRevalidation) return;
     const now = new Date().toISOString();
-    await sb(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
+    await db(env, `userflex_profile_sessions?profile_id=eq.${profileId}&status=eq.ready`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -56,7 +56,7 @@ export async function profileProxyDefaultRoutes(
         updated_at: now,
       }),
     });
-    await sb(env, `userflex_profiles?id=eq.${profileId}`, {
+    await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ session_ready: true, updated_at: now }),
@@ -64,7 +64,7 @@ export async function profileProxyDefaultRoutes(
   };
 
   if (!proxyId) {
-    await sb(env, `userflex_profile_proxy_defaults?profile_id=eq.${profileId}`, {
+    await db(env, `userflex_profile_proxy_defaults?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
@@ -77,10 +77,10 @@ export async function profileProxyDefaultRoutes(
     return json({ ok: true, profile_id: profileId, proxy_id: null, snapshot_invalidated: false, snapshot_revalidation_required: requiresManagedSnapshotRevalidation });
   }
 
-  const proxyRows = await sb(env, `userflex_proxies?select=id&id=eq.${proxyId}&limit=1`);
+  const proxyRows = await db(env, `userflex_proxies?select=id&id=eq.${proxyId}&limit=1`);
   if (!proxyRows?.[0]) throw new HttpError(404, 'PROXY_NOT_FOUND');
 
-  const rows = await sb(env, 'userflex_profile_proxy_defaults?on_conflict=profile_id', {
+  const rows = await db(env, 'userflex_profile_proxy_defaults?on_conflict=profile_id', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
     body: JSON.stringify({

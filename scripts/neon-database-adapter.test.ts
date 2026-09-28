@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const core = readFileSync(new URL('../cloudflare/lib/core.ts', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../cloudflare/lib/neon-rest.ts', import.meta.url), 'utf8');
@@ -9,6 +9,8 @@ const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf
 const extensions = readFileSync(new URL('../cloudflare/lib/extensions.ts', import.meta.url), 'utf8');
 
 assert.equal(typeof pkg.dependencies['@neondatabase/serverless'], 'string');
+assert.equal(existsSync(new URL('../supabase', import.meta.url)), false, 'legacy Supabase directory must not return');
+assert.equal(Object.keys(pkg.dependencies || {}).some((name) => name.startsWith('@supabase/')), false);
 assert.match(core, /NEON_DATABASE_URL\?: string/);
 assert.match(core, /if \(!env\.NEON_DATABASE_URL\)/);
 assert.match(core, /import\('\.\/neon-rest'\)/);
