@@ -355,6 +355,31 @@ async function repairLegacyManagementWarning(env: Env, row: ExtensionRow): Promi
 }
 
 
+async function repairRetriableRuntimeFailure(env: Env, row: ExtensionRow): Promise<ExtensionRow> {
+  if (row.validation_status !== 'error') return row;
+  try {
+    const detail = String(row.validation_message || '').trim();
+    const message = detail
+      ? `La última prueba en userFLOW no confirmó la carga. Vuelve a probar con userFLOW 0.3.76 o superior. Detalle anterior: ${detail}`
+      : 'La última prueba en userFLOW no confirmó la carga. Vuelve a probar con userFLOW 0.3.76 o superior.';
+    const rows = await db(env, `userflex_extensions?id=eq.${row.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        enabled: false,
+        validation_status: 'package_valid',
+        validation_message: message,
+        runtime_validated_at: null,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    return (rows?.[0] || row) as ExtensionRow;
+  } catch (error) {
+    console.error('Managed extension runtime-failure repair failed', row.id, error instanceof Error ? error.message : String(error));
+    return row;
+  }
+}
+
 function scopeValue(value: unknown): 'global' | 'selective' {
   return value === 'global' ? 'global' : 'selective';
 }
@@ -406,7 +431,10 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
 
   if (path === '/api/extensions' && method === 'GET') {
     const rows = await db(env, 'userflex_extensions?select=*&order=name.asc');
-    const repaired = await Promise.all((rows || []).map((row: ExtensionRow) => repairLegacyManagementWarning(env, row)));
+    const repaired = await Promise.all((rows || []).map(async (row: ExtensionRow) => {
+      const warningRepaired = await repairLegacyManagementWarning(env, row);
+      return await repairRetriableRuntimeFailure(env, warningRepaired);
+    }));
     return json(repaired.map(extensionPublic));
   }
 
@@ -725,10 +753,13 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
-        validation_status: passed ? 'runtime_valid' : 'error',
+        // A failed runtime test does not make the ZIP invalid. Keep it in a
+        // retriable package-valid state; activation remains blocked until a
+        // later test reaches runtime_valid.
+        validation_status: passed ? 'runtime_valid' : 'package_valid',
         validation_message: passed
           ? 'userFLOW confirmó que la extensión se carga correctamente en un navegador compatible.'
-          : error,
+          : `Prueba no confirmada. Puedes volver a probarla en userFLOW. ${error || ''}`.trim(),
         runtime_validated_at: passed ? now : null,
         enabled: passed ? extension.enabled === true : false,
         updated_at: now,
