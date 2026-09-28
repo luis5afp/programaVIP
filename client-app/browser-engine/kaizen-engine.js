@@ -137,12 +137,24 @@ function runtimeKey(runtime) {
 }
 
 function managedExtensionKey(profile) {
-  return Array.isArray(profile?.extensions)
+  const extensions = Array.isArray(profile?.extensions)
     ? profile.extensions
         .map((item) => `${String(item?.id || '')}:${String(item?.sha256 || '')}`)
         .sort()
         .join(',')
     : '';
+  const contentRules = Array.isArray(profile?.contentRules)
+    ? profile.contentRules
+        .map((item) => [
+          String(item?.id || ''),
+          String(item?.revision || ''),
+          String(item?.domain || ''),
+          String(item?.selector || ''),
+        ].join(':'))
+        .sort()
+        .join(',')
+    : '';
+  return `${extensions}|rules:${contentRules}`;
 }
 
 function browserGuardRevision(resourcesPath = process.resourcesPath) {
@@ -364,11 +376,22 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await fsp.cp(source, target, { recursive: true });
     const safeStrategy = ['guard-only', 'main', 'google', 'custom'].includes(strategy) ? strategy : 'guard-only';
     const streamingDomEnabled = options.streamingDomEnabled === true;
+    const contentRules = (Array.isArray(options.contentRules) ? options.contentRules : [])
+      .slice(0, 150)
+      .map((item) => ({
+        id: String(item?.id || '').slice(0, 64),
+        name: String(item?.name || '').slice(0, 120),
+        domain: String(item?.domain || '').toLowerCase().slice(0, 255),
+        selector: String(item?.selector || '').slice(0, 1000),
+        action: 'hide',
+      }))
+      .filter((item) => item.domain && item.selector);
     await fsp.writeFile(
       path.join(target, 'strategy.js'),
       [
         `globalThis.USERFLEX_RUNTIME_STRATEGY = ${JSON.stringify(safeStrategy)};`,
         `globalThis.USERFLEX_STREAMING_DOM = ${JSON.stringify(streamingDomEnabled)};`,
+        `globalThis.USERFLEX_CONTENT_RULES = ${JSON.stringify(contentRules)};`,
         '',
       ].join('\n'),
       'utf8',
@@ -477,6 +500,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         version: String(item?.version || ''),
       })),
       credentialHelper: credentialHelperEnabled,
+      contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules.length : 0,
     };
     const desiredExtensionKey = [
       managedExtensionKey(profile),
@@ -649,7 +673,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       clientId,
       profile.id,
       runtime.extensionStrategy,
-      { streamingDomEnabled },
+      {
+        streamingDomEnabled,
+        contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules : [],
+      },
     );
     const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
       .map((item) => item?.dir)
