@@ -112,6 +112,27 @@ export interface ManagedExtension {
   updated_at: string;
 }
 
+export type ContentRuleScope = 'global' | 'selective';
+
+export interface ContentRule {
+  id: string;
+  name: string;
+  description: string | null;
+  domain: string;
+  selector: string;
+  action: 'hide';
+  scope: ContentRuleScope;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileContentRuleMembership {
+  profile_id: string;
+  rule_id: string;
+  created_at: string;
+}
+
 export interface ProfileExtensionMembership {
   profile_id: string;
   extension_id: string;
@@ -388,6 +409,7 @@ export type ViewKey =
   | 'plans'
   | 'profiles'
   | 'extensions'
+  | 'content-rules'
   | 'proxies'
   | 'assignments'
   | 'devices'
