@@ -127,6 +127,12 @@ assert.match(
 
 assert.match(
   engine,
+  /if \(hasManagedExtensions\) \{[\s\S]{0,160}setTimeout\(resolve, 1600\)/,
+  'managed extensions must finish Edge startup registration before the first visible navigation',
+);
+
+assert.match(
+  engine,
   /MANAGED_EXTENSION_BROWSER_UNSUPPORTED/,
   'branded Chrome fallback must fail explicitly instead of reporting a false zero-extension test',
 );
