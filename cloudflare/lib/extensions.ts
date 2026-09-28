@@ -2,6 +2,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import type { AdminIdentity } from './auth';
 import type { ClientIdentity } from './auth';
 import { Env, HttpError, audit, bodyJson, json, optional, db, sha, text, token, uuid } from './core';
+import { bundledExtensions } from './builtin-extensions';
 import { touchProfileClients } from './client-revalidation';
 
 const BUCKET = 'userflex-extension-packages';
@@ -399,6 +400,93 @@ async function touchAllProfiles(env: Env) {
   await Promise.all((profiles || []).map((row: any) => touchProfileClients(env, row.id).catch(() => null)));
 }
 
+async function ensureBundledExtensionsInstalled(
+  request: Request,
+  env: Env,
+  admin: AdminIdentity,
+): Promise<void> {
+  for (const bundled of bundledExtensions()) {
+    const inspection = inspectExtensionZip(bundled.packageBytes);
+    const sha256 = await digestBytes(inspection.packageBytes);
+    const matches = await db(env, `userflex_extensions?select=*&name=eq.${encodeURIComponent(bundled.name)}&limit=1`);
+    const current = matches?.[0] as ExtensionRow | undefined;
+
+    if (
+      current
+      && String(current.package_sha256 || '') === sha256
+      && String(current.version || '') === inspection.version
+    ) {
+      continue;
+    }
+
+    const extensionId = current?.id || crypto.randomUUID();
+    const objectPath = `${extensionId}/${sha256}.zip`;
+    await uploadPackage(env, objectPath, inspection.packageBytes);
+
+    try {
+      if (current) {
+        const rows = await db(env, `userflex_extensions?id=eq.${extensionId}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({
+            description: bundled.description,
+            version: inspection.version,
+            manifest: jsonb(inspection.manifest),
+            permissions: jsonb(inspection.permissions),
+            package_path: objectPath,
+            package_sha256: sha256,
+            package_size: inspection.packageBytes.byteLength,
+            enabled: false,
+            validation_status: inspection.status,
+            validation_message: `${inspection.message} Instalación administrada por userFLEX.`,
+            runtime_validated_at: null,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_UPDATE_FAILED');
+        if (current.package_path && current.package_path !== objectPath) {
+          await removePackage(env, current.package_path);
+        }
+        await touchExtensionProfiles(env, extensionId);
+        await audit(env, request, 'admin', admin.userId, 'extension.builtin.update', 'extension', extensionId, {
+          name: bundled.name,
+          version: inspection.version,
+        });
+      } else {
+        const rows = await db(env, 'userflex_extensions', {
+          method: 'POST',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({
+            id: extensionId,
+            name: bundled.name,
+            description: bundled.description,
+            version: inspection.version,
+            manifest: jsonb(inspection.manifest),
+            permissions: jsonb(inspection.permissions),
+            package_path: objectPath,
+            package_sha256: sha256,
+            package_size: inspection.packageBytes.byteLength,
+            scope: 'selective',
+            enabled: false,
+            validation_status: inspection.status,
+            validation_message: `${inspection.message} Instalación administrada por userFLEX.`,
+          }),
+        });
+        if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_CREATE_FAILED');
+        await audit(env, request, 'admin', admin.userId, 'extension.builtin.install', 'extension', extensionId, {
+          name: bundled.name,
+          version: inspection.version,
+        });
+      }
+    } catch (error) {
+      if (!current || current.package_path !== objectPath) {
+        await removePackage(env, objectPath);
+      }
+      throw error;
+    }
+  }
+}
+
 async function parseUpload(request: Request) {
   const length = Number(request.headers.get('content-length') || 0);
   if (length > MAX_PACKAGE_BYTES + 1024 * 1024) throw new HttpError(413, 'EXTENSION_PACKAGE_SIZE');
@@ -430,6 +518,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
   await ensureExtensionSchema(env);
 
   if (path === '/api/extensions' && method === 'GET') {
+    await ensureBundledExtensionsInstalled(request, env, admin);
     const rows = await db(env, 'userflex_extensions?select=*&order=name.asc');
     const repaired = await Promise.all((rows || []).map(async (row: ExtensionRow) => {
       const warningRepaired = await repairLegacyManagementWarning(env, row);
