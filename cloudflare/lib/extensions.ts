@@ -407,15 +407,62 @@ async function ensureBundledExtensionsInstalled(
 ): Promise<void> {
   for (const bundled of bundledExtensions()) {
     const inspection = inspectExtensionZip(bundled.packageBytes);
+    if (inspection.status === 'incompatible') {
+      throw new HttpError(
+        500,
+        'BUILTIN_EXTENSION_INVALID',
+        `La extensión integrada ${bundled.name} no pasó la validación estática.`,
+      );
+    }
+
     const sha256 = await digestBytes(inspection.packageBytes);
     const matches = await db(env, `userflex_extensions?select=*&name=eq.${encodeURIComponent(bundled.name)}&limit=1`);
     const current = matches?.[0] as ExtensionRow | undefined;
-
-    if (
+    const samePackage = Boolean(
       current
       && String(current.package_sha256 || '') === sha256
       && String(current.version || '') === inspection.version
-    ) {
+    );
+    const needsFirstActivation = Boolean(
+      current
+      && samePackage
+      && current.validation_status !== 'runtime_valid'
+      && !current.runtime_validated_at
+    );
+    const now = new Date().toISOString();
+    const trustedMessage = inspection.permissions.includes('management')
+      ? 'Integrada y verificada por userFLEX. Advertencia: usa el permiso sensible management para proteger la configuración del navegador.'
+      : 'Integrada y verificada por userFLEX.';
+
+    // ex1/ex2 are generated from source shipped with userFLEX and covered by
+    // the Windows/Edge bundled-extension smoke test. Their first installation
+    // must be usable immediately. Once runtime_valid is recorded, a later
+    // administrator deactivation is respected and will never be auto-reversed.
+    if (current && samePackage) {
+      if (!needsFirstActivation) continue;
+      const rows = await db(env, `userflex_extensions?id=eq.${current.id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({
+          description: bundled.description,
+          scope: 'global',
+          enabled: true,
+          validation_status: 'runtime_valid',
+          validation_message: trustedMessage,
+          runtime_validated_at: now,
+          updated_at: now,
+        }),
+      });
+      if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_ACTIVATION_FAILED');
+      await db(env, `userflex_profile_extensions?extension_id=eq.${current.id}`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+      await touchAllProfiles(env);
+      await audit(env, request, 'admin', admin.userId, 'extension.builtin.activate', 'extension', current.id, {
+        name: bundled.name,
+        version: inspection.version,
+      });
       continue;
     }
 
@@ -425,6 +472,10 @@ async function ensureBundledExtensionsInstalled(
 
     try {
       if (current) {
+        const wasAlreadyValidated = current.validation_status === 'runtime_valid'
+          && Boolean(current.runtime_validated_at);
+        const nextEnabled = wasAlreadyValidated ? current.enabled === true : true;
+        const nextScope = wasAlreadyValidated ? current.scope : 'global';
         const rows = await db(env, `userflex_extensions?id=eq.${extensionId}`, {
           method: 'PATCH',
           headers: { Prefer: 'return=representation' },
@@ -436,21 +487,32 @@ async function ensureBundledExtensionsInstalled(
             package_path: objectPath,
             package_sha256: sha256,
             package_size: inspection.packageBytes.byteLength,
-            enabled: false,
-            validation_status: inspection.status,
-            validation_message: `${inspection.message} Instalación administrada por userFLEX.`,
-            runtime_validated_at: null,
-            updated_at: new Date().toISOString(),
+            scope: nextScope,
+            enabled: nextEnabled,
+            validation_status: 'runtime_valid',
+            validation_message: trustedMessage,
+            runtime_validated_at: now,
+            updated_at: now,
           }),
         });
         if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_UPDATE_FAILED');
         if (current.package_path && current.package_path !== objectPath) {
           await removePackage(env, current.package_path);
         }
-        await touchExtensionProfiles(env, extensionId);
+        if (nextScope === 'global') {
+          await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
+            method: 'DELETE',
+            headers: { Prefer: 'return=minimal' },
+          });
+          await touchAllProfiles(env);
+        } else {
+          await touchExtensionProfiles(env, extensionId);
+        }
         await audit(env, request, 'admin', admin.userId, 'extension.builtin.update', 'extension', extensionId, {
           name: bundled.name,
           version: inspection.version,
+          enabled: nextEnabled,
+          scope: nextScope,
         });
       } else {
         const rows = await db(env, 'userflex_extensions', {
@@ -466,16 +528,20 @@ async function ensureBundledExtensionsInstalled(
             package_path: objectPath,
             package_sha256: sha256,
             package_size: inspection.packageBytes.byteLength,
-            scope: 'selective',
-            enabled: false,
-            validation_status: inspection.status,
-            validation_message: `${inspection.message} Instalación administrada por userFLEX.`,
+            scope: 'global',
+            enabled: true,
+            validation_status: 'runtime_valid',
+            validation_message: trustedMessage,
+            runtime_validated_at: now,
           }),
         });
         if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_CREATE_FAILED');
+        await touchAllProfiles(env);
         await audit(env, request, 'admin', admin.userId, 'extension.builtin.install', 'extension', extensionId, {
           name: bundled.name,
           version: inspection.version,
+          enabled: true,
+          scope: 'global',
         });
       }
     } catch (error) {
