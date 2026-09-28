@@ -102,6 +102,25 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
 }
 .login-card input { padding: 12px 13px; }
+.password-field { position: relative; }
+.password-field input { padding-right: 72px; }
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 52px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #30394a;
+  border-radius: 8px;
+  background: #121824;
+  color: #cdd5e3;
+  font-size: 11px;
+  font-weight: 850;
+}
+.password-toggle:hover { background: #182131; border-color: #4a5670; color: #fff; }
+.password-toggle:focus-visible { outline: 2px solid #6658d9; outline-offset: 2px; }
 .login-card input:focus, .search-wrap input:focus {
   border-color: #6658d9;
   box-shadow: 0 0 0 3px rgba(102, 88, 217, .13);
