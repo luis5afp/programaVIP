@@ -192,7 +192,7 @@ const ex2ContentScript = String.raw`
 })();
 `;
 
-function manifest(name: string, version: string, description: string, extraPermissions: string[] = {}) {
+function manifest(name: string, version: string, description: string, extraPermissions: string[] = []) {
   return {
     manifest_version: 3,
     name,
