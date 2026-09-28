@@ -673,6 +673,18 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   const nextRevision = configRevisionFrom(payload);
   const configChanged = Boolean(previousRevision && nextRevision && previousRevision !== nextRevision);
   mergeValidationMeta(payload);
+
+  // Resolve the client id from the authoritative authenticated metadata after
+  // merging the latest server payload. A previous refactor removed a local
+  // declaration while leaving its use below, causing "clientId is not defined"
+  // immediately after a successful login.
+  const clientId = String(
+    authMeta?.client?.id
+      || payload?.client?.id
+      || knownCatalog?.client?.id
+      || '',
+  ).trim();
+
   let freshCatalog = knownCatalog;
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
   if (freshCatalog) {
