@@ -90,6 +90,24 @@ assert.match(
 
 assert.match(
   engine,
+  /const credentialHelperEnabled = credentialManaged && credentialsAvailable/,
+  'optional stored credentials must not inject the helper into cookie-snapshot profiles',
+);
+
+assert.match(
+  sessionState,
+  /performanceSensitive: \['digen\.ai'\]/,
+  'Digen must use performance-sensitive credential-helper mode',
+);
+
+assert.match(
+  sessionState,
+  /if \(performanceSensitive && !forced\)[\s\S]{0,900}activateOnLoginFocus[\s\S]{0,700}start\(true\)/,
+  'authenticated Digen pages must keep the credential observer dormant until a real login field receives focus',
+);
+
+assert.match(
+  engine,
   /setInterval\(\(\) => void closeDevtoolsTargets\(debugPort\), 5000\)/,
   'DevTools guard must not poll Chrome several times per second',
 );
