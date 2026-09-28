@@ -155,8 +155,13 @@ assert.match(
 );
 assert.match(
   guard,
-  /setInterval\(process, 750\)/,
-  'STREAMING DOM script must re-enforce hiding when project pages rebuild their UI',
+  /setInterval\(schedule, 12000\)/,
+  'STREAMING DOM script must keep a low-frequency fallback without saturating heavy pages',
+);
+assert.match(
+  guard,
+  /requestIdleCallback/,
+  'STREAMING DOM rescans should prefer browser idle time when available',
 );
 assert.match(
   guard,

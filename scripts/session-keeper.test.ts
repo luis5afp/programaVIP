@@ -72,7 +72,16 @@ assert.doesNotMatch(
 );
 
 assert.match(clientMain, /preserveProfilesForAuthError/);
-assert.match(clientMain, /clientId && !preserveProfiles/);
+assert.doesNotMatch(
+  clientMain,
+  /clearClientProfiles\(clientId, 'logout'\)/,
+  'auth/logout transitions must never erase persistent client browser profiles',
+);
+assert.match(
+  clientEngine,
+  /reason !== 'explicit_admin_reset'/,
+  'destructive local profile cleanup must require an explicit administrator reset',
+);
 assert.match(clientMain, /session-fallback/);
 assert.match(clientMain, /fallbackRecovered/);
 assert.match(clientMain, /sessionVersion: Number\(result\?\.sessionVersion/);

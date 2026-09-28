@@ -11,6 +11,93 @@ const MAX_FILES = 1500;
 const BLOCKED_PERMISSIONS = new Set(['management', 'debugger', 'nativeMessaging', 'proxy']);
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 
+let extensionSchemaReadyFor = '';
+let extensionSchemaReadyPromise: Promise<void> | null = null;
+
+async function ensureExtensionSchema(env: Env) {
+  const databaseUrl = String(env.NEON_DATABASE_URL || '').trim();
+  if (!databaseUrl) throw new HttpError(503, 'NEON_CONFIG_MISSING', 'Neon no está configurado.');
+  if (extensionSchemaReadyFor === databaseUrl && extensionSchemaReadyPromise) {
+    return await extensionSchemaReadyPromise;
+  }
+
+  extensionSchemaReadyFor = databaseUrl;
+  extensionSchemaReadyPromise = (async () => {
+    const { neon } = await import('@neondatabase/serverless');
+    const sql = neon(databaseUrl);
+    const statements = [
+      `CREATE TABLE IF NOT EXISTS public.userflex_extensions (
+        id uuid PRIMARY KEY,
+        name text NOT NULL,
+        description text,
+        version text NOT NULL,
+        manifest jsonb NOT NULL DEFAULT '{}'::jsonb,
+        permissions jsonb NOT NULL DEFAULT '[]'::jsonb,
+        package_path text NOT NULL,
+        package_sha256 text NOT NULL,
+        package_size bigint NOT NULL,
+        scope text NOT NULL DEFAULT 'selective',
+        enabled boolean NOT NULL DEFAULT false,
+        validation_status text NOT NULL DEFAULT 'package_valid',
+        validation_message text,
+        runtime_validated_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS userflex_extensions_name_lower_uidx
+        ON public.userflex_extensions (lower(name))`,
+      `CREATE TABLE IF NOT EXISTS public.userflex_profile_extensions (
+        profile_id uuid NOT NULL REFERENCES public.userflex_profiles(id) ON DELETE CASCADE,
+        extension_id uuid NOT NULL REFERENCES public.userflex_extensions(id) ON DELETE CASCADE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (profile_id, extension_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS userflex_profile_extensions_extension_idx
+        ON public.userflex_profile_extensions(extension_id)`,
+      `CREATE TABLE IF NOT EXISTS public.userflex_extension_validation_jobs (
+        id uuid PRIMARY KEY,
+        extension_id uuid NOT NULL REFERENCES public.userflex_extensions(id) ON DELETE CASCADE,
+        token_hash text NOT NULL UNIQUE,
+        status text NOT NULL DEFAULT 'pending',
+        result jsonb,
+        error text,
+        expires_at timestamptz NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS userflex_extension_validation_jobs_extension_idx
+        ON public.userflex_extension_validation_jobs(extension_id, created_at DESC)`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS description text`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS manifest jsonb NOT NULL DEFAULT '{}'::jsonb`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS permissions jsonb NOT NULL DEFAULT '[]'::jsonb`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'selective'`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT false`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS validation_status text NOT NULL DEFAULT 'package_valid'`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS validation_message text`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS runtime_validated_at timestamptz`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`,
+      `ALTER TABLE public.userflex_extensions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
+      `ALTER TABLE public.userflex_extension_validation_jobs ADD COLUMN IF NOT EXISTS result jsonb`,
+      `ALTER TABLE public.userflex_extension_validation_jobs ADD COLUMN IF NOT EXISTS error text`,
+      `ALTER TABLE public.userflex_extension_validation_jobs ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
+    ];
+
+    for (const statement of statements) await sql.query(statement);
+  })().catch((error: any) => {
+    extensionSchemaReadyPromise = null;
+    const code = String(error?.code || '');
+    const detail = String(error?.message || error || '');
+    console.error('Managed extension schema bootstrap failed', code, detail.slice(0, 220));
+    throw new HttpError(502, 'EXTENSION_SCHEMA_ERROR', 'No se pudo preparar la base de datos de extensiones.');
+  });
+
+  return await extensionSchemaReadyPromise;
+}
+
+function jsonb(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
+
 type ExtensionRow = {
   id: string;
   name: string;
@@ -268,6 +355,13 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method.toUpperCase();
+  const relevant = path === '/api/extensions'
+    || path === '/api/profile-extension-memberships'
+    || /^\/api\/extensions\//i.test(path)
+    || /^\/api\/extension-tests\//i.test(path)
+    || /^\/api\/profiles\/[0-9a-f-]{36}\/extensions$/i.test(path);
+  if (!relevant) return null;
+  await ensureExtensionSchema(env);
 
   if (path === '/api/extensions' && method === 'GET') {
     const rows = await sb(env, 'userflex_extensions?select=*&order=name.asc');
@@ -296,8 +390,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
           name,
           description,
           version: inspection.version,
-          manifest: inspection.manifest,
-          permissions: inspection.permissions,
+          manifest: jsonb(inspection.manifest),
+          permissions: jsonb(inspection.permissions),
           package_path: objectPath,
           package_sha256: sha256,
           package_size: bytes.byteLength,
@@ -332,8 +426,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
           version: inspection.version,
-          manifest: inspection.manifest,
-          permissions: inspection.permissions,
+          manifest: jsonb(inspection.manifest),
+          permissions: jsonb(inspection.permissions),
           package_path: objectPath,
           package_sha256: sha256,
           package_size: bytes.byteLength,
@@ -524,6 +618,8 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method.toUpperCase();
+  if (!path.startsWith('/api/extension-test/')) return null;
+  await ensureExtensionSchema(env);
 
   if (path === '/api/extension-test/bootstrap' && method === 'POST') {
     const body = await bodyJson(request);
@@ -578,7 +674,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
         status: passed ? 'pass' : 'fail',
-        result,
+        result: jsonb(result),
         error,
         updated_at: now,
       }),
@@ -604,6 +700,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
 }
 
 export async function managedExtensionsForProfiles(env: Env, profileIds: string[]) {
+  await ensureExtensionSchema(env);
   const ids = [...new Set(profileIds.filter(Boolean))];
   const result = new Map<string, any[]>();
   ids.forEach((id) => result.set(id, []));
@@ -645,6 +742,7 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
 }
 
 export async function clientExtensionPackage(request: Request, env: Env, identity: ClientIdentity, extensionIdRaw: string): Promise<Response> {
+  await ensureExtensionSchema(env);
   const extensionId = uuid(extensionIdRaw, 'extensionId');
   const extension = await extensionRow(env, extensionId);
   if (!extension.enabled || extension.validation_status !== 'runtime_valid') {
