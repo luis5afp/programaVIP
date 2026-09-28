@@ -4,12 +4,14 @@ import type {
   AuditLog,
   Client,
   ClientReleaseStatus,
+  ContentRule,
   CookieImportInspection,
   DashboardStats,
   Device,
   HealthInfo,
   ManagedExtension,
   ExtensionValidationJob,
+  ProfileContentRuleMembership,
   ProfileExtensionMembership,
   Plan,
   Profile,
@@ -232,6 +234,33 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ extensionIds }),
       }),
+  },
+
+  contentRules: {
+    list: () => request<ContentRule[]>('/api/content-rules'),
+    memberships: () => request<ProfileContentRuleMembership[]>('/api/content-rule-memberships'),
+    create: (input: {
+      name: string;
+      description?: string;
+      domain: string;
+      selector: string;
+      scope: 'global' | 'selective';
+      enabled?: boolean;
+    }) => request<ContentRule>('/api/content-rules', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+    update: (id: string, input: Partial<Pick<ContentRule, 'name' | 'description' | 'domain' | 'selector' | 'scope' | 'enabled'>>) =>
+      request<ContentRule>(`/api/content-rules/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }),
+    setProfiles: (id: string, profileIds: string[]) =>
+      request<{ ok: true; rule_id: string; profile_ids: string[] }>(`/api/content-rules/${id}/profiles`, {
+        method: 'POST',
+        body: JSON.stringify({ profileIds }),
+      }),
+    remove: (id: string) => request<{ ok: true }>(`/api/content-rules/${id}`, { method: 'DELETE' }),
   },
 
   profiles: {
