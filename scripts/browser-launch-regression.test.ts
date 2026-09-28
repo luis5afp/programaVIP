@@ -52,4 +52,41 @@ assert.match(
   'autofill must emit a native input event for controlled login fields',
 );
 
+
+assert.match(
+  engine,
+  /resolveManagedExtensionBrowserExecutable[\s\S]{0,1200}chrome_native[\s\S]{0,400}edgeCandidates\(\)[\s\S]{0,400}nativeChromeCandidates/,
+  'managed extensions must prefer bundled Chromium/Edge before branded Chrome',
+);
+
+assert.match(
+  engine,
+  /hasManagedExtensions[\s\S]{0,350}resolveManagedExtensionBrowserExecutable/,
+  'profiles with managed extensions must use the extension-capable browser resolver',
+);
+
+assert.match(
+  engine,
+  /MANAGED_EXTENSION_BROWSER_UNSUPPORTED/,
+  'branded Chrome fallback must fail explicitly instead of reporting a false zero-extension test',
+);
+
+assert.match(
+  engine,
+  /entry\.browserKind === 'edge' \? 'edge:\/\/extensions\/' : 'chrome:\/\/extensions\/'/,
+  'extension inspection must use the correct internal extension page for Edge and Chromium',
+);
+
+assert.match(
+  engine,
+  /browser-preferences/,
+  'extension validation must also inspect persistent browser extension state',
+);
+
+assert.match(
+  engine,
+  /browser\.targets\(\)/,
+  'extension validation must fall back to extension targets when the internal WebUI changes',
+);
+
 console.log('Managed browser launch/autofill regression checks: OK');
