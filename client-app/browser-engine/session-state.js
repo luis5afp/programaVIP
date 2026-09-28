@@ -492,7 +492,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
   const allowedOrigins = credentialAutofillOrigins(profileUrl, extensionStrategy);
   const browser = await connectKaizenBrowser(debugPort);
   try {
-    const bootstrap = ({ allowedOrigins, username, password }) => {
+    const bootstrap = ({ allowedOrigins, username, password, performanceSensitive = false }) => {
       const currentHost = String(location.hostname || '').toLowerCase();
       if (location.protocol === 'https:'
         && currentHost !== 'accounts.google.com'
@@ -760,7 +760,27 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         positionHelper();
       };
 
-      const start = () => {
+      const start = (forced = false) => {
+        // Heavy authenticated editors should not keep a credential observer
+        // alive on their application shell. If they later present a real login
+        // field, focusing that field activates the helper on demand.
+        if (performanceSensitive && !forced) {
+          const routeLooksLikeLogin = /(?:^|\/)(login|signin|sign-in|auth|account\/login)(?:\/|$)/i
+            .test(location.pathname + location.search);
+          let hasLoginSurface = false;
+          try { hasLoginSurface = Boolean(document.querySelector(LOGIN_INPUT_SELECTOR)); } catch {}
+          if (!routeLooksLikeLogin && !hasLoginSurface) {
+            const activateOnLoginFocus = (event) => {
+              const target = event?.target;
+              if (!(target instanceof HTMLInputElement) || !fieldKind(target)) return;
+              removeEventListener('focusin', activateOnLoginFocus, true);
+              start(true);
+            };
+            addEventListener('focusin', activateOnLoginFocus, true);
+            return;
+          }
+        }
+
         let scanTimer = null;
         let stopped = false;
 
@@ -845,6 +865,10 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       allowedOrigins,
       username: String(credentials.username),
       password: String(credentials.password),
+      performanceSensitive: ['digen.ai'].some((domain) => {
+        const host = String(target.hostname || '').toLowerCase();
+        return host === domain || host.endsWith(`.${domain}`);
+      }),
     };
     const existingPages = await browser.pages();
     const pages = existingPages.length ? existingPages : [await browser.newPage()];
