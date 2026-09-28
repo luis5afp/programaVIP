@@ -6,6 +6,7 @@ const adapter = readFileSync(new URL('../cloudflare/lib/neon-rest.ts', import.me
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const deploy = readFileSync(new URL('../.github/workflows/deploy-cloudflare.yml', import.meta.url), 'utf8');
 const wrangler = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+const extensions = readFileSync(new URL('../cloudflare/lib/extensions.ts', import.meta.url), 'utf8');
 
 assert.equal(typeof pkg.dependencies['@neondatabase/serverless'], 'string');
 assert.match(core, /NEON_DATABASE_URL\?: string/);
@@ -34,5 +35,9 @@ assert.match(adapter, /IN \(/);
 assert.match(adapter, /NULLS LAST/);
 assert.match(adapter, /value instanceof Date/);
 assert.match(adapter, /toISOString\(\)/);
+assert.match(extensions, /ensureExtensionSchema/);
+assert.match(extensions, /CREATE TABLE IF NOT EXISTS public\.userflex_extensions/);
+assert.match(extensions, /permissions: jsonb\(inspection\.permissions\)/);
+assert.match(extensions, /result: jsonb\(result\)/);
 
 console.log('Neon database adapter compatibility: OK');
