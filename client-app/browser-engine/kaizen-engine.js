@@ -975,7 +975,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return { removed: authorization.removed || [], invalidated };
   }
 
-  async function clearClientProfiles(clientId, reason = 'client_logout') {
+  async function clearClientProfiles(clientId, reason = 'explicit_admin_reset') {
+    // Local browser data is persistent. Only an explicit administrator reset
+    // may erase it; logout/auth/subscription/update transitions must preserve it.
+    if (reason !== 'explicit_admin_reset') {
+      log.warn?.(`userFLOW preserved local browser profiles for ${safeSegment(clientId, 'client')} (reason: ${reason || 'unknown'}).`);
+      return { removed: false, preserved: true };
+    }
+
     const keyPrefix = `${safeSegment(clientId, 'client')}:`;
     const live = Array.from(processes.entries())
       .filter(([key]) => key.startsWith(keyPrefix))
@@ -996,6 +1003,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     } catch {}
     await fsp.rm(root, { recursive: true, force: true });
     await fsp.rm(clientExtensionsDir(clientId), { recursive: true, force: true });
+    return { removed: true, preserved: false };
   }
 
   function running() {
