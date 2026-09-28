@@ -35,6 +35,22 @@ assert.match(
   'legacy management-only incompatible records must be upgraded to warning-only package_valid',
 );
 assert.match(
+  worker,
+  /repairRetriableRuntimeFailure[\s\S]{0,1400}validation_status: 'package_valid'/,
+  'an old runtime-test failure must be repaired into a retriable package-valid state',
+);
+assert.match(
+  worker,
+  /validation_status: passed \? 'runtime_valid' : 'package_valid'/,
+  'a failed runtime test must stay retriable instead of permanently marking the extension as a load error',
+);
+assert.match(
+  worker,
+  /Vuelve a probar con userFLOW 0\.3\.76 o superior/,
+  'legacy failures must tell the administrator to retest with the fixed client',
+);
+
+assert.match(
   view,
   /\{item\.enabled \? 'Desactivar' : 'Activar'\}/,
   'the Admin must have an explicit deactivate/activate control',
