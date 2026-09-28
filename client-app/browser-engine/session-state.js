@@ -1164,8 +1164,22 @@ export async function closeDevtoolsTargets(debugPort) {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
     if (!response.ok) return;
     const targets = await response.json();
+    const blockedPrefixes = [
+      'devtools://',
+      'chrome://extensions',
+      'chrome://settings',
+      'chrome://flags',
+      'chrome://inspect',
+      'chrome://policy',
+      'edge://extensions',
+      'edge://settings',
+      'edge://flags',
+      'edge://inspect',
+      'edge://policy',
+    ];
     for (const target of Array.isArray(targets) ? targets : []) {
-      if (!String(target?.url || '').startsWith('devtools://') || !target?.id) continue;
+      const url = String(target?.url || '').toLowerCase();
+      if (!target?.id || !blockedPrefixes.some((prefix) => url.startsWith(prefix))) continue;
       await fetch(`http://127.0.0.1:${debugPort}/json/close/${encodeURIComponent(target.id)}`).catch(() => null);
     }
   } catch {}

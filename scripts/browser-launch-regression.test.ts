@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 
 const engine = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
 const sessionState = readFileSync(new URL('../client-app/browser-engine/session-state.js', import.meta.url), 'utf8');
+const guardManifest = readFileSync(new URL('../client-app/browser-engine/extension/manifest.json', import.meta.url), 'utf8');
+const guardBackground = readFileSync(new URL('../client-app/browser-engine/extension/background.js', import.meta.url), 'utf8');
+const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 
 assert.doesNotMatch(
   engine,
@@ -165,6 +168,54 @@ assert.match(
   engine,
   /internalNavigationError,[\s\S]{0,120}stderr:/,
   'extension inspection should return internal WebUI navigation diagnostics without treating them as fatal',
+);
+
+assert.match(
+  engine,
+  /ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu/,
+  'managed browser launches must suppress Edge extension toolbar management features when supported',
+);
+
+assert.match(
+  engine,
+  /async function managedExtensionPathsHealth[\s\S]{0,1800}Preferences[\s\S]{0,800}Secure Preferences/,
+  'userFLOW must verify protected extension state from the persistent browser profile',
+);
+
+assert.match(
+  engine,
+  /extensionGuardTimer = setInterval\(\(\) => void enforceManagedExtensionHealth\(entry\), 3000\)/,
+  'managed extensions must be checked continuously without high-frequency polling',
+);
+
+assert.match(
+  engine,
+  /recoverManagedExtensions[\s\S]{0,1500}managed_extension_recovery[\s\S]{0,900}await launch\(\{ \.\.\.relaunch, forceRestore: false \}\)/,
+  'removing or disabling a managed extension must trigger an automatic browser recovery',
+);
+
+assert.match(
+  sessionState,
+  /edge:\/\/extensions[\s\S]{0,180}edge:\/\/settings[\s\S]{0,500}json\/close/,
+  'extension/settings WebUI targets must be closed from outside the browser extension sandbox',
+);
+
+assert.match(
+  guardManifest,
+  /"management"/,
+  'Browser Guard needs management permission to re-enable protected extensions',
+);
+
+assert.match(
+  guardBackground,
+  /PROTECTED_NAMES[\s\S]{0,1500}chrome\.management\.onDisabled[\s\S]{0,800}setEnabled\(item\.id, true\)/,
+  'Browser Guard must immediately re-enable protected extensions when possible',
+);
+
+assert.match(
+  main,
+  /reason === 'managed_extension_recovery'/,
+  'automatic extension recovery must not close the active profile usage record',
 );
 
 console.log('Managed browser launch/autofill regression checks: OK');
