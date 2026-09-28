@@ -414,8 +414,8 @@ async function launchDownloadedInstaller({ silent = false } = {}) {
     pushStatus({
       phase: 'installing',
       message: silent
-        ? 'Instalación iniciada · cerrando la versión anterior…'
-        : 'Instalador abierto · cerrando userFLOW…',
+        ? 'Instalación iniciada · cerrando la versión anterior y reabriendo userFLOW…'
+        : 'Instalador abierto · al finalizar se reabrirá userFLOW…',
       percent: 100,
     });
     await updaterLog(`instalador v${manifest.version} iniciado correctamente`);
