@@ -743,6 +743,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
+      // Microsoft Edge can accept --load-extension before its extension system
+      // has finished registering content scripts. A navigation that happens
+      // immediately after the CDP endpoint appears can therefore miss those
+      // scripts on the first visible page. Real Windows Edge smoke tests showed
+      // that a short startup settle eliminates this race. Only profiles with
+      // managed extensions pay this delay.
+      if (hasManagedExtensions) {
+        await new Promise((resolve) => setTimeout(resolve, 1600));
+      }
+
       let deviceLocalAuthMigration = null;
       if (runtime.deviceLocalAuth === true && netflixTarget) {
         // STREAMING keeps device-bound storage local while accepting the current
