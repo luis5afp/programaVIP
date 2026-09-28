@@ -35,6 +35,31 @@ assert.match(
 );
 assert.match(
   state,
+  /protectPasswordField/,
+  'managed credential autofill must protect password fields from visual disclosure',
+);
+assert.match(
+  state,
+  /-webkit-text-security', 'disc', 'important'/,
+  'managed passwords must remain visually masked even if a provider toggles the input type',
+);
+assert.match(
+  state,
+  /userflexCredentialProtected/,
+  'protected password inputs must remain identifiable after provider DOM mutations',
+);
+assert.match(
+  state,
+  /addEventListener\('copy', blockManagedPasswordClipboard, true\)/,
+  'managed passwords must not be copyable from the login field',
+);
+assert.match(
+  state,
+  /addEventListener\('cut', blockManagedPasswordClipboard, true\)/,
+  'managed passwords must not be cut from the login field',
+);
+assert.match(
+  state,
   /Netflix can rotate NetflixId\/SecureNetflixId immediately/,
   'Netflix cookie rotation must be treated as a normal authenticated response, not a restore failure',
 );
