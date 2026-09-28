@@ -5,7 +5,6 @@ contextBridge.exposeInMainWorld('userflex', {
   login: (input) => ipcRenderer.invoke('userflex:login', input),
   catalog: () => ipcRenderer.invoke('userflex:catalog'),
   launchProfile: (profileId) => ipcRenderer.invoke('userflex:launch-profile', profileId),
-  logout: () => ipcRenderer.invoke('userflex:logout'),
   onHeartbeat: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('userflex:heartbeat', listener);
