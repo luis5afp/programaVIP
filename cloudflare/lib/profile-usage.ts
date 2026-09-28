@@ -1,5 +1,5 @@
 import { AdminIdentity, ClientIdentity } from './auth';
-import { Env, HttpError, bodyJson, json, sb, uuid } from './core';
+import { Env, HttpError, bodyJson, json, db, uuid } from './core';
 
 const TRACKING_HEADER = 'x-userflow-profile-usage';
 const VERSION_HEADER = 'x-userflow-client-version';
@@ -18,7 +18,7 @@ export async function openProfileUsage(
 ) {
   if (request.headers.get(TRACKING_HEADER) !== '1') return null;
 
-  const devices = await sb(
+  const devices = await db(
     env,
     `userflex_devices?select=id,name,os&id=eq.${id.deviceId}&client_id=eq.${id.clientId}&limit=1`,
   );
@@ -27,7 +27,7 @@ export async function openProfileUsage(
   const clientVersion = (request.headers.get(VERSION_HEADER) || '').trim().slice(0, 32) || null;
   const ip = request.headers.get('cf-connecting-ip') || null;
 
-  const rows = await sb(env, 'userflex_profile_usage', {
+  const rows = await db(env, 'userflex_profile_usage', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify({
@@ -62,7 +62,7 @@ export async function clientCloseProfileUsage(
   const body = await bodyJson(request).catch(() => ({}));
   const reason = safeReason(body?.reason);
   const closedAt = new Date().toISOString();
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_usage?id=eq.${usageId}&client_id=eq.${id.clientId}&device_id=eq.${id.deviceId}&client_session_id=eq.${id.sessionId}&closed_at=is.null`,
     {
@@ -76,7 +76,7 @@ export async function clientCloseProfileUsage(
 
 async function closeOpenUsage(env: Env, filter: string, reason: string) {
   const closedAt = new Date().toISOString();
-  await sb(env, `userflex_profile_usage?${filter}&closed_at=is.null`, {
+  await db(env, `userflex_profile_usage?${filter}&closed_at=is.null`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ closed_at: closedAt, close_reason: safeReason(reason), updated_at: closedAt }),
@@ -114,7 +114,7 @@ export async function adminProfileUsageRoutes(
   if (profileId) filters.push(`profile_id=eq.${uuid(profileId, 'profileId')}`);
 
   const suffix = filters.length ? `&${filters.join('&')}` : '';
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profile_usage?select=id,client_id,device_id,profile_id,client_name,client_email,device_name,device_os,profile_name,profile_url,client_version,ip,opened_at,closed_at,close_reason&order=opened_at.desc&limit=${limit}${suffix}`,
   );

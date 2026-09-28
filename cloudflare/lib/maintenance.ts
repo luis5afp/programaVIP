@@ -1,4 +1,4 @@
-import { Env, sb } from './core';
+import { Env, db } from './core';
 
 function encodedNow() {
   return encodeURIComponent(new Date().toISOString());
@@ -9,11 +9,11 @@ export async function cleanupRuntimeState(env: Env) {
   const nowEncoded = encodedNow();
 
   const [expiredSessions, openUsage] = await Promise.all([
-    sb(
+    db(
       env,
       `userflex_client_sessions?select=id&revoked_at=is.null&expires_at=lte.${nowEncoded}&limit=5000`,
     ),
-    sb(
+    db(
       env,
       'userflex_profile_usage?select=id,client_session_id&closed_at=is.null&limit=5000',
     ),
@@ -21,7 +21,7 @@ export async function cleanupRuntimeState(env: Env) {
 
   const expiredIds = (expiredSessions || []).map((row: any) => String(row.id)).filter(Boolean);
   if (expiredIds.length) {
-    await sb(env, `userflex_client_sessions?id=in.(${expiredIds.join(',')})&revoked_at=is.null`, {
+    await db(env, `userflex_client_sessions?id=in.(${expiredIds.join(',')})&revoked_at=is.null`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ revoked_at: now }),
@@ -36,7 +36,7 @@ export async function cleanupRuntimeState(env: Env) {
 
   let inactiveIds = new Set(expiredIds);
   if (openSessionIds.length) {
-    const sessions = await sb(
+    const sessions = await db(
       env,
       `userflex_client_sessions?select=id,revoked_at,expires_at&id=in.(${openSessionIds.join(',')})`,
     );
@@ -55,7 +55,7 @@ export async function cleanupRuntimeState(env: Env) {
     .filter(Boolean);
 
   if (staleUsageIds.length) {
-    await sb(env, `userflex_profile_usage?id=in.(${staleUsageIds.join(',')})&closed_at=is.null`, {
+    await db(env, `userflex_profile_usage?id=in.(${staleUsageIds.join(',')})&closed_at=is.null`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -66,13 +66,13 @@ export async function cleanupRuntimeState(env: Env) {
     });
   }
 
-  await sb(env, `userflex_profile_session_jobs?status=eq.pending&expires_at=lte.${nowEncoded}`, {
+  await db(env, `userflex_profile_session_jobs?status=eq.pending&expires_at=lte.${nowEncoded}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ status: 'expired' }),
   });
 
-  await sb(env, `userflex_profile_validation_jobs?status=in.(pending,running)&expires_at=lte.${nowEncoded}`, {
+  await db(env, `userflex_profile_validation_jobs?status=in.(pending,running)&expires_at=lte.${nowEncoded}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ status: 'expired', completed_at: now }),

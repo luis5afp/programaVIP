@@ -9,7 +9,7 @@ import {
   integer,
   json,
   optional,
-  sb,
+  db,
   text,
   uuid,
 } from './core';
@@ -103,7 +103,7 @@ function validationFields(result: ProxyValidationResult, includeNullLastSuccess 
 }
 
 async function storedProxy(env: Env, id: string) {
-  const rows = await sb(env, `userflex_proxies?select=${PROXY_SELECT}&id=eq.${id}&limit=1`);
+  const rows = await db(env, `userflex_proxies?select=${PROXY_SELECT}&id=eq.${id}&limit=1`);
   const proxy = rows?.[0];
   if (!proxy) throw new HttpError(404, 'PROXY_NOT_FOUND', 'El proxy no existe.');
   return proxy;
@@ -133,7 +133,7 @@ export async function adminProxyRoutes(
   const method = request.method.toUpperCase();
 
   if (path === '/api/proxies' && method === 'GET') {
-    const rows = await sb(env, `userflex_proxies?select=${PROXY_SELECT}&order=name.asc`);
+    const rows = await db(env, `userflex_proxies?select=${PROXY_SELECT}&order=name.asc`);
     return json((rows || []).map(safeProxy));
   }
 
@@ -167,7 +167,7 @@ export async function adminProxyRoutes(
       });
     }
 
-    const rows = await sb(env, 'userflex_proxies', {
+    const rows = await db(env, 'userflex_proxies', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(row),
@@ -196,7 +196,7 @@ export async function adminProxyRoutes(
       username: current.username || null,
       password,
     });
-    const rows = await sb(env, `userflex_proxies?id=eq.${proxyId}`, {
+    const rows = await db(env, `userflex_proxies?id=eq.${proxyId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(validationFields(validation)),
@@ -266,7 +266,7 @@ export async function adminProxyRoutes(
 
     if (Object.keys(patch).length === 0) return json(safeProxy(current));
 
-    const rows = await sb(env, `userflex_proxies?id=eq.${proxyId}`, {
+    const rows = await db(env, `userflex_proxies?id=eq.${proxyId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),

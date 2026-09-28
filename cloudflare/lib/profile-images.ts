@@ -1,5 +1,5 @@
 import { AdminIdentity } from './auth';
-import { Env, HttpError, audit, json, sb } from './core';
+import { Env, HttpError, audit, json, db } from './core';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_REQUEST_BYTES = MAX_IMAGE_BYTES + 512 * 1024;
@@ -136,7 +136,7 @@ export async function serveProfileImage(
   env: Env,
   profileId: string,
 ): Promise<Response> {
-  const rows = await sb(
+  const rows = await db(
     env,
     `userflex_profiles?select=id,image_url&id=eq.${profileId}&enabled=eq.true&limit=1`,
   );

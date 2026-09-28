@@ -107,7 +107,7 @@ export function requireSameOriginWrite(request: Request): void {
   }
 }
 
-export async function sb(env: Env, path: string, init: RequestInit = {}): Promise<any> {
+export async function db(env: Env, path: string, init: RequestInit = {}): Promise<any> {
   if (!env.NEON_DATABASE_URL) {
     throw new HttpError(503, 'NEON_CONFIG_MISSING', 'Neon no está configurado.');
   }
@@ -338,7 +338,7 @@ export async function audit(
 ) {
   const ip = request.headers.get('cf-connecting-ip');
   const ipHash = ip ? await sha(`userflex-ip:${ip}`) : null;
-  await sb(env, 'userflex_audit_logs', {
+  await db(env, 'userflex_audit_logs', {
     method: 'POST',
     headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({
@@ -356,7 +356,7 @@ export async function audit(
 export async function loginGuard(env: Env, request: Request, scope: string, identity = '') {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   const key = await sha(`userflex-login:${scope}:${ip}:${identity.toLowerCase()}`);
-  const result = await sb(env, 'rpc/userflex_login_guard', {
+  const result = await db(env, 'rpc/userflex_login_guard', {
     method: 'POST',
     body: JSON.stringify({ p_ip_hash: key }),
   });
@@ -366,7 +366,7 @@ export async function loginGuard(env: Env, request: Request, scope: string, iden
 }
 
 export async function resetGuard(env: Env, key: string) {
-  await sb(env, 'rpc/userflex_login_guard_reset', {
+  await db(env, 'rpc/userflex_login_guard_reset', {
     method: 'POST',
     body: JSON.stringify({ p_ip_hash: key }),
   });
