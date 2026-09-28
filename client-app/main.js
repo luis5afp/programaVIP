@@ -626,8 +626,7 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
   if (freshCatalog) {
     mergeValidationMeta(freshCatalog);
-    const clientId = authMeta?.client?.id || null;
-    const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
+      const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
     if (clientId) {
       await getKaizenBrowserEngine()
         .reconcileCatalogProfiles(clientId, catalogProfiles)
@@ -815,9 +814,6 @@ async function returnToLogin(message = null, code = null, options = {}) {
   // window-all-closed and can terminate the whole app before login is recreated.
   await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
-  if (clientId && !preserveProfiles) {
-    await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
-  }
   await clearAuth();
   pendingAuthInvalidation = message ? {
     message: String(message),
@@ -2147,17 +2143,6 @@ ipcMain.handle('userflex-profile-window:action', async (event, input) => {
     return { ok: pageNavigation(workspace, page, action) };
   }
   return { ok: false };
-});
-
-ipcMain.handle('userflex:logout', async () => {
-  try {
-    if (accessToken) await apiRequest('/api/client/logout', { method: 'POST' }).catch(() => null);
-    await returnToLogin();
-    return { ok: true };
-  } catch (error) {
-    await returnToLogin();
-    return { ok: false, error: serializeError(error) };
-  }
 });
 
 process.on('unhandledRejection', (reason) => {
