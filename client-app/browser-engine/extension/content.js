@@ -12,6 +12,106 @@
 
   addEventListener('contextmenu', stop, true);
 
+  // Core userFLEX content rules. These replace the need for a separate remote
+  // blocker extension: the Admin stores CSS selectors in Neon, the Worker
+  // delivers only the rules for this profile, and Browser Guard applies them
+  // locally. Work is domain-scoped, debounced and structural-only to avoid
+  // repeating the heavy DOM scans that previously caused lag on large SPAs.
+  const managedRules = (Array.isArray(globalThis.USERFLEX_CONTENT_RULES)
+    ? globalThis.USERFLEX_CONTENT_RULES
+    : [])
+    .slice(0, 150)
+    .map((rule) => ({
+      id: String(rule?.id || '').slice(0, 64),
+      domain: String(rule?.domain || '').trim().toLowerCase().replace(/^\*\./, ''),
+      selector: String(rule?.selector || '').trim().slice(0, 1000),
+      action: 'hide',
+    }))
+    .filter((rule) => rule.domain && rule.selector);
+
+  const currentHost = String(location.hostname || '').toLowerCase();
+  const contentRules = managedRules.filter((rule) =>
+    rule.domain === '*'
+      || currentHost === rule.domain
+      || currentHost.endsWith(`.${rule.domain}`));
+
+  if (contentRules.length) {
+    const hideByRule = (element, ruleId) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const markerName = 'userflexContentRule';
+      const current = String(element.dataset?.[markerName] || '');
+      if (current.split(',').includes(ruleId)) return false;
+      try {
+        element.style.setProperty('display', 'none', 'important');
+        element.style.setProperty('visibility', 'hidden', 'important');
+        element.style.setProperty('pointer-events', 'none', 'important');
+        element.setAttribute('aria-hidden', 'true');
+        element.dataset[markerName] = current
+          ? `${current},${ruleId}`.slice(0, 512)
+          : ruleId;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const applyContentRules = () => {
+      let matched = 0;
+      let hidden = 0;
+      for (const rule of contentRules) {
+        let nodes = [];
+        try { nodes = document.querySelectorAll(rule.selector); } catch { continue; }
+        let perRule = 0;
+        for (const node of nodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          matched += 1;
+          if (hideByRule(node, rule.id || 'rule')) hidden += 1;
+          perRule += 1;
+          if (perRule >= 100 || matched >= 500) break;
+        }
+        if (matched >= 500) break;
+      }
+      try {
+        document.documentElement.dataset.userflexContentRules = String(contentRules.length);
+        document.documentElement.dataset.userflexContentMatched = String(matched);
+        document.documentElement.dataset.userflexContentHidden = String(hidden);
+      } catch {}
+    };
+
+    let managedTimer = null;
+    const scheduleContentRules = () => {
+      if (managedTimer) return;
+      managedTimer = setTimeout(() => {
+        managedTimer = null;
+        const run = () => applyContentRules();
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 900 });
+        else run();
+      }, 280);
+    };
+
+    const startManagedRules = () => {
+      scheduleContentRules();
+      const observer = new MutationObserver((mutations) => {
+        if (mutations.some((mutation) => mutation.addedNodes?.length)) scheduleContentRules();
+      });
+      observer.observe(document.documentElement || document, {
+        childList: true,
+        subtree: true,
+      });
+      const fallbackTimer = setInterval(scheduleContentRules, 20000);
+      addEventListener('pagehide', () => {
+        observer.disconnect();
+        clearInterval(fallbackTimer);
+        if (managedTimer) clearTimeout(managedTimer);
+        managedTimer = null;
+      }, { once: true });
+      addEventListener('pageshow', scheduleContentRules);
+    };
+
+    if (document.documentElement) startManagedRules();
+    else addEventListener('DOMContentLoaded', startManagedRules, { once: true });
+  }
+
   // IMPORTANT: this helper is intentionally opt-in per profile. Broad DOM
   // scanning on every mutation can freeze large SPAs such as editors and AI
   // tools. strategy.js sets this only for profiles that explicitly request it.
