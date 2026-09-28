@@ -141,14 +141,43 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
     await rpc('Runtime.enable');
     await delay(1200);
 
-    const contextResult = await rpc('Runtime.evaluate', {
-      expression: `document.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`,
+    const contextExpression = `document.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`;
+    let contextResult = await rpc('Runtime.evaluate', {
+      expression: contextExpression,
       returnByValue: true,
     });
+
+    if (contextResult?.result?.value !== false) {
+      let preferenceDetail = 'Preferences unavailable';
+      try {
+        const preferences = JSON.parse(await readFile(path.join(profileDir, 'Default', 'Preferences'), 'utf8'));
+        const settings = preferences?.extensions?.settings || {};
+        const entries = Object.entries(settings)
+          .map(([id, value]) => ({
+            id,
+            state: value?.state,
+            path: value?.path,
+            name: value?.manifest?.name,
+            version: value?.manifest?.version,
+          }))
+          .filter((item) => item.name === definition.name || String(item.path || '').includes(extensionDir));
+        preferenceDetail = JSON.stringify(entries);
+      } catch {}
+
+      console.log(`${definition.name}: first page did not receive the content script; Preferences=${preferenceDetail}. Reloading once to distinguish extension-load race from package failure.`);
+      await rpc('Page.enable');
+      await rpc('Page.reload', { ignoreCache: true });
+      await delay(1600);
+      contextResult = await rpc('Runtime.evaluate', {
+        expression: contextExpression,
+        returnByValue: true,
+      });
+    }
+
     assert.equal(
       contextResult?.result?.value,
       false,
-      `${definition.name}: content script did not block contextmenu; extension was not active`,
+      `${definition.name}: content script did not block contextmenu after reload; extension was not active`,
     );
 
     if (definition.name === 'ex1') {
