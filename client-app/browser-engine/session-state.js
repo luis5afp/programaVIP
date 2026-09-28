@@ -573,8 +573,25 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       addEventListener('copy', blockManagedPasswordClipboard, true);
       addEventListener('cut', blockManagedPasswordClipboard, true);
 
+      const LOGIN_INPUT_SELECTOR = [
+        'input[type="password"]',
+        'input[type="email"]',
+        'input[autocomplete*="username" i]',
+        'input[autocomplete*="email" i]',
+        'input[autocomplete*="password" i]',
+        'input[name*="email" i]',
+        'input[name*="user" i]',
+        'input[name*="login" i]',
+        'input[name*="pass" i]',
+        'input[id*="email" i]',
+        'input[id*="user" i]',
+        'input[id*="login" i]',
+        'input[id*="pass" i]',
+      ].join(',');
+
       const candidates = () => {
-        const inputs = Array.from(document.querySelectorAll('input'))
+        const inputs = Array.from(document.querySelectorAll(LOGIN_INPUT_SELECTOR))
+          .slice(0, 40)
           .filter((element) => visible(element) && !element.disabled && !element.readOnly);
         return {
           usernameInput: inputs.find((element) => fieldKind(element) === 'username') || null,
@@ -744,37 +761,80 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       };
 
       const start = () => {
-        fillAvailable();
+        let scanTimer = null;
+        let stopped = false;
 
-        const observer = new MutationObserver(() => {
-          fillAvailable();
+        const scheduleFill = (delayMs = 120) => {
+          if (stopped || scanTimer) return;
+          scanTimer = setTimeout(() => {
+            scanTimer = null;
+            const run = () => {
+              if (!stopped) fillAvailable();
+            };
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 700 });
+            else run();
+          }, delayMs);
+        };
+
+        const addedLoginSurface = (node) => {
+          if (!(node instanceof Element)) return false;
+          if (node.matches?.(LOGIN_INPUT_SELECTOR)) return true;
+          try { return Boolean(node.querySelector?.(LOGIN_INPUT_SELECTOR)); } catch { return false; }
+        };
+
+        scheduleFill(0);
+
+        // Heavy editors such as Digen constantly mutate style/class attributes.
+        // Watching those attributes made the credential helper rescan the whole
+        // page many times per second and could trigger Chrome's "not responding"
+        // dialog. Only structural additions that can actually contain a login
+        // field are relevant.
+        const observer = new MutationObserver((mutations) => {
+          if (mutations.some((mutation) =>
+            Array.from(mutation.addedNodes || []).some((node) => addedLoginSurface(node)))) {
+            scheduleFill();
+          }
         });
         observer.observe(document.documentElement || document, {
           childList: true,
           subtree: true,
-          attributes: true,
-          attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'aria-label', 'style', 'class'],
         });
 
-        const retryTimer = setInterval(fillAvailable, 1000);
-        setTimeout(() => {
+        // Small fallback window for frameworks that recycle nodes without
+        // inserting new elements. New document navigations install this helper
+        // again, so there is no need to poll a working editor for ten minutes.
+        const retryTimer = setInterval(() => scheduleFill(0), 15000);
+        const stopBackgroundScanning = () => {
+          if (stopped) return;
+          stopped = true;
           try { clearInterval(retryTimer); } catch {}
           try { observer.disconnect(); } catch {}
-        }, 600000);
+          if (scanTimer) clearTimeout(scanTimer);
+          scanTimer = null;
+        };
+        setTimeout(stopBackgroundScanning, 120000);
+        addEventListener('pagehide', stopBackgroundScanning, { once: true });
 
-        addEventListener('focusin', () => {
-          fillAvailable();
-          requestAnimationFrame(positionHelper);
+        addEventListener('focusin', (event) => {
+          const target = event?.target;
+          if (target instanceof HTMLInputElement) {
+            scheduleFill(0);
+            requestAnimationFrame(positionHelper);
+          }
         }, true);
-        addEventListener('scroll', () => requestAnimationFrame(positionHelper), true);
-        addEventListener('resize', () => requestAnimationFrame(positionHelper), true);
+        addEventListener('scroll', () => {
+          if (helperHost?.isConnected) requestAnimationFrame(positionHelper);
+        }, true);
+        addEventListener('resize', () => {
+          if (helperHost?.isConnected) requestAnimationFrame(positionHelper);
+        }, true);
         addEventListener('pageshow', () => {
-          fillAvailable();
-          requestAnimationFrame(positionHelper);
+          scheduleFill(0);
+          if (helperHost?.isConnected) requestAnimationFrame(positionHelper);
         });
 
-        for (const delayMs of [100, 350, 800, 1500, 3000, 7000]) {
-          setTimeout(fillAvailable, delayMs);
+        for (const delayMs of [150, 600, 1600, 4000, 10000]) {
+          setTimeout(() => scheduleFill(0), delayMs);
         }
       };
 
