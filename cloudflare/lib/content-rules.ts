@@ -1,3 +1,4 @@
+import { neon } from '@neondatabase/serverless';
 import { AdminIdentity } from './auth';
 import { touchClientsConfig } from './client-revalidation';
 import {
@@ -14,6 +15,57 @@ import {
 
 type ContentRuleScope = 'global' | 'selective';
 type ContentRuleAction = 'hide';
+
+let schemaReady = false;
+let schemaPromise: Promise<void> | null = null;
+
+async function ensureContentRuleSchema(env: Env): Promise<void> {
+  if (schemaReady) return;
+  if (schemaPromise) return schemaPromise;
+  const databaseUrl = String(env.NEON_DATABASE_URL || '').trim();
+  if (!databaseUrl) throw new HttpError(503, 'NEON_CONFIG_MISSING', 'Neon no está configurado.');
+
+  schemaPromise = (async () => {
+    const sql = neon(databaseUrl);
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS public.userflex_content_rules (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        name text NOT NULL,
+        description text,
+        domain text NOT NULL,
+        selector text NOT NULL,
+        action text NOT NULL DEFAULT 'hide',
+        scope text NOT NULL DEFAULT 'selective',
+        enabled boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT userflex_content_rules_action_check CHECK (action IN ('hide')),
+        CONSTRAINT userflex_content_rules_scope_check CHECK (scope IN ('global','selective')),
+        CONSTRAINT userflex_content_rules_name_check CHECK (char_length(name) BETWEEN 1 AND 120),
+        CONSTRAINT userflex_content_rules_domain_check CHECK (char_length(domain) BETWEEN 1 AND 255),
+        CONSTRAINT userflex_content_rules_selector_check CHECK (char_length(selector) BETWEEN 1 AND 1000)
+      )
+    `);
+    await sql.query('CREATE INDEX IF NOT EXISTS userflex_content_rules_enabled_idx ON public.userflex_content_rules(enabled, scope)');
+    await sql.query('CREATE INDEX IF NOT EXISTS userflex_content_rules_domain_idx ON public.userflex_content_rules(lower(domain))');
+    await sql.query(`
+      CREATE TABLE IF NOT EXISTS public.userflex_profile_content_rules (
+        profile_id uuid NOT NULL REFERENCES public.userflex_profiles(id) ON DELETE CASCADE,
+        rule_id uuid NOT NULL REFERENCES public.userflex_content_rules(id) ON DELETE CASCADE,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (profile_id, rule_id)
+      )
+    `);
+    await sql.query('CREATE INDEX IF NOT EXISTS userflex_profile_content_rules_rule_idx ON public.userflex_profile_content_rules(rule_id)');
+    await sql.query('ALTER TABLE public.userflex_content_rules ENABLE ROW LEVEL SECURITY');
+    await sql.query('ALTER TABLE public.userflex_profile_content_rules ENABLE ROW LEVEL SECURITY');
+    schemaReady = true;
+  })().finally(() => {
+    if (!schemaReady) schemaPromise = null;
+  });
+
+  return schemaPromise;
+}
 
 function scopeValue(value: unknown): ContentRuleScope {
   if (value === undefined || value === null || value === '') return 'selective';
@@ -132,6 +184,10 @@ export async function adminContentRuleRoutes(
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method.toUpperCase();
+
+  if (path.startsWith('/api/content-rule')) {
+    await ensureContentRuleSchema(env);
+  }
 
   if (path === '/api/content-rules' && method === 'GET') {
     const rows = await db(
