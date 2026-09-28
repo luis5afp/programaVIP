@@ -149,4 +149,16 @@ assert.match(
   'extension validation must fall back to extension targets when the internal WebUI changes',
 );
 
+assert.match(
+  engine,
+  /try \{[\s\S]{0,260}page\.goto\(internalUrl[\s\S]{0,420}internalNavigationError =/,
+  'edge://extensions navigation aborts must be captured instead of failing the whole runtime test',
+);
+
+assert.match(
+  engine,
+  /internalNavigationError,[\s\S]{0,120}stderr:/,
+  'extension inspection should return internal WebUI navigation diagnostics without treating them as fatal',
+);
+
 console.log('Managed browser launch/autofill regression checks: OK');
