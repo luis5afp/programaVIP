@@ -17,6 +17,10 @@ const serverState = document.getElementById('server-state');
 const subscriptionStatus = document.getElementById('subscription-status');
 const categoryFilters = document.getElementById('category-filters');
 
+const identifierInput = document.getElementById('identifier');
+const passwordInput = document.getElementById('password');
+const passwordToggle = document.getElementById('password-toggle');
+
 const installedVersion = String(window.userflex?.version || '').trim();
 if (installedVersion) {
   for (const element of document.querySelectorAll('[data-userflow-version]')) {
@@ -374,28 +378,65 @@ async function refreshCatalog() {
   renderClient();
 }
 
-loginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
+function setPasswordVisible(visible) {
+  passwordInput.type = visible ? 'text' : 'password';
+  passwordToggle.textContent = visible ? 'Ocultar' : 'Ver';
+  const label = visible ? 'Ocultar contraseña' : 'Mostrar contraseña';
+  passwordToggle.setAttribute('aria-label', label);
+  passwordToggle.title = label;
+}
+
+passwordToggle.addEventListener('click', () => {
+  setPasswordVisible(passwordInput.type === 'password');
+  passwordInput.focus();
+  try {
+    const end = passwordInput.value.length;
+    passwordInput.setSelectionRange(end, end);
+  } catch {}
+});
+
+async function applySavedLogin() {
+  try {
+    const saved = await window.userflex.savedLogin();
+    if (!saved?.identifier || !saved?.password) return false;
+    identifierInput.value = saved.identifier;
+    passwordInput.value = saved.password;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function performLogin({ automatic = false } = {}) {
   setError(loginError, '');
   loginButton.disabled = true;
-  loginButton.textContent = 'Ingresando…';
+  loginButton.textContent = automatic ? 'Restaurando acceso…' : 'Ingresando…';
   const result = await window.userflex.login({
-    identifier: document.getElementById('identifier').value,
-    password: document.getElementById('password').value,
+    identifier: identifierInput.value,
+    password: passwordInput.value,
   });
   loginButton.disabled = false;
   loginButton.textContent = 'Ingresar';
+
   if (!result?.ok) {
+    setPasswordVisible(false);
     setError(loginError, result?.error?.message || 'No se pudo iniciar sesión.');
-    return;
+    return false;
   }
-  document.getElementById('password').value = '';
+
+  setPasswordVisible(false);
   auth = result.auth;
   catalog = result.catalog;
   query = '';
   category = 'all';
   searchInput.value = '';
   renderClient();
+  return true;
+}
+
+loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await performLogin();
 });
 
 searchInput.addEventListener('input', () => {
@@ -441,6 +482,8 @@ window.userflex.onHeartbeat((payload) => {
 window.userflex.onAuthInvalidated((payload) => {
   auth = null;
   catalog = null;
+  void applySavedLogin();
+  setPasswordVisible(false);
   setError(loginError, payload?.message || 'Tu sesión ya no está activa.');
   show(loginView);
 });
@@ -451,8 +494,17 @@ window.userflex.onAuthInvalidated((payload) => {
     auth = result.auth;
     catalog = result.catalog;
     renderClient();
-  } else {
-    if (result?.error?.message) setError(loginError, result.error.message);
-    show(loginView);
+    return;
   }
+
+  // If the encrypted auth token no longer exists after an update, use the
+  // credentials saved with Electron safeStorage to restore the same client
+  // session automatically. On failure the fields stay prefilled so the user
+  // can reveal/edit the password instead of retyping it blindly.
+  const hasSavedLogin = await applySavedLogin();
+  if (hasSavedLogin && await performLogin({ automatic: true })) return;
+
+  if (result?.error?.message && !loginError.textContent) setError(loginError, result.error.message);
+  setPasswordVisible(false);
+  show(loginView);
 })();
