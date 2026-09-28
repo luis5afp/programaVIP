@@ -3,6 +3,7 @@ import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, 
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import { managedExtensionsForProfiles } from './extensions';
+import { managedContentRulesForProfiles } from './content-rules';
 import {
   credentialAuthentication,
   effectiveProfileCategory,
@@ -52,7 +53,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
 
   const profileIds = memberships.map((membership: any) => membership.profile_id);
   const ids = profileIds.join(',');
-  const [profiles, defaults, sessions, archivedSessions, keepers, assignments, credentials, extensionMap] = await Promise.all([
+  const [profiles, defaults, sessions, archivedSessions, keepers, assignments, credentials, extensionMap, contentRuleMap] = await Promise.all([
     db(
       env,
       `userflex_profiles?select=id,name,url,platform,image_url,tags,enabled,session_mode,session_ready,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy,updated_at&id=in.(${ids})&enabled=eq.true`,
@@ -82,6 +83,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
       `userflex_profile_credentials?select=profile_id,updated_at&profile_id=in.(${ids})`,
     ),
     managedExtensionsForProfiles(env, profileIds),
+    managedContentRulesForProfiles(env, profileIds),
   ]);
 
   const proxyIds = [...new Set([
@@ -186,6 +188,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
         credentialVersion: credentialMap.get(String(profile.id))?.updated_at || null,
         runtime,
         extensions: extensionMap.get(profile.id) || [],
+        contentRules: contentRuleMap.get(profile.id) || [],
         networkIdentity: {
           locked: networkPolicy.locked,
           publicIp: currentPublicIp,
@@ -270,8 +273,12 @@ export async function clientLaunch(
   const effectiveProfile = hasStoredSnapshot
     ? { ...profile, session_ready: true }
     : profile;
-  const extensionMap = await managedExtensionsForProfiles(env, [profileId]);
+  const [extensionMap, contentRuleMap] = await Promise.all([
+    managedExtensionsForProfiles(env, [profileId]),
+    managedContentRulesForProfiles(env, [profileId]),
+  ]);
   const managedExtensions = extensionMap.get(profileId) || [];
+  const managedContentRules = contentRuleMap.get(profileId) || [];
 
   const runtime = runtimeForProfile(effectiveProfile);
   const snapshotRequired = snapshotAuthentication(runtime);
@@ -399,6 +406,7 @@ export async function clientLaunch(
     networkLocked: connection.locked === true,
     sessionVersion: sessionDelivery.version || 0,
     extensionCount: managedExtensions.length,
+    contentRuleCount: managedContentRules.length,
   });
 
   return json({
@@ -422,6 +430,7 @@ export async function clientLaunch(
       sessionReady: true,
       runtime,
       extensions: managedExtensions,
+      contentRules: managedContentRules,
     },
     connection,
     sessionDelivery,
