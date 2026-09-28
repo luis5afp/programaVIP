@@ -233,12 +233,12 @@ export function ExtensionsView() {
           </div>
           <div className="help" style={{ marginTop: 7 }}>
             {testJob.status === 'pending' ? 'Esperando que Windows abra userFLOW...' :
-              testJob.status === 'running' ? 'userFLOW está abriendo Chrome con Browser Guard + la extensión seleccionada y comprobando chrome://extensions.' :
-                testJob.status === 'pass' ? 'Chrome confirmó la carga de la extensión.' :
+              testJob.status === 'running' ? 'userFLOW está abriendo un navegador compatible con extensiones administradas y comprobando la extensión seleccionada.' :
+                testJob.status === 'pass' ? 'El navegador confirmó la carga de la extensión.' :
                   testJob.error || 'La prueba no fue satisfactoria.'}
           </div>
           {testJob.result?.extensionCount !== undefined && (
-            <div className="help" style={{ marginTop: 5 }}>Extensiones detectadas por Chrome: {testJob.result.extensionCount}</div>
+            <div className="help" style={{ marginTop: 5 }}>Extensiones detectadas: {testJob.result.extensionCount}</div>
           )}
         </Card>
       )}
