@@ -89,8 +89,13 @@ assert.match(
 );
 assert.match(
   clientState,
-  /setInterval\(fillAvailable, 1000\)[\s\S]{0,220}600000/,
-  'client autofill must keep retrying across delayed Google login steps',
+  /MutationObserver[\s\S]{0,900}addedNodes[\s\S]{0,900}scheduleFill/,
+  'client autofill must follow delayed multi-step login fields without high-frequency attribute scanning',
+);
+assert.match(
+  clientState,
+  /setInterval\(\(\) => scheduleFill\(0\), 15000\)[\s\S]{0,500}120000/,
+  'client autofill must keep a bounded low-frequency fallback for delayed Google login steps',
 );
 assert.match(
   captureEngine,
