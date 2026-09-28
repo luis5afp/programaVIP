@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "userFLEX Browser Guard",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Protección local del navegador administrado por userFLEX.",
   "permissions": [
     "tabs",
     "webNavigation",
     "storage",
-    "alarms"
+    "alarms",
+    "management"
   ],
   "host_permissions": [
     "<all_urls>"
