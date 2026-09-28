@@ -145,6 +145,18 @@ async function removePackage(env: Env, objectPath: string) {
   await extensionBucket(env).delete(objectPath).catch(() => null);
 }
 
+async function ensurePackageObject(env: Env, objectPath: string, bytes: Uint8Array) {
+  let stored = null;
+  try {
+    stored = await extensionBucket(env).head(objectPath);
+  } catch (error) {
+    console.warn('Extension R2 head failed; attempting repair', objectPath, error instanceof Error ? error.message : String(error));
+  }
+  if (stored && Number(stored.size || 0) === bytes.byteLength) return false;
+  await uploadPackage(env, objectPath, bytes);
+  return true;
+}
+
 async function readPackage(env: Env, objectPath: string) {
   const object = await extensionBucket(env).get(objectPath);
   if (!object) throw new HttpError(404, 'EXTENSION_PACKAGE_NOT_FOUND', 'El paquete de la extensión no existe.');
@@ -329,6 +341,45 @@ async function extensionRow(env: Env, extensionId: string): Promise<ExtensionRow
   return rows[0] as ExtensionRow;
 }
 
+async function repairBundledPackageForClient(env: Env, row: ExtensionRow): Promise<ExtensionRow> {
+  const bundled = bundledExtensions().find((item) => item.name === row.name);
+  if (!bundled) return row;
+
+  const inspection = inspectExtensionZip(bundled.packageBytes);
+  if (inspection.status === 'incompatible') return row;
+
+  const sha256 = await digestBytes(inspection.packageBytes);
+  const objectPath = `${row.id}/${sha256}.zip`;
+  await ensurePackageObject(env, objectPath, inspection.packageBytes);
+
+  const metadataMatches = String(row.package_sha256 || '') === sha256
+    && String(row.package_path || '') === objectPath
+    && String(row.version || '') === inspection.version
+    && Number(row.package_size || 0) === inspection.packageBytes.byteLength;
+  if (metadataMatches) return row;
+
+  const rows = await db(env, `userflex_extensions?id=eq.${row.id}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      description: bundled.description,
+      version: inspection.version,
+      manifest: jsonb(inspection.manifest),
+      permissions: jsonb(inspection.permissions),
+      package_path: objectPath,
+      package_sha256: sha256,
+      package_size: inspection.packageBytes.byteLength,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_REPAIR_FAILED', 'No se pudo reparar el paquete integrado.');
+
+  if (row.package_path && row.package_path !== objectPath) {
+    await removePackage(env, row.package_path);
+  }
+  return rows[0] as ExtensionRow;
+}
+
 async function repairLegacyManagementWarning(env: Env, row: ExtensionRow): Promise<ExtensionRow> {
   if (row.validation_status !== 'incompatible') return row;
   const permissions = Array.isArray(row.permissions) ? row.permissions : [];
@@ -418,10 +469,14 @@ async function ensureBundledExtensionsInstalled(
     const sha256 = await digestBytes(inspection.packageBytes);
     const matches = await db(env, `userflex_extensions?select=*&name=eq.${encodeURIComponent(bundled.name)}&limit=1`);
     const current = matches?.[0] as ExtensionRow | undefined;
+    const extensionId = current?.id || crypto.randomUUID();
+    const objectPath = `${extensionId}/${sha256}.zip`;
     const samePackage = Boolean(
       current
       && String(current.package_sha256 || '') === sha256
+      && String(current.package_path || '') === objectPath
       && String(current.version || '') === inspection.version
+      && Number(current.package_size || 0) === inspection.packageBytes.byteLength
     );
     const needsFirstActivation = Boolean(
       current
@@ -439,6 +494,7 @@ async function ensureBundledExtensionsInstalled(
     // must be usable immediately. Once runtime_valid is recorded, a later
     // administrator deactivation is respected and will never be auto-reversed.
     if (current && samePackage) {
+      await ensurePackageObject(env, objectPath, inspection.packageBytes);
       if (!needsFirstActivation) continue;
       const rows = await db(env, `userflex_extensions?id=eq.${current.id}`, {
         method: 'PATCH',
@@ -466,9 +522,7 @@ async function ensureBundledExtensionsInstalled(
       continue;
     }
 
-    const extensionId = current?.id || crypto.randomUUID();
-    const objectPath = `${extensionId}/${sha256}.zip`;
-    await uploadPackage(env, objectPath, inspection.packageBytes);
+    const packageUploaded = await ensurePackageObject(env, objectPath, inspection.packageBytes);
 
     try {
       if (current) {
@@ -545,7 +599,7 @@ async function ensureBundledExtensionsInstalled(
         });
       }
     } catch (error) {
-      if (!current || current.package_path !== objectPath) {
+      if (packageUploaded && (!current || current.package_path !== objectPath)) {
         await removePackage(env, objectPath);
       }
       throw error;
@@ -972,13 +1026,9 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
 export async function clientExtensionPackage(request: Request, env: Env, identity: ClientIdentity, extensionIdRaw: string): Promise<Response> {
   await ensureExtensionSchema(env);
   const extensionId = uuid(extensionIdRaw, 'extensionId');
-  const extension = await extensionRow(env, extensionId);
+  let extension = await extensionRow(env, extensionId);
   if (!extension.enabled || extension.validation_status !== 'runtime_valid') {
     throw new HttpError(404, 'EXTENSION_NOT_AVAILABLE');
-  }
-  const requestedSha = new URL(request.url).searchParams.get('sha');
-  if (requestedSha && requestedSha !== extension.package_sha256) {
-    throw new HttpError(409, 'EXTENSION_VERSION_CHANGED', 'La extensión cambió de versión. Actualiza la configuración antes de descargarla.');
   }
 
   const memberships = await db(env, `userflex_plan_profiles?select=profile_id&plan_id=eq.${identity.plan.id}`);
@@ -994,6 +1044,12 @@ export async function clientExtensionPackage(request: Request, env: Env, identit
     authorized = Boolean(rows?.[0]);
   }
   if (!authorized) throw new HttpError(403, 'EXTENSION_NOT_AUTHORIZED');
+
+  extension = await repairBundledPackageForClient(env, extension);
+  const requestedSha = new URL(request.url).searchParams.get('sha');
+  if (requestedSha && requestedSha !== extension.package_sha256) {
+    throw new HttpError(409, 'EXTENSION_VERSION_CHANGED', 'La extensión cambió de versión. Actualiza la configuración antes de descargarla.');
+  }
 
   const bytes = await readPackage(env, extension.package_path);
   const headers = new Headers({

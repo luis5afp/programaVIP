@@ -88,6 +88,26 @@ assert.match(
   /const nextEnabled = wasAlreadyValidated \? current\.enabled === true : true/,
   'bundled updates must preserve an administrator deactivation after validation',
 );
+assert.match(
+  worker,
+  /async function ensurePackageObject[\s\S]{0,800}extensionBucket\(env\)\.head\(objectPath\)[\s\S]{0,800}uploadPackage\(env, objectPath, bytes\)/,
+  'bundled packages must be restored automatically when their R2 object is missing',
+);
+assert.match(
+  worker,
+  /if \(current && samePackage\) \{\s*await ensurePackageObject\(env, objectPath, inspection\.packageBytes\)/,
+  'opening the Admin extensions view must repair a missing bundled R2 object even when metadata already matches',
+);
+assert.match(
+  worker,
+  /async function repairBundledPackageForClient[\s\S]{0,2200}package_path: objectPath[\s\S]{0,400}package_sha256: sha256/,
+  'client downloads must repair bundled package storage and stale package metadata',
+);
+assert.match(
+  worker,
+  /extension = await repairBundledPackageForClient\(env, extension\)[\s\S]{0,500}EXTENSION_VERSION_CHANGED/,
+  'the client package route must self-heal bundled storage before comparing the requested SHA',
+);
 assert.match(bundled, /name: 'ex1'/);
 assert.match(bundled, /name: 'ex2'/);
 assert.match(bundled, /No depende de kaizzen\.org/);
