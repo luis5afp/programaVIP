@@ -5,12 +5,18 @@ on:
   pull_request:
     paths:
       - 'cloudflare/lib/builtin-extensions.ts'
+      - 'client-app/browser-engine/kaizen-engine.js'
+      - 'client-app/browser-engine/session-state.js'
+      - 'client-app/browser-engine/extension/**'
       - 'scripts/bundled-extension-windows.test.mjs'
       - '.github/workflows/test-bundled-extensions-windows.yml'
   push:
     branches: [main]
     paths:
       - 'cloudflare/lib/builtin-extensions.ts'
+      - 'client-app/browser-engine/kaizen-engine.js'
+      - 'client-app/browser-engine/session-state.js'
+      - 'client-app/browser-engine/extension/**'
       - 'scripts/bundled-extension-windows.test.mjs'
       - '.github/workflows/test-bundled-extensions-windows.yml'
 
