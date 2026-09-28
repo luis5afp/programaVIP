@@ -52,6 +52,48 @@ assert.match(
   'autofill must emit a native input event for controlled login fields',
 );
 
+assert.match(
+  sessionState,
+  /LOGIN_INPUT_SELECTOR/,
+  'credential helper must scan only likely login inputs instead of every input in heavy editors',
+);
+
+assert.doesNotMatch(
+  sessionState,
+  /observer\.observe\([\s\S]{0,260}attributes:\s*true/,
+  'credential helper must not watch style/class attribute churn on heavy SPA pages',
+);
+
+assert.match(
+  sessionState,
+  /setInterval\(\(\) => scheduleFill\(0\), 15000\)/,
+  'credential helper fallback polling must stay low-frequency',
+);
+
+assert.match(
+  sessionState,
+  /setTimeout\(stopBackgroundScanning, 120000\)/,
+  'credential helper background scanning must stop after the login window',
+);
+
+assert.match(
+  sessionState,
+  /requestIdleCallback\(run, \{ timeout: 700 \}\)/,
+  'credential scans should run during browser idle time when available',
+);
+
+assert.match(
+  engine,
+  /'digen\.ai'/,
+  'Digen must be excluded from STREAMING DOM automation even if misclassified',
+);
+
+assert.match(
+  engine,
+  /setInterval\(\(\) => void closeDevtoolsTargets\(debugPort\), 5000\)/,
+  'DevTools guard must not poll Chrome several times per second',
+);
+
 
 assert.match(
   engine,
