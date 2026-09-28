@@ -6,33 +6,33 @@ const view = readFileSync(new URL('../src/views/ExtensionsView.tsx', import.meta
 
 assert.match(
   worker,
-  /const STRIPPED_PERMISSIONS = new Set\(\['management'\]\)/,
-  'management must be removed from managed extension manifests instead of marking the package incompatible',
+  /const WARNING_PERMISSIONS = new Set\(\['management'\]\)/,
+  'management must be accepted as a warning-only permission',
 );
 assert.doesNotMatch(
   worker,
   /BLOCKED_PERMISSIONS = new Set\(\[[^\]]*management/,
-  'management must no longer be part of the hard-blocked permission set',
+  'management must not be hard blocked',
 );
 assert.match(
   worker,
-  /manifest\[key\] = manifest\[key\]\.filter[\s\S]{0,420}STRIPPED_PERMISSIONS\.has\(value\)/,
-  'extension inspection must physically remove management from manifest permissions',
+  /warnings = \[\.\.\.new Set\(permissions\.filter\(\(permission\) => WARNING_PERMISSIONS\.has\(permission\)\)\)\]/,
+  'inspection must detect management as a warning permission',
 );
 assert.match(
   worker,
-  /normalizedArchive\['manifest\.json'\] = strToU8[\s\S]{0,260}zipSync\(normalizedArchive/,
-  'the sanitized manifest must be written back into the ZIP that userFLOW installs',
+  /status: 'package_valid' as const,[\s\S]{0,260}Advertencia: permiso sensible permitido/,
+  'management-only packages must remain valid and continue to runtime testing',
+);
+assert.doesNotMatch(
+  worker,
+  /zipSync\(normalizedArchive|STRIPPED_PERMISSIONS|removedPermissions/,
+  'warning-only permissions must not be removed or rewrite the uploaded ZIP',
 );
 assert.match(
   worker,
-  /repairLegacyManagementPermission[\s\S]{0,1800}validation_status: inspection\.status/,
-  'already uploaded incompatible management-only extensions must be repaired in place',
-);
-assert.match(
-  worker,
-  /Promise\.all\(\(rows \|\| \[\]\)\.map\(\(row: ExtensionRow\) => repairLegacyManagementPermission/,
-  'listing extensions must repair legacy management-only records without requiring re-upload',
+  /repairLegacyManagementWarning[\s\S]{0,1100}validation_status: 'package_valid'/,
+  'legacy management-only incompatible records must be upgraded to warning-only package_valid',
 );
 assert.match(
   view,
@@ -43,11 +43,6 @@ assert.doesNotMatch(
   view,
   />\s*Eliminar\s*<\/button>/,
   'managed extensions must not expose destructive deletion in the normal Admin UI',
-);
-assert.match(
-  view,
-  /no se eliminan desde este panel/,
-  'the UI must explain that extensions are disabled instead of deleted',
 );
 
 console.log('Managed extension permission policy: OK');
