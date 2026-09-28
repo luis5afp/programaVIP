@@ -217,7 +217,7 @@ function packageZip(manifestValue: object, contentScript: string) {
     'USERFLOW_README.txt': strToU8(
       'Paquete integrado por userFLEX. No depende de kaizzen.org y no envía historial ni datos de navegación a terceros.\n',
     ),
-  }, { level: 9 });
+  }, { level: 9, mtime: new Date('2026-01-01T00:00:00.000Z') });
 }
 
 export function bundledExtensions(): BundledExtensionDefinition[] {

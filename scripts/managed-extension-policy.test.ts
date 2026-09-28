@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const worker = readFileSync(new URL('../cloudflare/lib/extensions.ts', import.meta.url), 'utf8');
 const view = readFileSync(new URL('../src/views/ExtensionsView.tsx', import.meta.url), 'utf8');
 const bundled = readFileSync(new URL('../cloudflare/lib/builtin-extensions.ts', import.meta.url), 'utf8');
+const client = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 
 assert.match(
   worker,
@@ -99,6 +100,31 @@ assert.doesNotMatch(
   bundled,
   /api\/users\/history/,
   'bundled ex1 must not upload browsing history to a third party',
+);
+assert.match(
+  bundled,
+  /mtime: new Date\('2026-01-01T00:00:00\.000Z'\)/,
+  'bundled extension ZIPs must use a fixed mtime so their SHA-256 stays stable across requests',
+);
+assert.match(
+  client,
+  /payload\?\.code \|\| 'EXTENSION_DOWNLOAD_FAILED'/,
+  'binary extension downloads must preserve structured server error codes',
+);
+assert.match(
+  client,
+  /async function prepareManagedExtensionsForProfile[\s\S]{0,900}error\?\.code !== 'EXTENSION_VERSION_CHANGED'[\s\S]{0,900}const freshCatalog = await catalog\(\)/,
+  'userFLOW must refresh extension metadata and retry once when the package SHA changes during launch',
+);
+assert.match(
+  client,
+  /profile\.extensions = Array\.isArray\(freshProfile\.extensions\) \? freshProfile\.extensions : \[\]/,
+  'the retry must replace stale extension metadata on the active profile',
+);
+assert.match(
+  client,
+  /try \{\s*const managedExtensions = await prepareManagedExtensionsForProfile\(profile\)/,
+  'extension preparation must run inside the launch cleanup guard',
 );
 
 console.log('Managed extension permission policy: OK');
