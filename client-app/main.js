@@ -2020,7 +2020,7 @@ async function handleExtensionTestProtocol(rawUrl) {
       body: {
         token: rawToken,
         result,
-        error: loaded ? null : 'Chrome abrió, pero no confirmó la extensión administrada en chrome://extensions.',
+        error: loaded ? null : `El navegador ${launchResult?.browser || 'Chromium'} abrió, pero no confirmó la extensión administrada en su página interna de extensiones.`,
       },
       timeout: 20_000,
     });
