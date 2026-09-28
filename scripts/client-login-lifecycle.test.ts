@@ -40,6 +40,11 @@ assert.match(
 assert.match(main, /safeStorage\.encryptString\(JSON\.stringify\(\{[\s\S]{0,180}identifier[\s\S]{0,180}password/, 'quick-login credentials must be encrypted with Electron safeStorage');
 assert.match(main, /loginCredentialsPath\(\)[\s\S]{0,220}login-credentials\.json/, 'quick-login credentials must use a dedicated local file');
 assert.match(main, /await saveLoginCredentials\(identifier, password\)/, 'successful client login must refresh the encrypted quick-login cache');
+assert.match(
+  main,
+  /async function syncClientConfiguration[\s\S]{0,900}const clientId = String\([\s\S]{0,260}authMeta\?\.client\?\.id[\s\S]{0,700}reconcileCatalogProfiles\(clientId, catalogProfiles\)/,
+  'client configuration sync must resolve clientId locally before profile reconciliation',
+);
 assert.match(preload, /savedLogin:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('userflex:saved-login'\)/, 'renderer must read quick-login data only through preload IPC');
 assert.match(html, /id="password-toggle"[\s\S]{0,120}>Ver<\/button>/, 'login form must provide a show/hide password control');
 assert.match(renderer, /setPasswordVisible\(visible\)[\s\S]{0,260}passwordInput\.type = visible \? 'text' : 'password'/, 'password visibility control must toggle the input type');
