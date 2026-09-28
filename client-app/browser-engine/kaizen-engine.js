@@ -885,6 +885,30 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         return found;
       }).catch(() => []);
 
+      const preferenceItems = [];
+      const managedDirs = (entry.managedExtensions || [])
+        .map((item) => typeof item?.dir === 'string' ? path.resolve(item.dir).toLowerCase() : '')
+        .filter(Boolean);
+      for (const preferenceFile of ['Preferences', 'Secure Preferences']) {
+        try {
+          const preferences = JSON.parse(await fsp.readFile(path.join(entry.userDataDir, 'Default', preferenceFile), 'utf8'));
+          const settings = preferences?.extensions?.settings;
+          if (!settings || typeof settings !== 'object') continue;
+          for (const [id, value] of Object.entries(settings)) {
+            const extensionPath = typeof value?.path === 'string' ? path.resolve(value.path).toLowerCase() : '';
+            if (!extensionPath || !managedDirs.includes(extensionPath)) continue;
+            preferenceItems.push({
+              id: String(id || ''),
+              name: String(value?.manifest?.name || ''),
+              state: Number(value?.state) === 1 ? 'ENABLED' : String(value?.state || ''),
+              enabled: Number(value?.state) === 1,
+              source: 'browser-preferences',
+              text: extensionPath.slice(0, 800),
+            });
+          }
+        } catch {}
+      }
+
       const targetItems = [];
       const targetSeen = new Set();
       for (const target of browser.targets()) {
@@ -905,8 +929,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
 
       const combined = [...uiItems];
-      for (const item of targetItems) {
-        if (!combined.some((existing) => existing.id && existing.id === item.id)) combined.push(item);
+      for (const item of [...preferenceItems, ...targetItems]) {
+        const duplicate = combined.some((existing) =>
+          (existing.id && item.id && existing.id === item.id)
+          || (existing.name && item.name && existing.name.trim().toLowerCase() === item.name.trim().toLowerCase()));
+        if (!duplicate) combined.push(item);
       }
 
       return {
