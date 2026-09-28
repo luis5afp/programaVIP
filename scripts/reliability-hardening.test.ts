@@ -53,4 +53,21 @@ assert.match(rendererSource, /Extensiones administradas:/);
 assert.match(rendererSource, /Autofill:/);
 assert.match(indexSource, /id="streaming-notice"/);
 
+const contentRuleRoutes = readFileSync(new URL('../cloudflare/lib/content-rules.ts', import.meta.url), 'utf8');
+const contentRuleMigration = readFileSync(new URL('../database/migrations/20260928143000_userflex_content_rules.sql', import.meta.url), 'utf8');
+const browserGuardContent = readFileSync(new URL('../client-app/browser-engine/extension/content.js', import.meta.url), 'utf8');
+const browserEngine = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
+const contentRuleView = readFileSync(new URL('../src/views/ContentRulesView.tsx', import.meta.url), 'utf8');
+
+assert.match(contentRuleMigration, /userflex_content_rules/);
+assert.match(contentRuleMigration, /userflex_profile_content_rules/);
+assert.match(contentRuleRoutes, /managedContentRulesForProfiles/);
+assert.match(worker, /adminContentRuleRoutes/);
+assert.match(browserEngine, /USERFLEX_CONTENT_RULES/);
+assert.match(browserGuardContent, /querySelectorAll\(rule\.selector\)/);
+assert.match(browserGuardContent, /setInterval\(scheduleContentRules, 20000\)/);
+assert.doesNotMatch(browserGuardContent, /kaizzen\.org|kaizzen\.com/i);
+assert.match(contentRuleView, /Reglas de página/);
+assert.match(contentRuleView, /Desactivar/);
+
 console.log('Cross-component reliability hardening: OK');
