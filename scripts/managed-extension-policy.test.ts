@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const worker = readFileSync(new URL('../cloudflare/lib/extensions.ts', import.meta.url), 'utf8');
 const view = readFileSync(new URL('../src/views/ExtensionsView.tsx', import.meta.url), 'utf8');
+const bundled = readFileSync(new URL('../cloudflare/lib/builtin-extensions.ts', import.meta.url), 'utf8');
 
 assert.match(
   worker,
@@ -59,6 +60,25 @@ assert.doesNotMatch(
   view,
   />\s*Eliminar\s*<\/button>/,
   'managed extensions must not expose destructive deletion in the normal Admin UI',
+);
+
+assert.match(
+  worker,
+  /ensureBundledExtensionsInstalled\(request, env, admin\)/,
+  'opening the extensions Admin view must install the bundled userFLOW packages server-side',
+);
+assert.match(bundled, /name: 'ex1'/);
+assert.match(bundled, /name: 'ex2'/);
+assert.match(bundled, /No depende de kaizzen\.org/);
+assert.doesNotMatch(
+  bundled,
+  /https:\/\/www\.kaizzen\.org\/s\//,
+  'bundled extensions must not call the third-party KAIZZEN backend',
+);
+assert.doesNotMatch(
+  bundled,
+  /api\/users\/history/,
+  'bundled ex1 must not upload browsing history to a third party',
 );
 
 console.log('Managed extension permission policy: OK');
