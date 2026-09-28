@@ -1,0 +1,35 @@
+name: Test bundled extensions on Edge
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'cloudflare/lib/builtin-extensions.ts'
+      - 'scripts/bundled-extension-windows.test.mjs'
+      - '.github/workflows/test-bundled-extensions-windows.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'cloudflare/lib/builtin-extensions.ts'
+      - 'scripts/bundled-extension-windows.test.mjs'
+      - '.github/workflows/test-bundled-extensions-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundled-extensions-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-runtime:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Load bundled ex1/ex2 in Microsoft Edge
+        run: node --experimental-strip-types scripts/bundled-extension-windows.test.mjs
