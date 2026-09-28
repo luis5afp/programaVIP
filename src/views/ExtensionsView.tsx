@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileArchive, Pencil, PlayCircle, Plus, Puzzle, RefreshCw, Search, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { CheckCircle2, FileArchive, Pencil, PlayCircle, Plus, Puzzle, RefreshCw, Search, ShieldAlert, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { ExtensionValidationJob, ManagedExtension, ManagedExtensionScope, Profile, ProfileExtensionMembership } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
@@ -164,19 +164,6 @@ export function ExtensionsView() {
     }
   }
 
-  async function remove(item: ManagedExtension) {
-    if (!confirm(`¿Eliminar la extensión ${item.name}? Se quitará de todos los perfiles.`)) return;
-    try {
-      setError(null);
-      setSuccess(null);
-      await api.extensions.remove(item.id);
-      setSuccess('Extensión eliminada correctamente.');
-      await load();
-    } catch (actionError: any) {
-      setError(actionError.message);
-    }
-  }
-
   async function pollTest(jobId: string, attempts = 0): Promise<void> {
     try {
       const result = await api.extensions.testStatus(jobId);
@@ -219,7 +206,7 @@ export function ExtensionsView() {
     <>
       <PageHead
         title="Extensiones"
-        description="Carga una vez las extensiones administradas, valida el paquete y pruébalas realmente en userFLOW. Las globales se aplican a todos los perfiles; las selectivas se asignan a perfiles concretos."
+        description="Carga una vez las extensiones administradas, valida el paquete y pruébalas realmente en userFLOW. Las globales se aplican a todos los perfiles; las selectivas se asignan a perfiles concretos. Para retirarlas temporalmente usa Desactivar; no se eliminan desde este panel."
         actions={
           <>
             <div className="search-box">
@@ -304,7 +291,6 @@ export function ExtensionsView() {
                     {item.enabled ? 'Desactivar' : 'Activar'}
                   </button>
                   <button className="button secondary small" onClick={() => openEditor(item)}><Pencil size={12} /> Editar</button>
-                  <button className="button danger small" onClick={() => void remove(item)}><Trash2 size={12} /> Eliminar</button>
                 </div>
               </Card>
             );
