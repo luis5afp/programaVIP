@@ -67,6 +67,26 @@ assert.match(
   /ensureBundledExtensionsInstalled\(request, env, admin\)/,
   'opening the extensions Admin view must install the bundled userFLOW packages server-side',
 );
+assert.match(
+  worker,
+  /scope: 'global',[\s\S]{0,120}enabled: true,[\s\S]{0,160}validation_status: 'runtime_valid'/,
+  'bundled ex1/ex2 must be globally active and runtime-valid on first installation',
+);
+assert.match(
+  worker,
+  /needsFirstActivation[\s\S]{0,1800}extension\.builtin\.activate/,
+  'legacy bundled rows left package-valid and disabled must be activated once',
+);
+assert.match(
+  worker,
+  /if \(!needsFirstActivation\) continue/,
+  'after first activation the server must respect a later manual deactivation',
+);
+assert.match(
+  worker,
+  /const nextEnabled = wasAlreadyValidated \? current\.enabled === true : true/,
+  'bundled updates must preserve an administrator deactivation after validation',
+);
 assert.match(bundled, /name: 'ex1'/);
 assert.match(bundled, /name: 'ex2'/);
 assert.match(bundled, /No depende de kaizzen\.org/);
