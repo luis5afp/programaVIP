@@ -108,6 +108,21 @@ assert.match(
   /extension = await repairBundledPackageForClient\(env, extension\)[\s\S]{0,500}EXTENSION_VERSION_CHANGED/,
   'the client package route must self-heal bundled storage before comparing the requested SHA',
 );
+assert.doesNotMatch(
+  worker,
+  /export async function managedExtensionsForProfiles[\s\S]{0,220}ensureExtensionSchema\(env\)/,
+  'client catalog must not run extension schema DDL on the login hot path',
+);
+assert.doesNotMatch(
+  worker,
+  /export async function clientExtensionPackage[\s\S]{0,220}ensureExtensionSchema\(env\)/,
+  'client extension downloads must not run extension schema DDL',
+);
+assert.match(
+  worker,
+  /if \(path === '\/api\/extensions' && method === 'GET'\) \{\s*await ensureBundledExtensionsInstalled/,
+  'Admin extension bootstrap must continue to own server-side installation/repair',
+);
 assert.match(bundled, /name: 'ex1'/);
 assert.match(bundled, /name: 'ex2'/);
 assert.match(bundled, /No depende de kaizzen\.org/);
