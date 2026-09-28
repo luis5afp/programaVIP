@@ -79,6 +79,10 @@ function runtimeFor(profile) {
     networkStrategy: runtime.networkStrategy || 'auto',
     extensionStrategy: runtime.extensionStrategy || (authStrategy === 'manual' ? 'guard-only' : 'custom'),
     deviceLocalAuth: runtime.deviceLocalAuth === true,
+    // DOM mutation helpers are opt-in. Never infer them from a broad profile
+    // category because modern SPA/video editors can contain tens of thousands
+    // of nodes and an always-on scanner can stall the renderer.
+    streamingDom: runtime.streamingDom === true,
   };
 }
 
@@ -97,6 +101,7 @@ function runtimeKey(runtime) {
     runtime.storageStrategy,
     runtime.networkStrategy,
     runtime.extensionStrategy,
+    runtime.streamingDom ? 'streaming-dom' : 'no-streaming-dom',
   ].join('|');
 }
 
@@ -409,7 +414,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const host = String(target.hostname || '').toLowerCase();
     const thirdPartyStreamingProvider = blockedStreamingDomHosts.some((domain) =>
       host === domain || host.endsWith(`.${domain}`));
-    const streamingDomEnabled = streamingProfile && !thirdPartyStreamingProvider;
+    const streamingDomEnabled = runtime.streamingDom === true
+      && streamingProfile
+      && !thirdPartyStreamingProvider;
     const guardRevision = browserGuardRevision();
     const streamingDomController = {
       installed: streamingDomEnabled,

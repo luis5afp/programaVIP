@@ -12,6 +12,9 @@
 
   addEventListener('contextmenu', stop, true);
 
+  // IMPORTANT: this helper is intentionally opt-in per profile. Broad DOM
+  // scanning on every mutation can freeze large SPAs such as editors and AI
+  // tools. strategy.js sets this only for profiles that explicitly request it.
   if (globalThis.USERFLEX_STREAMING_DOM !== true) return;
 
   const TEXT_PATTERN = /(?:no\s+forma\s+parte[^.!?]{0,120}(?:hogar|household)|not\s+part[^.!?]{0,120}(?:hogar|household)|ver\s+temporalmente|watch\s+temporarily|verificaci[oó]n[^.!?]{0,120}(?:hogar|dispositivo|device|household)|verification[^.!?]{0,120}(?:hogar|dispositivo|device|household)|(?:dispositivo|device)[^.!?]{0,100}(?:hogar|household))/i;
@@ -21,6 +24,14 @@
     '.userflex-streaming-overlay',
     '.userflex-streaming-test-restriction',
   ];
+  const DIALOG_SELECTORS = [
+    '[role="dialog"]',
+    '[aria-modal="true"]',
+    '[class*="modal" i]',
+    '[class*="overlay" i]',
+    '[class*="dialog" i]',
+    '[class*="interstitial" i]',
+  ];
 
   const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 
@@ -29,10 +40,12 @@
   )
     .split(',')
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 20);
 
   const hide = (element) => {
     if (!(element instanceof HTMLElement)) return false;
+    if (element.dataset.userflexStreamingHidden === '1') return false;
     try {
       element.dataset.userflexStreamingHidden = '1';
       element.style.setProperty('display', 'none', 'important');
@@ -46,95 +59,41 @@
     }
   };
 
-  const roots = () => {
-    const found = [document];
-    const visit = (root) => {
-      let nodes = [];
-      try { nodes = Array.from(root.querySelectorAll('*')); } catch { return; }
-      for (const node of nodes) {
-        if (node.shadowRoot) {
-          found.push(node.shadowRoot);
-          visit(node.shadowRoot);
-        }
-      }
-    };
-    visit(document);
-    return found;
-  };
-
-  const dialogLike = (element) => {
-    if (!(element instanceof HTMLElement)) return false;
-    const role = String(element.getAttribute('role') || '').toLowerCase();
-    const modal = String(element.getAttribute('aria-modal') || '').toLowerCase() === 'true';
-    const cls = String(element.className || '').toLowerCase();
-    if (role === 'dialog' || modal || /modal|overlay|popup|dialog|interstitial/.test(cls)) return true;
-
-    try {
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      const fixed = style.position === 'fixed' || style.position === 'sticky';
-      const large = rect.width >= innerWidth * 0.45 && rect.height >= innerHeight * 0.25;
-      const highLayer = Number.parseInt(style.zIndex || '0', 10) >= 10;
-      return fixed && large && highLayer;
-    } catch {
-      return false;
-    }
-  };
-
-  const nearestOverlay = (start) => {
-    let node = start instanceof Element ? start : start?.parentElement || null;
-    let fallback = null;
-    for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
-      if (node === document.body || node === document.documentElement) break;
-      if (!fallback && node instanceof HTMLElement) fallback = node;
-      if (dialogLike(node)) return node;
-    }
-    return fallback;
-  };
-
-  const explicitCandidates = (root) => {
-    const selectors = [...DEFAULT_SELECTORS, ...declaredSelectors()];
+  const collect = (selectors, limit = 250) => {
     const out = [];
+    const seen = new Set();
     for (const selector of selectors) {
-      try { out.push(...root.querySelectorAll(selector)); } catch {}
-    }
-    return out;
-  };
-
-  const textCandidates = (root) => {
-    const out = [];
-    let walker;
-    try {
-      walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    } catch {
-      return out;
-    }
-
-    let current;
-    let inspected = 0;
-    while ((current = walker.nextNode()) && inspected < 12000) {
-      inspected += 1;
-      const text = normalizeText(current.nodeValue);
-      if (!text || !TEXT_PATTERN.test(text)) continue;
-      const overlay = nearestOverlay(current);
-      if (overlay) out.push(overlay);
+      let nodes = [];
+      try { nodes = document.querySelectorAll(selector); } catch { continue; }
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || seen.has(node)) continue;
+        seen.add(node);
+        out.push(node);
+        if (out.length >= limit) return out;
+      }
     }
     return out;
   };
 
   const process = () => {
-    const seen = new Set();
     let matched = 0;
     let hidden = 0;
 
-    for (const root of roots()) {
-      const candidates = [...explicitCandidates(root), ...textCandidates(root)];
-      for (const element of candidates) {
-        if (!(element instanceof HTMLElement) || seen.has(element)) continue;
-        seen.add(element);
-        matched += 1;
-        if (hide(element)) hidden += 1;
-      }
+    const explicit = collect([...DEFAULT_SELECTORS, ...declaredSelectors()], 100);
+    for (const element of explicit) {
+      matched += 1;
+      if (hide(element)) hidden += 1;
+    }
+
+    // Text matching is restricted to dialog-like containers. Do not walk every
+    // text node or every shadow root; that was the source of renderer stalls.
+    const dialogs = collect(DIALOG_SELECTORS, 200);
+    for (const element of dialogs) {
+      if (element.dataset.userflexStreamingHidden === '1') continue;
+      const text = normalizeText(element.innerText || element.textContent || '').slice(0, 5000);
+      if (!text || !TEXT_PATTERN.test(text)) continue;
+      matched += 1;
+      if (hide(element)) hidden += 1;
     }
 
     try {
@@ -146,30 +105,39 @@
     return { enabled: true, overlays: matched, hidden };
   };
 
-  let scheduled = false;
+  let timer = null;
   const schedule = () => {
-    if (scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      process();
-    });
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      const run = () => process();
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 800 });
+      else run();
+    }, 250);
   };
 
   const start = () => {
-    process();
+    schedule();
 
-    const observer = new MutationObserver(schedule);
+    // Observe structural changes only. Watching style/class while this script
+    // itself edits style caused a self-triggering mutation loop.
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.addedNodes?.length)) schedule();
+    });
     observer.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style', 'role', 'aria-modal', 'data-userflex-streaming-overlay'],
     });
 
-    const timer = setInterval(process, 750);
-    addEventListener('pagehide', () => clearInterval(timer), { once: true });
-    addEventListener('pageshow', process);
+    // Low-frequency fallback for frameworks that recycle existing nodes.
+    const fallbackTimer = setInterval(schedule, 12000);
+    addEventListener('pagehide', () => {
+      observer.disconnect();
+      clearInterval(fallbackTimer);
+      if (timer) clearTimeout(timer);
+      timer = null;
+    }, { once: true });
+    addEventListener('pageshow', schedule);
   };
 
   if (document.documentElement) start();
