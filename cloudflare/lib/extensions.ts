@@ -982,7 +982,9 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
 }
 
 export async function managedExtensionsForProfiles(env: Env, profileIds: string[]) {
-  await ensureExtensionSchema(env);
+  // Client catalog is a hot path. The schema is already deployed by migrations
+  // and Admin bootstrap, so never run serial DDL here: on a cold Neon compute
+  // those statements can exceed the desktop client's request timeout.
   const ids = [...new Set(profileIds.filter(Boolean))];
   const result = new Map<string, any[]>();
   ids.forEach((id) => result.set(id, []));
@@ -1024,7 +1026,7 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
 }
 
 export async function clientExtensionPackage(request: Request, env: Env, identity: ClientIdentity, extensionIdRaw: string): Promise<Response> {
-  await ensureExtensionSchema(env);
+  // Package downloads are also client hot paths; keep schema DDL out of them.
   const extensionId = uuid(extensionIdRaw, 'extensionId');
   let extension = await extensionRow(env, extensionId);
   if (!extension.enabled || extension.validation_status !== 'runtime_valid') {
