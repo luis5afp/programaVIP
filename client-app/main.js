@@ -2145,17 +2145,6 @@ ipcMain.handle('userflex-profile-window:action', async (event, input) => {
   return { ok: false };
 });
 
-ipcMain.handle('userflex:logout', async () => {
-  try {
-    if (accessToken) await apiRequest('/api/client/logout', { method: 'POST' }).catch(() => null);
-    await returnToLogin();
-    return { ok: true };
-  } catch (error) {
-    await returnToLogin();
-    return { ok: false, error: serializeError(error) };
-  }
-});
-
 process.on('unhandledRejection', (reason) => {
   console.error('userFLOW unhandled rejection:', reason instanceof Error ? reason.stack || reason.message : String(reason));
 });
