@@ -419,7 +419,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const runtime = runtimeFor(profile);
     const snapshotManaged = snapshotAuthentication(runtime);
     const credentialManaged = credentialAuthentication(runtime);
-    const credentialHelperEnabled = Boolean(credentials?.username && credentials?.password);
+    const credentialsAvailable = Boolean(credentials?.username && credentials?.password);
+    // Only inject the credential helper when the profile's auth strategy
+    // actually requires managed credentials. Cookie-snapshot profiles may also
+    // receive stored credentials as an emergency fallback, but injecting the
+    // helper on every authenticated page makes heavy SPAs react to their DOM
+    // changes unnecessarily (notably account menus in editors such as Digen).
+    const credentialHelperEnabled = credentialManaged && credentialsAvailable;
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
     const desiredRuntimeKey = runtimeKey(runtime);
@@ -732,7 +738,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       }
 
       let autofill = null;
-      if (credentialManaged && !credentialHelperEnabled) {
+      if (credentialManaged && !credentialsAvailable) {
         throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
       }
 
