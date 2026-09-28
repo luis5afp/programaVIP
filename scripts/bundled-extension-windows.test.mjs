@@ -104,6 +104,7 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-component-update',
+    '--disable-features=ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu',
     `--disable-extensions-except=${extensionDir}`,
     `--load-extension=${extensionDir}`,
     'about:blank',
