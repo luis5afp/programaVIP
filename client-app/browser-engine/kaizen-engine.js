@@ -861,8 +861,17 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     try {
       page = await browser.newPage();
       const internalUrl = entry.browserKind === 'edge' ? 'edge://extensions/' : 'chrome://extensions/';
-      await page.goto(internalUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
-      await new Promise((resolve) => setTimeout(resolve, 1400));
+      let internalNavigationError = null;
+      try {
+        await page.goto(internalUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
+      } catch (error) {
+        // Chromium/Edge internal WebUI pages can intentionally abort CDP
+        // navigation (net::ERR_ABORTED) even though the browser itself is
+        // healthy. The runtime test must keep going because Preferences and
+        // extension targets are authoritative fallbacks for unpacked extensions.
+        internalNavigationError = error instanceof Error ? error.message : String(error || '');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 900));
 
       const uiItems = await page.evaluate(() => {
         const found = [];
@@ -952,6 +961,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         items: combined,
         browser: entry.browserKind,
         internalUrl,
+        internalNavigationError,
         stderr: entry.stderr.slice(-12),
       };
     } finally {
