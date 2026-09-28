@@ -441,6 +441,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       'pluto.tv',
       'vix.com',
       'discoveryplus.com',
+      // AI/video editors are renderer-heavy SPAs. Even if an administrator
+      // accidentally classifies one as STREAMING, never enable the DOM overlay
+      // scanner on these hosts.
+      'digen.ai',
     ];
     const host = String(target.hostname || '').toLowerCase();
     const thirdPartyStreamingProvider = blockedStreamingDomHosts.some((domain) =>
@@ -783,7 +787,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
-      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 700);
+      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
       entry.devtoolsTimer.unref?.();
 
       return {
