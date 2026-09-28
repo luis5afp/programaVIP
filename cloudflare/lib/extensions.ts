@@ -709,7 +709,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
     const extension = await extensionRow(env, job.extension_id);
     const result = body.result && typeof body.result === 'object' ? body.result : {};
     const passed = result.ok === true && result.loaded === true;
-    const error = passed ? null : optional(body.error || result.error || 'Chrome no confirmó la carga de la extensión.', 1000);
+    const error = passed ? null : optional(body.error || result.error || 'El navegador no confirmó la carga de la extensión.', 1000);
     const now = new Date().toISOString();
     await db(env, `userflex_extension_validation_jobs?id=eq.${job.id}`, {
       method: 'PATCH',
@@ -727,7 +727,7 @@ export async function publicExtensionTestRoutes(request: Request, env: Env): Pro
       body: JSON.stringify({
         validation_status: passed ? 'runtime_valid' : 'error',
         validation_message: passed
-          ? 'Chrome/userFLOW confirmó que la extensión se carga correctamente.'
+          ? 'userFLOW confirmó que la extensión se carga correctamente en un navegador compatible.'
           : error,
         runtime_validated_at: passed ? now : null,
         enabled: passed ? extension.enabled === true : false,
