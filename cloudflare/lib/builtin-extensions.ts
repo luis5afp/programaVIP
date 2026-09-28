@@ -239,8 +239,8 @@ function packageZip(manifestValue: object, contentScript: string) {
 }
 
 export function bundledExtensions(): BundledExtensionDefinition[] {
-  const ex1Version = '1.4';
-  const ex2Version = '1.3';
+  const ex1Version = '1.5';
+  const ex2Version = '1.4';
   const ex1Description = 'Protección de sesión y privacidad integrada para userFLOW, sin dependencias externas.';
   const ex2Description = 'Protección ligera del navegador integrada para userFLOW, sin dependencias externas.';
 
