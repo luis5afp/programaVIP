@@ -3,9 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { startSocksHttpBridge } from './proxy-bridge.js';
 
-const DIRECT_UPDATE_BASE = 'https://lbvxnbbglkjnwphaomyx.supabase.co/storage/v1/object/public/userflex-client-releases';
 const USERFLEX_API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
-const UPDATE_PROXY_BASE = `${USERFLEX_API_ORIGIN}/api/client-update`;
 const PROFILE_ZOOM_FACTOR = 0.85;
 const runtimeProxyByEndpoint = new Map();
 const bridgesBySession = new WeakMap();
@@ -188,30 +186,14 @@ async function startAfterReady() {
       return nativeSetPath(name, value);
     };
 
-    // Keep the fetch adapter active for the whole process. Besides routing the
-    // updater through Cloudflare when needed, it remembers the detected proxy
-    // protocol returned by /launch before main.js configures Chromium.
+    // Keep the fetch adapter active for the whole process so launch responses
+    // can teach Chromium the detected proxy protocol before a managed profile
+    // configures its persistent session. Updates already use the Cloudflare API
+    // directly, so there is no legacy storage-provider rewrite here.
     const nativeFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = async (input, init) => {
       const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
-      let requestInput = input;
-      if (typeof rawUrl === 'string' && rawUrl.startsWith(DIRECT_UPDATE_BASE)) {
-        const parsed = new URL(rawUrl);
-        const relative = parsed.pathname.split('/userflex-client-releases/')[1] || '';
-        let rewritten = null;
-        if (relative === 'latest.json') {
-          rewritten = `${UPDATE_PROXY_BASE}/latest?ts=${Date.now()}`;
-        } else {
-          const chunk = relative.match(/^versions\/([^/]+)\/(part-\d{3}\.bin)$/);
-          if (chunk) rewritten = `${UPDATE_PROXY_BASE}/chunks/${encodeURIComponent(chunk[1])}/${chunk[2]}`;
-        }
-        if (rewritten) {
-          void log(`Updater request via Cloudflare: ${relative}`);
-          requestInput = rewritten;
-        }
-      }
-
-      const response = await nativeFetch(requestInput, init);
+      const response = await nativeFetch(input, init);
       if (
         response.ok
         && typeof rawUrl === 'string'
@@ -236,7 +218,7 @@ async function startAfterReady() {
 
     try {
       await import('./bootstrap.js');
-      await log('bootstrap.js loaded; updater waits for manual install confirmation when a new version is ready');
+      await log('bootstrap.js loaded; updater installs newer versions automatically and the installer relaunches userFLOW');
     } finally {
       app.setPath = nativeSetPath;
       // Do not restore global fetch here. The proxy protocol metadata is learned
