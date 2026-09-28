@@ -420,8 +420,14 @@ async function apiBinaryRequest(pathName, options = {}) {
         continue;
       }
       const detail = await response.text().catch(() => '');
-      const failure = new UserflexError(detail || `HTTP ${response.status}`, 'EXTENSION_DOWNLOAD_FAILED', response.status);
-      failure.requestId = response.headers.get('X-Userflex-Request-Id') || operationId;
+      let payload = null;
+      try { payload = detail ? JSON.parse(detail) : null; } catch {}
+      const failure = new UserflexError(
+        payload?.error || payload?.message || detail || `HTTP ${response.status}`,
+        payload?.code || 'EXTENSION_DOWNLOAD_FAILED',
+        response.status,
+      );
+      failure.requestId = response.headers.get('X-Userflex-Request-Id') || payload?.requestId || operationId;
       throw failure;
     }
 
@@ -556,6 +562,32 @@ async function prepareManagedExtensions(extensionList = [], options = {}) {
     });
   }
   return prepared;
+}
+
+async function prepareManagedExtensionsForProfile(profile) {
+  try {
+    return await prepareManagedExtensions(profile?.extensions || []);
+  } catch (error) {
+    if (error?.code !== 'EXTENSION_VERSION_CHANGED') throw error;
+
+    // The Admin may update an extension after this profile launch response was
+    // generated but before userFLOW downloads the package. Refresh only the
+    // catalog metadata and retry once instead of surfacing a stale-SHA error.
+    const freshCatalog = await catalog();
+    const freshProfile = (Array.isArray(freshCatalog?.profiles) ? freshCatalog.profiles : [])
+      .find((item) => String(item?.id || '') === String(profile?.id || ''));
+    if (!freshProfile) throw error;
+
+    profile.extensions = Array.isArray(freshProfile.extensions) ? freshProfile.extensions : [];
+    const sync = await syncClientConfiguration(freshCatalog, 'extension-version-refresh', freshCatalog);
+    sendClient('userflex:heartbeat', {
+      active: true,
+      revoke: false,
+      ...sync,
+      catalog: freshCatalog,
+    });
+    return await prepareManagedExtensions(profile.extensions);
+  }
 }
 
 function closeWorkspaceUsage(workspace, reason = 'profile_closed') {
@@ -1704,7 +1736,6 @@ async function openProfile(profileId) {
   const delivery = launch?.sessionDelivery || null;
   const credentials = launch?.credentialDelivery || null;
   if (!profile?.id || !profile?.url) throw new UserflexError('El servidor devolvió un perfil incompleto.', 'PROFILE_INVALID');
-  const managedExtensions = await prepareManagedExtensions(profile.extensions || []);
 
   const usage = {
     usageId: launch?.usage?.id || null,
@@ -1713,6 +1744,7 @@ async function openProfile(profileId) {
   };
 
   try {
+    const managedExtensions = await prepareManagedExtensionsForProfile(profile);
     const clientId = authMeta?.client?.id || 'client';
     const engine = getKaizenBrowserEngine();
     let result = await engine.launch({
