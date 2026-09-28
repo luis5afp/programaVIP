@@ -45,13 +45,34 @@ async function moveAway(tabId) {
   }
 }
 
+const PROTECTED_NAMES = new Set(['ex1', 'ex2', 'userFLEX Browser Guard']);
+
+async function enforceProtectedExtensions() {
+  try {
+    const items = await chrome.management.getAll();
+    for (const item of items) {
+      if (!PROTECTED_NAMES.has(String(item?.name || '')) || item?.enabled !== false) continue;
+      await chrome.management.setEnabled(item.id, true).catch(() => null);
+    }
+  } catch {}
+}
+
+chrome.management.onDisabled.addListener((item) => {
+  if (!PROTECTED_NAMES.has(String(item?.name || ''))) return;
+  void chrome.management.setEnabled(item.id, true).catch(() => null);
+});
+chrome.management.onInstalled.addListener(() => void enforceProtectedExtensions());
+chrome.management.onUninstalled.addListener(() => void enforceProtectedExtensions());
+
 chrome.runtime.onInstalled.addListener(() => {
   try { chrome.alarms.create('userflow-extension-keepalive', { periodInMinutes: 1 }); } catch {}
+  void enforceProtectedExtensions();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name !== 'userflow-extension-keepalive') return;
   try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); } catch {}
+  void enforceProtectedExtensions();
 });
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
@@ -69,9 +90,6 @@ chrome.tabs.onCreated.addListener((tab) => {
   void moveAway(tab.id);
 });
 
-chrome.management.onUninstalled.addListener(() => {
-  // userFLOW owns extension lifecycle. Never close user tabs here.
-});
 `;
 
 const ex1ContentScript = String.raw`
