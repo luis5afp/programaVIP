@@ -6,6 +6,7 @@
 create table if not exists public.userflex_content_rules (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  description text,
   domain text not null,
   selector text not null,
   action text not null default 'hide',
