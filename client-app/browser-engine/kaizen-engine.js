@@ -40,22 +40,53 @@ function existingFile(candidates) {
   return null;
 }
 
-export function resolveKaizenBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
+function nativeChromeCandidates(resourcesPath = process.resourcesPath) {
   const localApp = process.env.LOCALAPPDATA || '';
   const programFiles = process.env.PROGRAMFILES || '';
   const programFilesX86 = process.env['PROGRAMFILES(X86)'] || '';
+  return [
+    path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
+    programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ];
+}
+
+function edgeCandidates() {
+  const localApp = process.env.LOCALAPPDATA || '';
+  const programFiles = process.env.PROGRAMFILES || '';
+  const programFilesX86 = process.env['PROGRAMFILES(X86)'] || '';
+  return [
+    programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    localApp && path.join(localApp, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+  ];
+}
+
+export function resolveKaizenBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
   if (browserEngine === 'nstchrome') {
     return existingFile([
       path.join(resourcesPath, 'nstchrome', 'chrome.exe'),
     ]);
   }
   return existingFile([
+    ...nativeChromeCandidates(resourcesPath),
+    ...edgeCandidates(),
+  ]);
+}
+
+export function resolveManagedExtensionBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
+  if (browserEngine === 'nstchrome') return resolveKaizenBrowserExecutable(resourcesPath, browserEngine);
+
+  // Chrome-branded builds removed command-line unpacked extension loading.
+  // Prefer userFLOW's bundled Chromium if present; otherwise use Edge, which
+  // still supports command-line extension loading unless an enterprise policy
+  // explicitly blocks it. Branded Chrome is kept only as a final diagnostic
+  // fallback so we can return a precise error instead of a false "0 extensions".
+  return existingFile([
     path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
-    programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    ...edgeCandidates(),
+    ...nativeChromeCandidates(resourcesPath).slice(1),
   ]);
 }
 
@@ -484,12 +515,23 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await close(clientId, profile.id, 'profile_generation_changed');
     }
 
-    const executable = resolveKaizenBrowserExecutable(process.resourcesPath, runtime.browserEngine);
+    const hasManagedExtensions = Array.isArray(managedExtensions) && managedExtensions.length > 0;
+    const executable = hasManagedExtensions
+      ? resolveManagedExtensionBrowserExecutable(process.resourcesPath, runtime.browserEngine)
+      : resolveKaizenBrowserExecutable(process.resourcesPath, runtime.browserEngine);
     if (!executable) {
       const message = runtime.browserEngine === 'nstchrome'
         ? 'Este perfil exige nstchrome, pero el runtime nstchrome no está instalado dentro de userFLOW.'
-        : 'No se encontró Chrome/Chromium para el motor del perfil. Instala Google Chrome o incluye chrome_native en userFLOW.';
+        : hasManagedExtensions
+          ? 'No se encontró un navegador compatible con extensiones administradas. Instala Microsoft Edge o incluye chrome_native en userFLOW.'
+          : 'No se encontró Chrome/Chromium para el motor del perfil. Instala Google Chrome, Microsoft Edge o incluye chrome_native en userFLOW.';
       throw Object.assign(new Error(message), { code: 'KAIZEN_BROWSER_RUNTIME_MISSING' });
+    }
+    if (hasManagedExtensions && browserKind(executable) === 'chrome') {
+      throw Object.assign(
+        new Error('Google Chrome actual ya no permite cargar extensiones desempaquetadas desde la línea de comandos. userFLOW necesita Microsoft Edge o chrome_native para extensiones administradas.'),
+        { code: 'MANAGED_EXTENSION_BROWSER_UNSUPPORTED' },
+      );
     }
 
     const userDataDir = profileDir(clientId, profile.id);
@@ -808,34 +850,72 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     let page = null;
     try {
       page = await browser.newPage();
-      await page.goto('chrome://extensions/', { waitUntil: 'domcontentloaded', timeout: 12_000 });
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      const items = await page.evaluate(() => {
+      const internalUrl = entry.browserKind === 'edge' ? 'edge://extensions/' : 'chrome://extensions/';
+      await page.goto(internalUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+
+      const uiItems = await page.evaluate(() => {
         const found = [];
+        const seen = new Set();
         const visit = (root) => {
           if (!root || !root.querySelectorAll) return;
           for (const node of root.querySelectorAll('*')) {
-            if (String(node.tagName || '').toLowerCase() === 'extensions-item') {
+            const tag = String(node.tagName || '').toLowerCase();
+            if (tag === 'extensions-item') {
               const data = node.data || node.extension || null;
-              found.push({
-                id: String(data?.id || node.id || ''),
-                name: String(data?.name || ''),
-                state: String(data?.state || ''),
-                enabled: data?.state === 'ENABLED' || data?.enabled === true,
-                text: String(node.shadowRoot?.textContent || node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 800),
-              });
+              const id = String(data?.id || node.getAttribute?.('id') || node.id || '');
+              const name = String(data?.name || '').trim();
+              const key = id || name || String(found.length);
+              if (!seen.has(key)) {
+                seen.add(key);
+                found.push({
+                  id,
+                  name,
+                  state: String(data?.state || ''),
+                  enabled: data?.state === 'ENABLED' || data?.enabled === true,
+                  source: 'extensions-page',
+                  text: String(node.shadowRoot?.textContent || node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 800),
+                });
+              }
             }
             if (node.shadowRoot) visit(node.shadowRoot);
           }
         };
         visit(document);
         return found;
-      });
+      }).catch(() => []);
+
+      const targetItems = [];
+      const targetSeen = new Set();
+      for (const target of browser.targets()) {
+        const url = String(target.url?.() || '');
+        const match = url.match(/^chrome-extension:\/\/([a-p]{32})(?:\/|$)/i);
+        if (!match) continue;
+        const id = match[1].toLowerCase();
+        if (targetSeen.has(id)) continue;
+        targetSeen.add(id);
+        targetItems.push({
+          id,
+          name: '',
+          state: 'ENABLED',
+          enabled: true,
+          source: String(target.type?.() || 'target'),
+          text: url.slice(0, 800),
+        });
+      }
+
+      const combined = [...uiItems];
+      for (const item of targetItems) {
+        if (!combined.some((existing) => existing.id && existing.id === item.id)) combined.push(item);
+      }
+
       return {
         ok: true,
-        count: Array.isArray(items) ? items.length : 0,
-        items: Array.isArray(items) ? items : [],
-        stderr: entry.stderr.slice(-8),
+        count: combined.length,
+        items: combined,
+        browser: entry.browserKind,
+        internalUrl,
+        stderr: entry.stderr.slice(-12),
       };
     } finally {
       if (page) await page.close().catch(() => null);
