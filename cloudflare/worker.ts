@@ -14,6 +14,7 @@ import { profileProxyDefaultRoutes } from './lib/profile-proxy-defaults';
 import { adminProxyRoutes } from './lib/proxy-admin';
 import { adminProfileSessionRoutes, publicSessionManagerRoutes } from './lib/profile-sessions';
 import { adminExtensionRoutes, clientExtensionPackage, publicExtensionTestRoutes } from './lib/extensions';
+import { adminContentRuleRoutes } from './lib/content-rules';
 import {
   Env,
   HttpError,
@@ -25,7 +26,7 @@ import {
   withSecurity,
 } from './lib/core';
 
-const APP_VERSION = '1.4.35';
+const APP_VERSION = '1.4.36';
 
 function assertMinimumUserflowVersion(request: Request) {
   const version = clientVersionFrom(request);
@@ -165,6 +166,8 @@ async function api(request: Request, env: Env): Promise<Response> {
   if (adminUserResponse) return adminUserResponse;
   const extensionResponse = await adminExtensionRoutes(request, env, admin);
   if (extensionResponse) return extensionResponse;
+  const contentRuleResponse = await adminContentRuleRoutes(request, env, admin);
+  if (contentRuleResponse) return contentRuleResponse;
   const profileUsageResponse = await adminProfileUsageRoutes(request, env, admin);
   if (profileUsageResponse) return profileUsageResponse;
   const profileProxyResponse = await profileProxyDefaultRoutes(request, env, admin);
