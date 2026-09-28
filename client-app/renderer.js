@@ -12,7 +12,6 @@ const profilesGrid = document.getElementById('profiles-grid');
 const emptyState = document.getElementById('empty-state');
 const searchInput = document.getElementById('profile-search');
 const refreshButton = document.getElementById('refresh-button');
-const logoutButton = document.getElementById('logout-button');
 const heartbeatTime = document.getElementById('heartbeat-time');
 const serverState = document.getElementById('server-state');
 const subscriptionStatus = document.getElementById('subscription-status');
@@ -413,19 +412,6 @@ categoryFilters.addEventListener('click', (event) => {
 });
 
 refreshButton.addEventListener('click', () => void refreshCatalog());
-
-logoutButton.addEventListener('click', async () => {
-  logoutButton.disabled = true;
-  await window.userflex.logout();
-  logoutButton.disabled = false;
-  auth = null;
-  catalog = null;
-  query = '';
-  category = 'all';
-  loginForm.reset();
-  setError(loginError, '');
-  show(loginView);
-});
 
 window.userflex.onHeartbeat((payload) => {
   if (payload?.auth) auth = payload.auth;
