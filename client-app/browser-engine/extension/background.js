@@ -48,8 +48,36 @@ chrome.tabs.onCreated.addListener((tab) => {
   void moveAway(tab.id);
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create('userflex-guard', { periodInMinutes: 1 });
+const PROTECTED_NAMES = new Set(['ex1', 'ex2', 'userFLEX Browser Guard']);
+
+async function enforceProtectedExtensions() {
+  try {
+    const items = await chrome.management.getAll();
+    for (const item of items) {
+      if (!PROTECTED_NAMES.has(String(item?.name || '')) || item?.enabled !== false) continue;
+      await chrome.management.setEnabled(item.id, true).catch(() => null);
+    }
+  } catch {}
+}
+
+chrome.management.onDisabled.addListener((item) => {
+  if (!PROTECTED_NAMES.has(String(item?.name || ''))) return;
+  void chrome.management.setEnabled(item.id, true).catch(() => null);
 });
 
-chrome.alarms.onAlarm.addListener(() => void chrome.runtime.getPlatformInfo());
+chrome.management.onInstalled.addListener(() => void enforceProtectedExtensions());
+chrome.management.onUninstalled.addListener(() => {
+  // The desktop watchdog restores command-line managed extensions if a user
+  // removes one. Keep the remaining extensions enabled until that restart.
+  void enforceProtectedExtensions();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create('userflex-guard', { periodInMinutes: 1 });
+  void enforceProtectedExtensions();
+});
+
+chrome.alarms.onAlarm.addListener(() => {
+  void chrome.runtime.getPlatformInfo();
+  void enforceProtectedExtensions();
+});
