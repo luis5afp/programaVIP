@@ -1,4 +1,4 @@
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 import type { AdminIdentity } from './auth';
 import type { ClientIdentity } from './auth';
 import { Env, HttpError, audit, bodyJson, json, optional, db, sha, text, token, uuid } from './core';
@@ -8,7 +8,8 @@ const BUCKET = 'userflex-extension-packages';
 const MAX_PACKAGE_BYTES = 20 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 80 * 1024 * 1024;
 const MAX_FILES = 1500;
-const BLOCKED_PERMISSIONS = new Set(['management', 'debugger', 'nativeMessaging', 'proxy']);
+const STRIPPED_PERMISSIONS = new Set(['management']);
+const BLOCKED_PERMISSIONS = new Set(['debugger', 'nativeMessaging', 'proxy']);
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 
 let extensionSchemaReadyFor = '';
@@ -256,19 +257,44 @@ function inspectExtensionZip(bytes: Uint8Array) {
     }
   }
 
+  const removedPermissions: string[] = [];
+  for (const key of ['permissions', 'optional_permissions']) {
+    if (!Array.isArray(manifest[key])) continue;
+    manifest[key] = manifest[key].filter((value: unknown) => {
+      if (typeof value !== 'string') return true;
+      if (!STRIPPED_PERMISSIONS.has(value)) return true;
+      removedPermissions.push(value);
+      return false;
+    });
+  }
+
+  let packageBytes = bytes;
+  if (removedPermissions.length) {
+    normalizedArchive['manifest.json'] = strToU8(`${JSON.stringify(manifest, null, 2)}\n`);
+    packageBytes = zipSync(normalizedArchive, { level: 6 });
+    if (packageBytes.byteLength > MAX_PACKAGE_BYTES) {
+      throw new HttpError(413, 'EXTENSION_PACKAGE_SIZE', 'El paquete corregido supera el límite permitido.');
+    }
+  }
+
   const permissions = [
     ...(Array.isArray(manifest.permissions) ? manifest.permissions : []),
     ...(Array.isArray(manifest.host_permissions) ? manifest.host_permissions : []),
   ].filter((value: unknown) => typeof value === 'string').map(String).slice(0, 200);
   const blocked = permissions.filter((permission) => BLOCKED_PERMISSIONS.has(permission));
+  const cleanupNote = removedPermissions.length
+    ? ` Se retiró automáticamente el permiso no permitido: ${[...new Set(removedPermissions)].join(', ')}.`
+    : '';
 
   if (manifestVersion !== 3) {
     return {
       manifest,
       version: extensionVersion,
       permissions,
+      packageBytes,
+      removedPermissions,
       status: 'incompatible' as const,
-      message: `Manifest V${manifestVersion || '?'} no está habilitado para extensiones administradas. Usa Manifest V3.`,
+      message: `Manifest V${manifestVersion || '?'} no está habilitado para extensiones administradas. Usa Manifest V3.${cleanupNote}`,
     };
   }
   if (blocked.length) {
@@ -276,8 +302,10 @@ function inspectExtensionZip(bytes: Uint8Array) {
       manifest,
       version: extensionVersion,
       permissions,
+      packageBytes,
+      removedPermissions,
       status: 'incompatible' as const,
-      message: `Permisos bloqueados por seguridad: ${blocked.join(', ')}.`,
+      message: `Permisos bloqueados por seguridad: ${blocked.join(', ')}.${cleanupNote}`,
     };
   }
 
@@ -285,8 +313,12 @@ function inspectExtensionZip(bytes: Uint8Array) {
     manifest,
     version: extensionVersion,
     permissions,
+    packageBytes,
+    removedPermissions,
     status: 'package_valid' as const,
-    message: 'Paquete, manifest y archivos referenciados validados. Falta la prueba real en userFLOW.',
+    message: removedPermissions.length
+      ? `Paquete corregido automáticamente: se retiró ${[...new Set(removedPermissions)].join(', ')}. Falta la prueba real en userFLOW.`
+      : 'Paquete, manifest y archivos referenciados validados. Falta la prueba real en userFLOW.',
   };
 }
 
@@ -316,6 +348,48 @@ async function extensionRow(env: Env, extensionId: string): Promise<ExtensionRow
   return rows[0] as ExtensionRow;
 }
 
+async function repairLegacyManagementPermission(env: Env, row: ExtensionRow): Promise<ExtensionRow> {
+  if (row.validation_status !== 'incompatible') return row;
+  const permissions = Array.isArray(row.permissions) ? row.permissions : [];
+  if (!permissions.includes('management')) return row;
+  const stillBlocked = permissions.filter((permission) => permission !== 'management' && BLOCKED_PERMISSIONS.has(permission));
+  if (stillBlocked.length) return row;
+
+  try {
+    const sourceBytes = await readPackage(env, row.package_path);
+    const inspection = inspectExtensionZip(sourceBytes);
+    if (!inspection.removedPermissions.includes('management')) return row;
+    if (inspection.status === 'incompatible') return row;
+
+    const bytes = inspection.packageBytes;
+    const sha256 = await digestBytes(bytes);
+    const objectPath = `${row.id}/${sha256}.zip`;
+    if (objectPath !== row.package_path) await uploadPackage(env, objectPath, bytes);
+
+    const rows = await db(env, `userflex_extensions?id=eq.${row.id}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        manifest: jsonb(inspection.manifest),
+        permissions: jsonb(inspection.permissions),
+        package_path: objectPath,
+        package_sha256: sha256,
+        package_size: bytes.byteLength,
+        enabled: false,
+        validation_status: inspection.status,
+        validation_message: inspection.message,
+        runtime_validated_at: null,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    if (objectPath !== row.package_path) await removePackage(env, row.package_path);
+    return (rows?.[0] || row) as ExtensionRow;
+  } catch (error) {
+    console.error('Managed extension permission repair failed', row.id, error instanceof Error ? error.message : String(error));
+    return row;
+  }
+}
+
 function scopeValue(value: unknown): 'global' | 'selective' {
   return value === 'global' ? 'global' : 'selective';
 }
@@ -341,12 +415,14 @@ async function parseUpload(request: Request) {
   const form = await request.formData();
   const packageFile = form.get('package');
   if (!(packageFile instanceof File)) throw new HttpError(400, 'EXTENSION_PACKAGE_REQUIRED', 'Selecciona un archivo ZIP.');
-  const bytes = new Uint8Array(await packageFile.arrayBuffer());
-  if (bytes.byteLength > MAX_PACKAGE_BYTES) throw new HttpError(413, 'EXTENSION_PACKAGE_SIZE', 'El paquete no puede superar 20 MB.');
+  const sourceBytes = new Uint8Array(await packageFile.arrayBuffer());
+  if (sourceBytes.byteLength > MAX_PACKAGE_BYTES) throw new HttpError(413, 'EXTENSION_PACKAGE_SIZE', 'El paquete no puede superar 20 MB.');
+  const inspection = inspectExtensionZip(sourceBytes);
+  const bytes = inspection.packageBytes;
   return {
     form,
     bytes,
-    inspection: inspectExtensionZip(bytes),
+    inspection,
     sha256: await digestBytes(bytes),
   };
 }
@@ -365,7 +441,8 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
 
   if (path === '/api/extensions' && method === 'GET') {
     const rows = await db(env, 'userflex_extensions?select=*&order=name.asc');
-    return json((rows || []).map(extensionPublic));
+    const repaired = await Promise.all((rows || []).map((row: ExtensionRow) => repairLegacyManagementPermission(env, row)));
+    return json(repaired.map(extensionPublic));
   }
 
   if (path === '/api/profile-extension-memberships' && method === 'GET') {
