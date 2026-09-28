@@ -626,8 +626,7 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
   if (freshCatalog) {
     mergeValidationMeta(freshCatalog);
-    const clientId = authMeta?.client?.id || null;
-    const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
+      const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
     if (clientId) {
       await getKaizenBrowserEngine()
         .reconcileCatalogProfiles(clientId, catalogProfiles)
@@ -815,9 +814,6 @@ async function returnToLogin(message = null, code = null, options = {}) {
   // window-all-closed and can terminate the whole app before login is recreated.
   await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
-  if (clientId && !preserveProfiles) {
-    await getKaizenBrowserEngine().clearClientProfiles(clientId, 'logout').catch(() => null);
-  }
   await clearAuth();
   pendingAuthInvalidation = message ? {
     message: String(message),
