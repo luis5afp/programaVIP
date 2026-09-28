@@ -58,6 +58,10 @@ function authPath() {
   return path.join(app.getPath('userData'), 'auth.json');
 }
 
+function loginCredentialsPath() {
+  return path.join(app.getPath('userData'), 'login-credentials.json');
+}
+
 function devicePath() {
   return path.join(app.getPath('userData'), 'device.json');
 }
@@ -172,6 +176,53 @@ async function loadAuth() {
     if (!isLocalPermissionError(error)) return null;
     await repairLocalPathAccess(app.getPath('userData'));
     await repairLocalPathAccess(authPath());
+    try { return await read(); } catch { return null; }
+  }
+}
+
+async function saveLoginCredentials(identifier, password) {
+  const normalizedIdentifier = String(identifier || '').trim();
+  const normalizedPassword = String(password || '');
+  if (!normalizedIdentifier || !normalizedPassword || !safeStorage.isEncryptionAvailable()) return false;
+
+  const encrypted = safeStorage.encryptString(JSON.stringify({
+    identifier: normalizedIdentifier,
+    password: normalizedPassword,
+  })).toString('base64');
+  const file = loginCredentialsPath();
+  const payload = JSON.stringify({ version: 1, encrypted });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  try {
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    if (!isLocalPermissionError(error)) throw error;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(file);
+    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+  }
+  return true;
+}
+
+async function loadLoginCredentials() {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+
+  const read = async () => {
+    const raw = JSON.parse(await fs.readFile(loginCredentialsPath(), 'utf8'));
+    if (typeof raw?.encrypted !== 'string') return null;
+    const decrypted = safeStorage.decryptString(Buffer.from(raw.encrypted, 'base64'));
+    const parsed = JSON.parse(decrypted);
+    const identifier = String(parsed?.identifier || '').trim();
+    const password = String(parsed?.password || '');
+    if (!identifier || !password) return null;
+    return { identifier, password };
+  };
+
+  try {
+    return await read();
+  } catch (error) {
+    if (!isLocalPermissionError(error)) return null;
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(loginCredentialsPath());
     try { return await read(); } catch { return null; }
   }
 }
@@ -2019,6 +2070,11 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
   }
 });
 
+ipcMain.handle('userflex:saved-login', async () => {
+  const credentials = await loadLoginCredentials();
+  return credentials || { identifier: '', password: '' };
+});
+
 ipcMain.handle('userflex:login', async (event, input) => {
   try {
     pendingAuthInvalidation = null;
@@ -2043,6 +2099,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
       subscription: result.subscription,
       expiresAt: result.expiresAt,
     };
+    await saveLoginCredentials(identifier, password);
     await saveAuth(result.accessToken, meta);
     const data = await catalog();
     await syncClientConfiguration(data, 'login', data);

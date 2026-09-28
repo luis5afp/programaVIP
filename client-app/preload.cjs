@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('userflex', {
   bootstrap: () => ipcRenderer.invoke('userflex:bootstrap'),
+  savedLogin: () => ipcRenderer.invoke('userflex:saved-login'),
   login: (input) => ipcRenderer.invoke('userflex:login', input),
   catalog: () => ipcRenderer.invoke('userflex:catalog'),
   launchProfile: (profileId) => ipcRenderer.invoke('userflex:launch-profile', profileId),

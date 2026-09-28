@@ -36,7 +36,10 @@
           </label>
           <label>
             <span>Contraseña</span>
-            <input id="password" type="password" autocomplete="current-password" required />
+            <div class="password-field">
+              <input id="password" type="password" autocomplete="current-password" required />
+              <button id="password-toggle" class="password-toggle" type="button" aria-label="Mostrar contraseña" title="Mostrar contraseña">Ver</button>
+            </div>
           </label>
           <div id="login-error" class="error hidden"></div>
           <button id="login-button" class="primary-button" type="submit">Ingresar</button>

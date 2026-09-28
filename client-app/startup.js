@@ -173,6 +173,7 @@ async function startAfterReady() {
     await log(`stable userData: ${currentUserData}`);
     await copyIdentityFile('device.json');
     await copyIdentityFile('auth.json');
+    await copyIdentityFile('login-credentials.json');
 
     // bootstrap.js still contains one legacy userData compatibility call. The
     // stable path is already locked before app.whenReady(), so ignore that late
