@@ -8,6 +8,7 @@ import { ClientsView } from './views/ClientsView';
 import { PlansView } from './views/PlansView';
 import { ProfilesView } from './views/ProfilesView';
 import { ExtensionsView } from './views/ExtensionsView';
+import { ContentRulesView } from './views/ContentRulesView';
 import { ProxiesView } from './views/ProxiesView';
 import { AssignmentsView } from './views/AssignmentsView';
 import { DevicesView } from './views/DevicesView';
@@ -92,6 +93,7 @@ export default function App() {
     case 'plans': content = <PlansView />; break;
     case 'profiles': content = <ProfilesView />; break;
     case 'extensions': content = <ExtensionsView />; break;
+    case 'content-rules': content = <ContentRulesView />; break;
     case 'proxies': content = <ProxiesView />; break;
     case 'assignments': content = <AssignmentsView />; break;
     case 'devices': content = <DevicesView />; break;
