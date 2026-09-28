@@ -106,7 +106,7 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
     '--disable-component-update',
     `--disable-extensions-except=${extensionDir}`,
     `--load-extension=${extensionDir}`,
-    pageUrl,
+    'about:blank',
   ];
 
   const child = spawn(edgeExe, args, {
@@ -121,9 +121,14 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
 
   try {
     await waitForJson(`http://127.0.0.1:${port}/json/version`, 25000);
+
+    // Mirror userFLOW: Edge starts on about:blank, waits briefly for
+    // --load-extension registration, then performs the first real navigation.
+    await delay(1600);
+
     const targets = await waitForJson(`http://127.0.0.1:${port}/json/list`, 10000);
-    const page = targets.find((target) => target.type === 'page' && String(target.url || '').startsWith(pageUrl));
-    assert.ok(page?.webSocketDebuggerUrl, `${definition.name}: test page target was not created`);
+    const page = targets.find((target) => target.type === 'page');
+    assert.ok(page?.webSocketDebuggerUrl, `${definition.name}: bootstrap page target was not created`);
 
     const socket = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -139,45 +144,29 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
     });
     const rpc = websocketRpc(socket);
     await rpc('Runtime.enable');
-    await delay(1200);
+    await rpc('Page.enable');
+    await rpc('Page.navigate', { url: pageUrl });
+    await delay(1400);
+
+    const locationResult = await rpc('Runtime.evaluate', {
+      expression: 'location.href',
+      returnByValue: true,
+    });
+    assert.ok(
+      String(locationResult?.result?.value || '').startsWith(pageUrl),
+      `${definition.name}: Edge did not reach the test page`,
+    );
 
     const contextExpression = `document.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`;
-    let contextResult = await rpc('Runtime.evaluate', {
+    const contextResult = await rpc('Runtime.evaluate', {
       expression: contextExpression,
       returnByValue: true,
     });
 
-    if (contextResult?.result?.value !== false) {
-      let preferenceDetail = 'Preferences unavailable';
-      try {
-        const preferences = JSON.parse(await readFile(path.join(profileDir, 'Default', 'Preferences'), 'utf8'));
-        const settings = preferences?.extensions?.settings || {};
-        const entries = Object.entries(settings)
-          .map(([id, value]) => ({
-            id,
-            state: value?.state,
-            path: value?.path,
-            name: value?.manifest?.name,
-            version: value?.manifest?.version,
-          }))
-          .filter((item) => item.name === definition.name || String(item.path || '').includes(extensionDir));
-        preferenceDetail = JSON.stringify(entries);
-      } catch {}
-
-      console.log(`${definition.name}: first page did not receive the content script; Preferences=${preferenceDetail}. Reloading once to distinguish extension-load race from package failure.`);
-      await rpc('Page.enable');
-      await rpc('Page.reload', { ignoreCache: true });
-      await delay(1600);
-      contextResult = await rpc('Runtime.evaluate', {
-        expression: contextExpression,
-        returnByValue: true,
-      });
-    }
-
     assert.equal(
       contextResult?.result?.value,
       false,
-      `${definition.name}: content script did not block contextmenu after reload; extension was not active`,
+      `${definition.name}: content script was not active on the first managed navigation`,
     );
 
     if (definition.name === 'ex1') {
