@@ -531,6 +531,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
       const fieldKind = (element) => {
         if (!(element instanceof HTMLInputElement)) return null;
+        if (element.dataset.userflexCredentialProtected === '1') return 'password';
         const type = String(element.type || '').toLowerCase();
         const hint = [
           type,
@@ -544,6 +545,33 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
         return null;
       };
+
+      const protectPasswordField = (element) => {
+        if (!(element instanceof HTMLInputElement)) return false;
+        try {
+          element.dataset.userflexCredentialProtected = '1';
+          if (String(element.type || '').toLowerCase() !== 'password') {
+            try { element.type = 'password'; } catch {}
+          }
+          element.style.setProperty('-webkit-text-security', 'disc', 'important');
+          element.style.setProperty('text-security', 'disc', 'important');
+          element.setAttribute('autocomplete', 'current-password');
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const blockManagedPasswordClipboard = (event) => {
+        const target = event?.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        if (target.dataset.userflexCredentialProtected !== '1') return;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+
+      addEventListener('copy', blockManagedPasswordClipboard, true);
+      addEventListener('cut', blockManagedPasswordClipboard, true);
 
       const candidates = () => {
         const inputs = Array.from(document.querySelectorAll('input'))
@@ -560,6 +588,8 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           try { element.focus({ preventScroll: true }); } catch {
             try { element.focus(); } catch {}
           }
+          const kind = fieldKind(element);
+          if (kind === 'password') protectPasswordField(element);
           const proto = HTMLInputElement.prototype;
           const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
           if (descriptor?.set) descriptor.set.call(element, value);
@@ -705,7 +735,11 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       const fillAvailable = () => {
         const { usernameInput, passwordInput } = candidates();
         if (usernameInput && !usernameInput.value) setNativeValue(usernameInput, username);
-        if (passwordInput && !passwordInput.value) setNativeValue(passwordInput, password);
+        if (passwordInput) {
+          protectPasswordField(passwordInput);
+          if (!passwordInput.value) setNativeValue(passwordInput, password);
+          protectPasswordField(passwordInput);
+        }
         positionHelper();
       };
 
@@ -771,6 +805,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       origin: target.origin,
       allowedOrigins,
       visibleHelper: true,
+      passwordProtection: 'masked-no-reveal-no-copy',
       pagesPrepared: pages.length,
       immediatePages,
     };
