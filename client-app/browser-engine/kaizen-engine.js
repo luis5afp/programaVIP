@@ -859,50 +859,54 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const browser = await connectKaizenBrowser(entry.debugPort);
     let page = null;
     try {
-      page = await browser.newPage();
-      const internalUrl = entry.browserKind === 'edge' ? 'edge://extensions/' : 'chrome://extensions/';
+      // Edge's internal WebUI (edge://extensions/) is not a stable CDP target:
+      // navigation may return net::ERR_ABORTED even when the browser and loaded
+      // extension are healthy. Validate from the persistent profile state and
+      // live extension targets first. Only Chromium gets an optional WebUI
+      // inspection as an extra diagnostic.
+      const internalUrl = entry.browserKind === 'edge' ? null : 'chrome://extensions/';
       let internalNavigationError = null;
-      try {
-        await page.goto(internalUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
-      } catch (error) {
-        // Chromium/Edge internal WebUI pages can intentionally abort CDP
-        // navigation (net::ERR_ABORTED) even though the browser itself is
-        // healthy. The runtime test must keep going because Preferences and
-        // extension targets are authoritative fallbacks for unpacked extensions.
-        internalNavigationError = error instanceof Error ? error.message : String(error || '');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 900));
+      let uiItems = [];
 
-      const uiItems = await page.evaluate(() => {
-        const found = [];
-        const seen = new Set();
-        const visit = (root) => {
-          if (!root || !root.querySelectorAll) return;
-          for (const node of root.querySelectorAll('*')) {
-            const tag = String(node.tagName || '').toLowerCase();
-            if (tag === 'extensions-item') {
-              const data = node.data || node.extension || null;
-              const id = String(data?.id || node.getAttribute?.('id') || node.id || '');
-              const name = String(data?.name || '').trim();
-              const key = id || name || String(found.length);
-              if (!seen.has(key)) {
-                seen.add(key);
-                found.push({
-                  id,
-                  name,
-                  state: String(data?.state || ''),
-                  enabled: data?.state === 'ENABLED' || data?.enabled === true,
-                  source: 'extensions-page',
-                  text: String(node.shadowRoot?.textContent || node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 800),
-                });
+      if (internalUrl) {
+        page = await browser.newPage();
+        try {
+          await page.goto(internalUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          uiItems = await page.evaluate(() => {
+            const found = [];
+            const seen = new Set();
+            const visit = (root) => {
+              if (!root || !root.querySelectorAll) return;
+              for (const node of root.querySelectorAll('*')) {
+                const tag = String(node.tagName || '').toLowerCase();
+                if (tag === 'extensions-item') {
+                  const data = node.data || node.extension || null;
+                  const id = String(data?.id || node.getAttribute?.('id') || node.id || '');
+                  const name = String(data?.name || '').trim();
+                  const key = id || name || String(found.length);
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    found.push({
+                      id,
+                      name,
+                      state: String(data?.state || ''),
+                      enabled: data?.state === 'ENABLED' || data?.enabled === true,
+                      source: 'extensions-page',
+                      text: String(node.shadowRoot?.textContent || node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 800),
+                    });
+                  }
+                }
+                if (node.shadowRoot) visit(node.shadowRoot);
               }
-            }
-            if (node.shadowRoot) visit(node.shadowRoot);
-          }
-        };
-        visit(document);
-        return found;
-      }).catch(() => []);
+            };
+            visit(document);
+            return found;
+          }).catch(() => []);
+        } catch (error) {
+          internalNavigationError = error instanceof Error ? error.message : String(error || '');
+        }
+      }
 
       const preferenceItems = [];
       const managedDirs = (entry.managedExtensions || [])

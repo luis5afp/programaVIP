@@ -133,8 +133,8 @@ assert.match(
 
 assert.match(
   engine,
-  /entry\.browserKind === 'edge' \? 'edge:\/\/extensions\/' : 'chrome:\/\/extensions\/'/,
-  'extension inspection must use the correct internal extension page for Edge and Chromium',
+  /const internalUrl = entry\.browserKind === 'edge' \? null : 'chrome:\/\/extensions\/'/,
+  'Edge validation must skip unstable edge://extensions navigation entirely',
 );
 
 assert.match(
@@ -151,8 +151,8 @@ assert.match(
 
 assert.match(
   engine,
-  /try \{[\s\S]{0,260}page\.goto\(internalUrl[\s\S]{0,420}internalNavigationError =/,
-  'edge://extensions navigation aborts must be captured instead of failing the whole runtime test',
+  /if \(internalUrl\)[\s\S]{0,300}page\.goto\(internalUrl/,
+  'internal extension WebUI inspection must be optional and Chromium-only',
 );
 
 assert.match(
