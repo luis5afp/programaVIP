@@ -24,7 +24,7 @@ const sessionPackage = JSON.parse(readFileSync(new URL('../session-manager/packa
 const sessionInstaller = readFileSync(new URL('../session-manager/build/installer.nsh', import.meta.url), 'utf8');
 
 assert.equal(versionAtLeast(clientPackage.version, MIN_USERFLOW_VERSION), true, 'packaged userFLOW must be at least the server minimum version');
-assert.equal(sessionPackage.version, '0.3.47');
+assert.equal(versionAtLeast(sessionPackage.version, MIN_SESSION_MANAGER_VERSION), true, 'packaged Session Manager must be at least the server minimum version');
 assert.equal(clientPackage.build?.nsis?.deleteAppDataOnUninstall, false, 'userFLOW installer must preserve local browser/user data during upgrades and uninstall by default');
 
 assert.equal(MIN_USERFLOW_VERSION, '0.3.68');
