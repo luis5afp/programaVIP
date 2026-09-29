@@ -129,7 +129,11 @@ async function latestManifest(request: Request, env: Env): Promise<Response> {
     status: 200,
     headers: responseHeaders(contentType, 'no-store, max-age=0', body.byteLength, 'cloudflare-r2'),
   });
-  await cachePut(request, response.clone());
+  // Never delay the updater response on an edge-cache write. On a cold edge,
+  // Cache API persistence can take longer than the desktop client's request
+  // deadline even though R2 already returned the manifest. Memory cache still
+  // handles bursts, and this best-effort write may populate the edge cache.
+  void cachePut(request, response.clone());
   return response;
 }
 

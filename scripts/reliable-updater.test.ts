@@ -8,10 +8,11 @@ const workflow = readFileSync(new URL('../.github/workflows/build-client-app.yml
 assert.doesNotMatch(
   String(pkg.scripts?.prestart || '') + String(pkg.scripts?.['predist:win'] || ''),
   /fail-open-updater/,
-  'packaged userFLOW must not re-enable the silent fail-open updater',
+  'packaged userFLOW must not depend on the removed legacy fail-open build transform',
 );
 
 assert.match(bootstrap, /const UPDATE_MANIFEST_ATTEMPTS = 3/, 'manifest check must retry');
+assert.match(bootstrap, /const UPDATE_CHECK_TIMEOUT_MS = 15_000/, 'manifest check must tolerate slower Cloudflare/DNS starts');
 assert.match(bootstrap, /const UPDATE_CHUNK_ATTEMPTS = 4/, 'chunk downloads must retry generously');
 assert.match(bootstrap, /async function prepareUpdateDirectory\(\)/, 'updater needs writable-directory fallback');
 assert.match(bootstrap, /app\.getPath\('temp'\)/, 'updater needs Windows temp fallback');
@@ -26,9 +27,16 @@ const updater = bootstrap.slice(updateStart, updateEnd);
 const catchStart = updater.indexOf('} catch (error) {');
 assert.ok(catchStart >= 0, 'updater catch must exist');
 const updaterCatch = updater.slice(catchStart);
-assert.doesNotMatch(updaterCatch, /await startMain\(\)/, 'update failure must stay visible instead of silently opening login');
-assert.match(updaterCatch, /Actualización detenida/, 'update failure must show a visible diagnostic');
-assert.match(updaterCatch, /Reintentar verificación/, 'update failure must offer a retry');
+assert.match(
+  updaterCatch,
+  /No se pudo verificar la actualización[\s\S]{0,900}await startMain\(\)/,
+  'transient update failures must show a diagnostic and then open the installed client instead of trapping the user',
+);
+assert.match(
+  updaterCatch,
+  /API independently[\s\S]{0,500}minimum supported client version/,
+  'fail-open startup must rely on server-side minimum-version enforcement for hard upgrade requirements',
+);
 
 assert.match(workflow, /\$chunkSize = 4MB/, 'release feed must use smaller legacy-compatible chunks');
 
