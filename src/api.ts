@@ -326,7 +326,13 @@ export const api = {
       });
     },
     credentials: (profileId: string, loginUsername: string, password?: string) =>
-      request<{ ok: true; profile_id: string; login_username: string; has_credentials: true }>(
+      request<{
+        ok: true;
+        profile_id: string;
+        login_username: string;
+        has_credentials: true;
+        session_invalidated?: boolean;
+      }>(
         `/api/profiles/${profileId}/managed-credentials`,
         { method: 'POST', body: JSON.stringify({ loginUsername, password: password || '' }) },
       ),
