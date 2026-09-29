@@ -190,6 +190,11 @@ export interface ProfileSessionState {
   captured_at: string | null;
   validated_at: string | null;
   updated_at: string | null;
+  cookie_expiry: {
+    status: 'valid' | 'expired' | 'mixed' | 'no_expiry' | 'none';
+    expires_at: string | null;
+    checked_cookies: number;
+  };
   keeper: {
     enabled: boolean;
     status: 'registered' | 'healthy' | 'refreshing' | 'needs_admin' | 'error' | 'disabled';
