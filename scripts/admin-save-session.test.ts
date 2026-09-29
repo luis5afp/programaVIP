@@ -47,12 +47,10 @@ assert.match(admin, /userFLOW para comprobar la configuración real/, 'direct cl
 assert.match(admin, /network_strategy === 'assigned-proxy'/, 'direct client action must respect client-specific proxy assignments');
 assert.match(admin, /Laptop size=\{15\}/, 'compact profile row must show the client-open icon before maintenance actions');
 
-assert.match(admin, /Abrir como invitado/, 'profile cards must expose the guest launch action');
-assert.doesNotMatch(admin, /GUEST_MIN_SESSION_MANAGER_VERSION/, 'stale Keeper version must not block guest launch');
-assert.doesNotMatch(admin, /Este perfil reporta v\$\{observedVersion\}/, 'stale Keeper version must remain informational only');
-assert.match(admin, /La versión guardada por Keeper es informativa y puede estar atrasada/, 'guest launch must explain stale Keeper metadata without blocking');
-assert.match(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'guest action must request a one-time Session Manager link');
-assert.match(api, /\/guest-launch/, 'Admin API must expose guest launch');
+assert.doesNotMatch(admin, /Abrir como invitado/, 'profile cards must not expose the guest launch action');
+assert.doesNotMatch(admin, /Abrir invitado/, 'expanded profile details must not expose the guest launch action');
+assert.doesNotMatch(admin, /api\.profileSessions\.guest\(profile\.id\)/, 'Admin UI must not request guest launches');
+assert.match(api, /\/guest-launch/, 'legacy Admin API may keep guest launch compatibility without exposing it in the UI');
 assert.match(worker, /userflex-session-guest:/, 'guest links must use a separate one-time token namespace');
 assert.match(worker, /userflex-session:\/\/guest\?endpoint=/, 'backend must return the Session Manager guest protocol');
 assert.match(worker, /\/api\/session-manager\/guest-bootstrap/, 'Session Manager must bootstrap guest mode without snapshot delivery');
