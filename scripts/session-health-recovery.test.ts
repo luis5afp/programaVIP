@@ -409,18 +409,18 @@ assert.match(
 );
 assert.match(
   profilesView,
-  /no caduca por tiempo/,
-  'Admin must show that a completed initial validation does not expire by age',
+  /Cookies: guardadas/,
+  'Admin must distinguish stored cookie data from live authentication state',
 );
 assert.match(
   profilesView,
-  /Aviso de acceso; snapshot conservado/,
-  'Admin must present access failures as warnings while the stored snapshot remains available',
+  /Sesión: vencida/,
+  'Admin must show a confirmed expired authentication state explicitly',
 );
 assert.match(
   profilesView,
-  /validar una vez/,
-  'Admin must distinguish an unvalidated initial snapshot from a validated one',
+  /Sesión: sin verificar/,
+  'Admin must distinguish stored cookies that have not yet received a real live authentication check',
 );
 
 console.log('Managed session health recovery: OK');
