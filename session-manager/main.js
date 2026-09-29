@@ -2,7 +2,8 @@ import { app, BrowserWindow, safeStorage } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
+import { createKaizenCaptureEngine as createBundledKaizenCaptureEngine } from './browser-engine/kaizen-capture-engine.js';
+import { createRuntimeUpdater } from './runtime-updater.js';
 
 const API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const KEEPER_TARGET_ROUND_MS = 8 * 60 * 60 * 1000;
@@ -14,6 +15,10 @@ let readyWindow = null;
 let pendingProtocolUrl = null;
 let protocolRegistered = false;
 let captureEngine = null;
+let captureEngineFactory = createBundledKaizenCaptureEngine;
+let runtimeUpdater = null;
+let loadedRuntimeVersion = 'bundled';
+let runtimeRefreshPromise = null;
 let activeCaptureToken = null;
 let captureStartState = null;
 let lastCompletedCapture = null;
@@ -23,8 +28,55 @@ let keeperRunning = false;
 let manualCaptureGeneration = 0;
 
 function engine() {
-  if (!captureEngine) captureEngine = createKaizenCaptureEngine({ app, log: console });
+  if (!captureEngine) captureEngine = captureEngineFactory({ app, log: console });
   return captureEngine;
+}
+
+async function ensureRuntimeReady({ force = false } = {}) {
+  if (!app.isReady()) return loadedRuntimeVersion;
+  if (captureEngine?.active) return loadedRuntimeVersion;
+  if (runtimeRefreshPromise) return runtimeRefreshPromise;
+
+  runtimeRefreshPromise = (async () => {
+    if (!runtimeUpdater) {
+      runtimeUpdater = createRuntimeUpdater({
+        app,
+        coreVersion: app.getVersion(),
+        log: console,
+      });
+    }
+
+    const runtime = await runtimeUpdater.ensureLatestRuntime({ force });
+    if (!runtime?.moduleUrl || runtime.version === loadedRuntimeVersion) {
+      return loadedRuntimeVersion;
+    }
+
+    try {
+      const module = await import(`${runtime.moduleUrl}?runtime=${encodeURIComponent(runtime.version)}`);
+      if (typeof module?.createKaizenCaptureEngine !== 'function') {
+        throw new Error('El runtime descargado no exporta createKaizenCaptureEngine.');
+      }
+      if (captureEngine && !captureEngine.active) {
+        await captureEngine.close?.('runtime_upgrade').catch?.(() => null);
+        captureEngine = null;
+      }
+      captureEngineFactory = module.createKaizenCaptureEngine;
+      loadedRuntimeVersion = runtime.version;
+      console.log(`Session Manager runtime activo: ${runtime.version.slice(0, 12)} (${runtime.source || 'cache'}).`);
+    } catch (error) {
+      console.warn(
+        `Session Manager no pudo activar el runtime descargado; se mantiene el runtime actual: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return loadedRuntimeVersion;
+  })();
+
+  try {
+    return await runtimeRefreshPromise;
+  } finally {
+    runtimeRefreshPromise = null;
+  }
 }
 
 function manualCaptureBusy() {
@@ -338,8 +390,11 @@ function showReadyWindow(message = null) {
     return;
   }
 
+  const runtimeLabel = loadedRuntimeVersion === 'bundled'
+    ? 'integrado'
+    : loadedRuntimeVersion.slice(0, 12);
   const status = message || (protocolRegistered
-    ? 'El protocolo userflex-session:// está registrado. El motor KAIZEN está listo.'
+    ? `El protocolo userflex-session:// está registrado. Core v${app.getVersion()} · runtime ${runtimeLabel}.`
     : 'Windows no confirmó el protocolo. Reinstala Session Manager si Cargar sesión no abre el navegador.');
   const tone = protocolRegistered ? '#166534' : '#9a3412';
   const background = protocolRegistered ? '#f0fdf4' : '#fff7ed';
@@ -450,6 +505,7 @@ function sameCaptureToken(left, right) {
 
 async function startGuest(rawUrl) {
   const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'guest');
+  await ensureRuntimeReady();
 
   // Guest is a manual action and therefore takes priority over any automatic
   // Keeper activity. It never loads or saves the managed snapshot.
@@ -477,6 +533,7 @@ async function startGuest(rawUrl) {
 
 async function startCapture(rawUrl) {
   const { endpoint, token } = assertSessionProtocolUrl(rawUrl, 'capture');
+  await ensureRuntimeReady();
 
   // Manual renewal always wins over background Keeper activity. The generation
   // also lets an older Keeper task detect that it no longer owns the browser.
@@ -683,6 +740,11 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     protocolRegistered = registerProtocol();
+    // Load the newest verified browser/runtime logic before handling a capture.
+    // If GitHub is unavailable, the last verified runtime (or bundled fallback) is used.
+    await ensureRuntimeReady().catch((error) => {
+      console.warn('Session Manager runtime startup check failed:', error?.message || error);
+    });
     // Managed sessions are validated once at capture. Session Manager no
     // longer wakes up periodically to revalidate them by age.
     configureKeeperStartup(false);
@@ -694,7 +756,7 @@ if (!gotLock) {
   });
 
   app.on('activate', () => {
-    if (!engine().active) showReadyWindow();
+    if (!captureEngine?.active) showReadyWindow();
   });
 
   app.on('before-quit', (event) => {
@@ -703,7 +765,11 @@ if (!gotLock) {
     quitAfterCleanup = true;
     if (keeperTimer) clearTimeout(keeperTimer);
     keeperTimer = null;
-    void engine().close('app_exit')
+    if (!captureEngine) {
+      app.quit();
+      return;
+    }
+    void captureEngine.close('app_exit')
       .catch(() => null)
       .finally(() => app.quit());
   });
