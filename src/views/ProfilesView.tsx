@@ -708,6 +708,11 @@ export function ProfilesView() {
     const loginUsername = String(form.get('loginUsername') || '').trim();
     const loginPassword = String(form.get('loginPassword') || '');
     const currentState = editor && editor !== 'new' ? stateFor(editor.id) : null;
+    const previousLoginUsername = String(currentState?.login_username || '').trim();
+    const usernameChanged = Boolean(
+      previousLoginUsername
+      && previousLoginUsername.toLocaleLowerCase() !== loginUsername.toLocaleLowerCase()
+    );
     const wasEditing = Boolean(editor && editor !== 'new');
     let profileSaved = false;
 
@@ -719,6 +724,9 @@ export function ProfilesView() {
       if (credentialsRequired) {
         if (!loginUsername) throw new Error('Ingresa el correo o usuario para el autocompletado.');
         if (!currentState?.has_credentials && !loginPassword) throw new Error('Ingresa la contraseña del perfil.');
+        if (usernameChanged && !loginPassword) {
+          throw new Error('Cambiaste el correo/usuario. Ingresa también la contraseña de la nueva cuenta para reemplazar las credenciales anteriores.');
+        }
       }
       if (networkStrategy === 'profile-proxy' && !proxyId) {
         throw new Error('La estrategia Proxy fijo del perfil requiere seleccionar un proxy.');
@@ -1984,7 +1992,7 @@ export function ProfilesView() {
                   label={authStrategy === 'cookie-snapshot' ? 'Contraseña para autofill (opcional)' : 'Contraseña'}
                   className="span-2"
                   help={currentState?.has_credentials
-                    ? 'Autofill ya está configurado. Déjala vacía para conservar la contraseña cifrada actual.'
+                    ? 'Autofill ya está configurado. Déjala vacía solo si mantienes el mismo correo/usuario. Si cambias de cuenta, escribe también la contraseña nueva.'
                     : 'Se guarda cifrada en el backend y solo se entrega temporalmente al motor autorizado.'}
                 >
                   <div className="credential-input-wrap">
