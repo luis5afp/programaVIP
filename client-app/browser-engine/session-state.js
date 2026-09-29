@@ -102,8 +102,11 @@ function cookieExpired(cookie) {
 
 export async function ensureManagedSnapshotCookies({ debugPort, profileUrl, material }) {
   const target = new URL(profileUrl);
+  const flowTarget = isGoogleFlowTarget(target);
   const expected = flattenCookies(material)
-    .filter((cookie) => cookieDomainMatchesHost(cookie, target.hostname))
+    .filter((cookie) =>
+      cookieDomainMatchesHost(cookie, target.hostname)
+      || (flowTarget && isGoogleAccountsDomain(cookie?.domain)))
     .filter((cookie) => !cookieExpired(cookie));
 
   if (!expected.length) {
@@ -213,6 +216,37 @@ function isGoogleAccountsDomain(value) {
 function isGoogleAuthCookieName(name) {
   return /^(?:SID|HSID|SSID|APISID|SAPISID|__Secure-(?:1P|3P)?SID|__Secure-(?:1P|3P)?APISID)$/i
     .test(String(name || ''));
+}
+
+async function clearGoogleFlowCookies(browser, target) {
+  if (!isGoogleFlowTarget(target)) return { cleared: 0, names: [] };
+  const pages = await browser.pages();
+  const page = pages.find((item) => /^https?:/i.test(item.url())) || pages[0] || await browser.newPage();
+  const client = await page.createCDPSession();
+  try {
+    const result = await client.send('Storage.getCookies');
+    const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
+    const selected = cookies.filter((cookie) =>
+      cookieDomainMatchesHost(cookie, target.hostname)
+      || isGoogleAccountsDomain(cookie?.domain));
+    let cleared = 0;
+    for (const cookie of selected) {
+      try {
+        await client.send('Network.deleteCookies', {
+          name: String(cookie.name || ''),
+          domain: String(cookie.domain || ''),
+          path: String(cookie.path || '/'),
+        });
+        cleared += 1;
+      } catch {}
+    }
+    return {
+      cleared,
+      names: selected.map((cookie) => String(cookie?.name || '')).filter(Boolean),
+    };
+  } finally {
+    await client.detach().catch(() => null);
+  }
 }
 
 async function verifyFirstPartyAuthCookies(page, target, capturedCookies) {
@@ -1053,6 +1087,12 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
   const browser = await connectKaizenBrowser(debugPort);
   try {
     const cookies = flattenCookies(material);
+    // Google sessions are account-wide and can leave stale cookies in a
+    // persistent profile. A new Flow snapshot must be authoritative: clear the
+    // prior Google/Accounts cookie set before applying the captured generation.
+    const googleCleanup = isGoogleFlowTarget(target)
+      ? await clearGoogleFlowCookies(browser, target)
+      : { cleared: 0, names: [] };
     const cookieResult = await applyCookies(browser, cookies);
     if (cookies.length > 0 && cookieResult.installed === 0) {
       throw new Error('Chrome rechazó todas las cookies de la sesión administrada.');
@@ -1137,6 +1177,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
     return {
       cookiesInstalled: cookieResult.installed,
       cookiesRejected: cookieResult.rejected.length,
+      googleCookiesCleared: Number(googleCleanup?.cleared || 0),
       indexedDbRestored: Number(indexedDb?.restored || 0),
       indexedDbTotal: Number(indexedDb?.total || 0),
       storagePolicy: effectiveStorageStrategy,
