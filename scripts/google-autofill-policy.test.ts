@@ -99,8 +99,13 @@ assert.match(
 );
 assert.match(
   captureEngine,
-  /setInterval\(autofill,1000\)[\s\S]{0,220}600000/,
-  'Session Manager capture autofill must stay active for long login flows',
+  /setInterval\(autofill,1500\)[\s\S]{0,500}600000/,
+  'Session Manager capture autofill must stay active for long login flows without high-frequency scanning',
+);
+assert.doesNotMatch(
+  captureEngine,
+  /attributeFilter:\['type','name','id','autocomplete','placeholder','aria-label','style','class'\]/,
+  'Session Manager capture must not observe style/class mutations on animated pages',
 );
 
 console.log('Google/redirect autofill policy: OK');
