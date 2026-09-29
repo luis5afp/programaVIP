@@ -615,9 +615,16 @@ async function credentialMarkerChanged(app, profileId, credentials) {
   try {
     previous = JSON.parse(await fsp.readFile(markerPath, 'utf8'));
   } catch {}
-  const changed = Boolean(previous?.updatedAt && previous.updatedAt !== credentials.updatedAt);
+  // Missing marker means this Core/runtime has never confirmed which credentials
+  // own the existing Chromium profile. Reset once so an older Google/account
+  // identity can never survive the first launch after this protection ships.
+  const changed = !previous || previous.updatedAt !== credentials.updatedAt;
   await fsp.mkdir(markerDir, { recursive: true });
-  await fsp.writeFile(markerPath, JSON.stringify({ updatedAt: credentials.updatedAt }), 'utf8');
+  await fsp.writeFile(
+    markerPath,
+    JSON.stringify({ updatedAt: credentials.updatedAt, username: String(credentials?.username || '') }),
+    'utf8',
+  );
   return changed;
 }
 
