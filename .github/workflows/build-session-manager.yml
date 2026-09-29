@@ -4,12 +4,20 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'session-manager/**'
+      - 'session-manager/entry.js'
+      - 'session-manager/main.js'
+      - 'session-manager/runtime-updater.js'
+      - 'session-manager/package.json'
+      - 'session-manager/build/**'
       - '.github/workflows/build-session-manager.yml'
   push:
     branches: [main]
     paths:
-      - 'session-manager/**'
+      - 'session-manager/entry.js'
+      - 'session-manager/main.js'
+      - 'session-manager/runtime-updater.js'
+      - 'session-manager/package.json'
+      - 'session-manager/build/**'
       - '.github/workflows/build-session-manager.yml'
 
 permissions:
@@ -43,6 +51,8 @@ jobs:
           node --check entry.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check main.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check runtime-updater.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/kaizen-capture-engine.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
