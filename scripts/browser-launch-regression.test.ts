@@ -195,9 +195,39 @@ assert.match(
 );
 
 assert.match(
+  engine,
+  /USERFLEX_EXPECTED_MANAGED_EXTENSIONS = \$\{JSON\.stringify\(managedExtensionNames\)\}/,
+  'Browser Guard must receive the exact managed extension names assigned to the active profile',
+);
+
+assert.match(
   guardBackground,
-  /PROTECTED_NAMES[\s\S]{0,1500}chrome\.management\.onDisabled[\s\S]{0,800}setEnabled\(item\.id, true\)/,
-  'Browser Guard must immediately re-enable protected extensions when possible',
+  /USERFLEX_EXPECTED_MANAGED_EXTENSIONS[\s\S]{0,1000}PROTECTED_NAMES/,
+  'Browser Guard must protect only extensions expected for the current profile plus itself',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.management\.onDisabled[\s\S]{0,900}chrome\.management\.setEnabled\(item\.id, true\)[\s\S]{0,900}closeManagedProfile\(\)/,
+  'disabling a protected extension must repair it and close the managed browser profile',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.management\.onUninstalled[\s\S]{0,500}protectedIds\.has\(id\)[\s\S]{0,500}closeManagedProfile\(\)/,
+  'removing a protected extension must close the managed browser profile',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.windows\.getAll[\s\S]{0,700}chrome\.windows\.remove/,
+  'extension tampering must close the browser windows rather than polling browser preference files',
+);
+
+assert.doesNotMatch(
+  guardBackground,
+  /setInterval\([^)]*managed|Preferences|Secure Preferences/,
+  'Browser Guard tamper enforcement must be event-driven and must not revive the old destructive preference watchdog',
 );
 
 assert.match(

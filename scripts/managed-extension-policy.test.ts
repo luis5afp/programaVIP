@@ -142,6 +142,21 @@ assert.match(
   'bundled extension ZIPs must use a fixed mtime so their SHA-256 stays stable across requests',
 );
 assert.match(
+  bundled,
+  /const protectedIds = new Set\(\)[\s\S]{0,2200}chrome\.management\.onDisabled[\s\S]{0,1200}closeManagedProfile\(\)/,
+  'bundled ex1/ex2 must close the managed profile when an active protected extension is disabled',
+);
+assert.match(
+  bundled,
+  /chrome\.management\.onUninstalled[\s\S]{0,700}protectedIds\.has\(id\)[\s\S]{0,500}closeManagedProfile\(\)/,
+  'bundled ex1/ex2 must close the managed profile when an active protected extension is removed',
+);
+assert.match(
+  bundled,
+  /chrome\.windows\.getAll[\s\S]{0,700}chrome\.windows\.remove/,
+  'bundled extension tamper handling must close the browser window itself',
+);
+assert.match(
   client,
   /payload\?\.code \|\| 'EXTENSION_DOWNLOAD_FAILED'/,
   'binary extension downloads must preserve structured server error codes',
