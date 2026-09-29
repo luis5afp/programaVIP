@@ -242,9 +242,22 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     install();
     const result=await call('credentials');
     if(result.ok){credentials={username:result.username||'',password:result.password||''};autofill();}
-    const observer=new MutationObserver(()=>{install();autofill();});
-    observer.observe(document.documentElement||document,{childList:true,subtree:true,attributes:true,attributeFilter:['type','name','id','autocomplete','placeholder','aria-label','style','class']});
-    const retryTimer=setInterval(autofill,1000);
+    let mutationTimer=null;
+    const observer=new MutationObserver(()=>{
+      if(mutationTimer) return;
+      mutationTimer=setTimeout(()=>{
+        mutationTimer=null;
+        install();
+        autofill();
+      },250);
+    });
+    observer.observe(document.documentElement||document,{
+      childList:true,
+      subtree:true,
+      attributes:true,
+      attributeFilter:['type','name','id','autocomplete','placeholder','aria-label']
+    });
+    const retryTimer=setInterval(autofill,1500);
     setTimeout(()=>{try{clearInterval(retryTimer);}catch{} try{observer.disconnect();}catch{}},600000);
     setTimeout(autofill,100); setTimeout(autofill,350); setTimeout(autofill,800); setTimeout(autofill,1500); setTimeout(autofill,3000); setTimeout(autofill,7000);
   };
