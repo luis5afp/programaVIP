@@ -138,6 +138,17 @@ async function validateCapturePage(page, target) {
       throw new Error('Netflix está mostrando una página de error. Vuelve a la pantalla normal de Netflix antes de guardar.');
     }
   }
+
+  if (isGoogleFlowHost(target.hostname)) {
+    const pathname = String(state.pathname || '').toLowerCase();
+    const text = String(state.text || '').toLowerCase();
+    const publicLanding = pathname === '/about'
+      || text.includes('crear con google flow')
+      || text.includes('create with google flow');
+    if (publicLanding) {
+      throw new Error('Google Flow está en la portada pública y no tiene una sesión activa. Completa el inicio de sesión antes de guardar.');
+    }
+  }
   return state;
 }
 
@@ -1076,6 +1087,13 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       const meaningfulContent = bodyText.length >= 24
         || Array.from(document.querySelectorAll('main,[role="main"],article,section,nav'))
           .some((element) => visible(element));
+      const normalizedBody = bodyText.toLowerCase();
+      const flowPublicLanding = location.hostname.toLowerCase() === 'flow.google.com'
+        && (
+          location.pathname.toLowerCase() === '/about'
+          || normalizedBody.includes('crear con google flow')
+          || normalizedBody.includes('create with google flow')
+        );
       return {
         href: location.href,
         hostname: location.hostname,
@@ -1085,6 +1103,7 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
         loginActionVisible,
         meaningfulContent,
         readyState: document.readyState,
+        flowPublicLanding,
       };
     }).catch(() => ({
       href: page.url(),
@@ -1095,6 +1114,7 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       loginActionVisible: false,
       meaningfulContent: false,
       readyState: 'loading',
+      flowPublicLanding: false,
     }));
 
     let current;
@@ -1107,17 +1127,41 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       || (netflixTarget && (path.startsWith('/login') || path.startsWith('/signup')));
 
     const targetOriginMatched = current.origin === target.origin;
+    const flowTarget = isGoogleFlowHost(target.hostname);
     let netflixAuthCookies = null;
     let netflixAppPath = null;
+    let flowAuthCookies = null;
+
+    const browserCookies = await allCookies(page).catch(() => []);
     if (netflixTarget) {
       const cookieNames = new Set(
-        (await allCookies(page).catch(() => []))
+        browserCookies
           .filter((cookie) => cookie?.name && domainMatches(cookie.domain, target.hostname))
           .map((cookie) => String(cookie.name || '').toLowerCase()),
       );
       netflixAuthCookies = cookieNames.has('netflixid') && cookieNames.has('securenetflixid');
       netflixAppPath = isNetflixAuthenticatedAppPath(path);
     }
+
+    if (flowTarget) {
+      const nowSeconds = Date.now() / 1000;
+      flowAuthCookies = browserCookies.some((cookie) => {
+        if (!isGoogleAuthCookieName(cookie?.name)) return false;
+        if (!(domainMatches(cookie?.domain, target.hostname) || isGoogleAccountsHost(cookie?.domain))) return false;
+        if (!String(cookie?.value ?? '')) return false;
+        const expiry = Number(cookie?.expires ?? cookie?.expirationDate ?? 0);
+        return !(Number.isFinite(expiry) && expiry > 0 && expiry <= nowSeconds);
+      });
+    }
+
+    const flowSignedOut = flowTarget && (
+      state.flowPublicLanding === true
+      || loginLikeUrl
+      || state.usernameFieldVisible === true
+      || state.passwordFieldVisible === true
+      || state.loginActionVisible === true
+      || flowAuthCookies !== true
+    );
 
     const genericAuthenticated = targetOriginMatched
       && state.meaningfulContent === true
@@ -1136,15 +1180,24 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
         && netflixAppPath === true
         && state.passwordFieldVisible !== true
         && state.loginActionVisible !== true
-      : genericAuthenticated;
+      : flowTarget
+        ? targetOriginMatched
+          && state.meaningfulContent === true
+          && state.readyState !== 'loading'
+          && flowSignedOut !== true
+          && flowAuthCookies === true
+        : genericAuthenticated;
 
     return {
       ...state,
-      loginLikeUrl,
+      loginLikeUrl: loginLikeUrl || flowSignedOut,
       targetOriginMatched,
       netflixTarget,
       netflixAuthCookies,
       netflixAppPath,
+      flowTarget,
+      flowAuthCookies,
+      flowSignedOut,
       authenticated,
     };
   } finally {
