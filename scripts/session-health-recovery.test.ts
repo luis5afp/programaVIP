@@ -248,20 +248,15 @@ assert.match(
   /Mandatory persistence invariant:[\s\S]{0,220}must never erase the browser profile/,
   'browser persistence must be documented and enforced as a mandatory invariant',
 );
-assert.match(
+assert.doesNotMatch(
   engine,
-  /function hasPersistentBrowserState\(userDataDir\)/,
-  'the browser engine must detect persistent local browser state independently of the userFLEX marker',
+  /localStateWithoutMarker/,
+  'managed profiles without a verified session marker must replay the server snapshot instead of trusting unknown local cookies',
 );
 assert.match(
   engine,
-  /const localStateWithoutMarker = snapshotManaged[\s\S]{0,140}!preserveDeviceLocalState[\s\S]{0,140}!sessionMarker[\s\S]{0,140}localBrowserStatePresent/,
-  'non-STREAMING managed profiles may reuse local state without a marker, while STREAMING must still receive its cookies',
-);
-assert.match(
-  engine,
-  /localStateWithoutMarker[\s\S]{0,420}sessionVersionMatches/,
-  'existing local browser state must be tried before replaying the central snapshot',
+  /const capturedGenerationMatches = !delivery\?\.capturedAt[\s\S]{0,500}sessionMarker\?\.capturedAt[\s\S]{0,500}delivery\.capturedAt/,
+  'snapshot identity must include capturedAt so a replacement v1 cannot collide with an older local v1 marker',
 );
 assert.match(
   engine,
@@ -300,8 +295,8 @@ assert.match(
 );
 assert.match(
   engine,
-  /const sessionVersionMatches = !forceRestore[\s\S]{0,520}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
-  'managed profiles, including STREAMING, must apply a newer administrator cookie generation',
+  /const sessionVersionMatches = !forceRestore[\s\S]{0,900}capturedGenerationMatches[\s\S]{0,600}Number\(sessionMarker\?\.version \|\| 0\) === desiredSessionVersion/,
+  'managed profiles must match both version and capture generation before reusing local cookies',
 );
 assert.match(
   engine,
