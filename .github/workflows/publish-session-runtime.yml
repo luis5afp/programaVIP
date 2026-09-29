@@ -1,0 +1,100 @@
+name: Publish userFLEX Session Runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'session-manager/browser-engine/**'
+      - '.github/workflows/publish-session-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'session-manager/browser-engine/**'
+      - '.github/workflows/publish-session-runtime.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: userflex-session-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate runtime JavaScript
+        run: |
+          node --check session-manager/browser-engine/kaizen-capture-engine.js
+          node --check session-manager/browser-engine/capture-state.js
+          node --check session-manager/browser-engine/credential-policy.js
+          node --check session-manager/browser-engine/proxy-relay.js
+
+      - name: Build verified runtime manifest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p session-runtime-dist
+          cp session-manager/browser-engine/kaizen-capture-engine.js session-runtime-dist/
+          cp session-manager/browser-engine/capture-state.js session-runtime-dist/
+          cp session-manager/browser-engine/credential-policy.js session-runtime-dist/
+          cp session-manager/browser-engine/proxy-relay.js session-runtime-dist/
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const pkg = JSON.parse(fs.readFileSync('session-manager/package.json', 'utf8'));
+          const names = [
+            'kaizen-capture-engine.js',
+            'capture-state.js',
+            'credential-policy.js',
+            'proxy-relay.js',
+          ];
+          const files = names.map((name) => {
+            const file = path.join('session-runtime-dist', name);
+            const bytes = fs.readFileSync(file);
+            return {
+              name,
+              size: bytes.length,
+              sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+            };
+          });
+          const manifest = {
+            schema: 1,
+            version: process.env.GITHUB_SHA,
+            minCoreVersion: pkg.version,
+            publishedAt: new Date().toISOString(),
+            files,
+          };
+          fs.writeFileSync(
+            'session-runtime-dist/userflex-session-runtime-manifest.json',
+            JSON.stringify(manifest, null, 2),
+          );
+          NODE
+
+      - name: Publish rolling runtime release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="session-runtime-latest"
+          assets=(
+            "session-runtime-dist/userflex-session-runtime-manifest.json"
+            "session-runtime-dist/kaizen-capture-engine.js"
+            "session-runtime-dist/capture-state.js"
+            "session-runtime-dist/credential-policy.js"
+            "session-runtime-dist/proxy-relay.js"
+          )
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "${assets[@]}"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "userFLEX Session Runtime"               --notes "Runtime dinámico verificado para Session Manager. El Core lo descarga automáticamente y conserva rollback local."
+          fi
