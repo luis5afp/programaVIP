@@ -153,6 +153,16 @@ assert.match(
 );
 assert.match(
   bundled,
+  /chrome\.permissions\?\.onAdded[\s\S]{0,500}closeManagedProfile\(\)[\s\S]{0,500}chrome\.permissions\?\.onRemoved/,
+  'bundled extensions must close the profile when their permissions are changed',
+);
+assert.match(
+  bundled,
+  /chrome\.storage\?\.onChanged[\s\S]{0,300}closeManagedProfile\(\)/,
+  'bundled extension configuration storage changes must close the profile',
+);
+assert.match(
+  bundled,
   /chrome\.windows\.getAll[\s\S]{0,700}chrome\.windows\.remove/,
   'bundled extension tamper handling must close the browser window itself',
 );
