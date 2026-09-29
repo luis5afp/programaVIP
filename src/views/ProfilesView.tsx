@@ -149,45 +149,85 @@ function normalizeSearchValue(value: string) {
     .toLocaleLowerCase('es');
 }
 
+function relativeCheckTime(value: string | null | undefined) {
+  if (!value) return null;
+  const checkedAt = Date.parse(value);
+  if (!Number.isFinite(checkedAt)) return null;
+  const elapsedMs = Math.max(0, Date.now() - checkedAt);
+  const minutes = Math.floor(elapsedMs / 60_000);
+  if (minutes < 1) return 'ahora';
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days} d`;
+}
+
 function snapshotBadge(session: ProfileSessionState | null) {
-  if (!session || session.status !== 'active') {
-    return session?.status === 'needs_auth'
-      ? {
-          tone: 'bad' as const,
-          compact: 'Snapshot: renovar acceso',
-          detail: 'Snapshot bloqueado porque un acceso real confirmó que la sesión ya no entra con normalidad.',
-        }
-      : { tone: 'bad' as const, compact: 'Snapshot: sin cargar', detail: 'Snapshot: sin cargar' };
-  }
-  const version = Number(session.version || 0);
-  const validatedAt = session.validated_at ? Date.parse(session.validated_at) : Number.NaN;
-  if (!Number.isFinite(validatedAt)) {
+  const version = Number(session?.version || 0);
+  if (!session || version < 1) {
     return {
-      tone: 'warn' as const,
-      compact: `Snapshot: v${version} · validar una vez`,
-      detail: `Snapshot: guardado · v${version} · falta completar la validación inicial`,
+      tone: 'neutral' as const,
+      compact: 'Cookies: sin guardar',
+      detail: 'Cookies/snapshot: sin guardar',
     };
   }
   return {
-    tone: 'ok' as const,
-    compact: `Snapshot: v${version} · válido`,
-    detail: `Snapshot: activo · v${version} · validación inicial completada; no caduca por tiempo`,
+    tone: 'neutral' as const,
+    compact: `Cookies: guardadas · v${version}`,
+    detail: `Cookies/snapshot guardados · v${version}. Este estado solo confirma que existen datos almacenados; no confirma que la cuenta siga autenticada.`,
   };
 }
 
 function keeperBadge(session: ProfileSessionState | null) {
   const keeper = session?.keeper || null;
+  const version = Number(session?.version || 0);
+
+  if (version < 1) {
+    return {
+      tone: 'neutral' as const,
+      compact: 'Sesión: sin cookies',
+      detail: 'Sesión: no se puede comprobar porque todavía no hay cookies/snapshot guardados.',
+    };
+  }
+
   if (session?.status === 'needs_auth' || keeper?.status === 'needs_admin') {
     return {
       tone: 'bad' as const,
-      compact: 'Acceso: renovar',
-      detail: `Aviso de acceso; snapshot conservado${keeper?.last_error ? ` · ${keeper.last_error}` : ''}`,
+      compact: 'Sesión: vencida',
+      detail: `Sesión vencida: una comprobación real confirmó que el sitio requiere renovar el acceso${keeper?.last_error ? ` · ${keeper.last_error}` : ''}.`,
     };
   }
+
+  if (keeper?.status === 'healthy' && keeper.last_check_at) {
+    const checked = relativeCheckTime(keeper.last_check_at);
+    return {
+      tone: 'ok' as const,
+      compact: `Sesión: activa${checked ? ` · ${checked}` : ''}`,
+      detail: `Sesión activa: Session Manager confirmó acceso autenticado${checked ? ` ${checked}` : ''}.`,
+    };
+  }
+
+  if (keeper?.status === 'refreshing') {
+    return {
+      tone: 'warn' as const,
+      compact: 'Sesión: verificando…',
+      detail: 'Sesión: Session Manager está realizando una comprobación real.',
+    };
+  }
+
+  if (keeper?.status === 'error') {
+    return {
+      tone: 'warn' as const,
+      compact: 'Sesión: sin confirmar',
+      detail: `No se pudo confirmar el estado de la sesión${keeper.last_error ? ` · ${keeper.last_error}` : ''}. No se marca como vencida sin una señal clara del sitio.`,
+    };
+  }
+
   return {
-    tone: 'ok' as const,
-    compact: 'Acceso: por uso',
-    detail: 'No se revalida por tiempo. userFLOW solo revoca la sesión si un acceso real confirma que ya no funciona.',
+    tone: 'warn' as const,
+    compact: 'Sesión: sin verificar',
+    detail: 'Hay cookies/snapshot guardados, pero todavía no existe una comprobación real reciente que confirme si la cuenta sigue autenticada.',
   };
 }
 
@@ -1058,10 +1098,10 @@ export function ProfilesView() {
                         className="profile-icon-action"
                         disabled={sessionAction === profile.id}
                         onClick={() => void startCapture(profile)}
-                        title={session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
-                        aria-label={session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
+                        title={Number(session?.version || 0) > 0 ? 'Renovar snapshot' : 'Capturar sesión'}
+                        aria-label={Number(session?.version || 0) > 0 ? 'Renovar snapshot' : 'Capturar sesión'}
                       >
-                        {session?.status === 'active' ? <RefreshCw size={15} /> : <KeyRound size={15} />}
+                        {Number(session?.version || 0) > 0 ? <RefreshCw size={15} /> : <KeyRound size={15} />}
                       </button>
                     )}
                     <button
@@ -1186,10 +1226,10 @@ export function ProfilesView() {
                         {snapshotManaged && (
                           <>
                             <button className="button secondary small" disabled={sessionAction === profile.id} onClick={() => void startCapture(profile)}>
-                              {session?.status === 'active' ? <RefreshCw size={12} /> : <KeyRound size={12} />}
-                              {session?.status === 'active' ? 'Renovar snapshot' : 'Capturar sesión'}
+                              {Number(session?.version || 0) > 0 ? <RefreshCw size={12} /> : <KeyRound size={12} />}
+                              {Number(session?.version || 0) > 0 ? 'Renovar snapshot' : 'Capturar sesión'}
                             </button>
-                            {session?.status === 'active' && (
+                            {Number(session?.version || 0) > 0 && (
                               <button className="button danger small" disabled={sessionAction === profile.id} onClick={() => void clearSession(profile)}>
                                 Borrar snapshot
                               </button>
