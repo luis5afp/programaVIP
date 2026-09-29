@@ -578,21 +578,55 @@ export async function installCaptureAutomation({
       return host;
     };
 
+    const securityChallengeActive = () => {
+      try {
+        const frames = Array.from(document.querySelectorAll('iframe'));
+        if (frames.some((frame) => {
+          const src = String(frame.getAttribute('src') || '').toLowerCase();
+          const title = String(frame.getAttribute('title') || '').toLowerCase();
+          return src.includes('challenges.cloudflare.com')
+            || src.includes('/turnstile/')
+            || title.includes('cloudflare')
+            || title.includes('challenge');
+        })) return true;
+        if (document.querySelector('.cf-turnstile,[data-sitekey][data-callback],[class*="turnstile"]')) return true;
+        const bodyText = String(document.body?.innerText || '').replace(/\s+/g, ' ').toLowerCase();
+        return bodyText.includes('la verificación falló')
+          || bodyText.includes('verification failed')
+          || bodyText.includes('verificando que eres humano')
+          || bodyText.includes('verify you are human');
+      } catch {
+        return false;
+      }
+    };
+
     const refresh = () => {
+      if (securityChallengeActive()) {
+        try { document.getElementById('userflex-session-overlay')?.remove(); } catch {}
+        return;
+      }
       try { ensureOverlay(); } catch {}
       try { fillAvailable(); } catch {}
     };
     globalThis[GLOBAL_KEY] = { refresh };
 
     refresh();
-    const observer = new MutationObserver(refresh);
+    let refreshPending = false;
+    const observer = new MutationObserver(() => {
+      if (refreshPending) return;
+      refreshPending = true;
+      setTimeout(() => {
+        refreshPending = false;
+        refresh();
+      }, 250);
+    });
     observer.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'aria-label', 'style', 'class'],
+      attributeFilter: ['type', 'name', 'id', 'autocomplete', 'placeholder', 'aria-label', 'src', 'title'],
     });
-    const retryTimer = setInterval(refresh, 750);
+    const retryTimer = setInterval(refresh, 1500);
     setTimeout(() => {
       try { clearInterval(retryTimer); } catch {}
       try { observer.disconnect(); } catch {}
