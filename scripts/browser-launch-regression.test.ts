@@ -213,7 +213,12 @@ assert.match(
 );
 assert.match(
   engine,
-  /dev_mode_warning_snooze_end_time[\s\S]{0,500}99999999999000000/,
+  /const snoozeEnd = '99999999999000000'/,
+  'userFLOW must use a far-future Edge warning snooze timestamp',
+);
+assert.match(
+  engine,
+  /preferences\.extensions\.ui\.dev_mode_warning_snooze_end_time = snoozeEnd/,
   'userFLOW must persist Edge\'s developer-extension warning snooze inside its managed profile',
 );
 
