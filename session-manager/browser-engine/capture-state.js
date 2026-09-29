@@ -72,6 +72,13 @@ export function captureNavigationTarget(profileUrl) {
     target.search = '';
     target.hash = '';
   }
+  // Google Flow /about is a marketing/public landing page. Captures and renewals
+  // should enter through the service root so the official sign-in flow can start.
+  if (isGoogleFlowHost(target.hostname) && target.pathname.toLowerCase() === '/about') {
+    target.pathname = '/';
+    target.search = '';
+    target.hash = '';
+  }
   return target;
 }
 
