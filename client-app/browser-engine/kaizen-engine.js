@@ -803,33 +803,26 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     let sessionMarker = (snapshotManaged || runtime.deviceLocalAuth === true)
       ? await readSessionMarker(userDataDir)
       : null;
-    const localBrowserStatePresent = snapshotManaged && hasPersistentBrowserState(userDataDir);
-    const localStateWithoutMarker = snapshotManaged
-      && !preserveDeviceLocalState
-      && !sessionMarker
-      && localBrowserStatePresent;
     const restorePolicyMatches = !snapshotManaged
       || !sessionMarker
       || preserveDeviceLocalState
       || sessionMarker?.restore?.storagePolicy === desiredStoragePolicy;
-    // Managed snapshots are versioned contracts, but the browser profile is a
-    // persistent device asset. Across every category, preserve Chrome User Data
-    // through central snapshot changes, admin edits, and application updates.
-    // A newer snapshot may be replayed on top of that profile when needed, but
-    // automatic flows must never wipe the profile directory.
+    const capturedGenerationMatches = !delivery?.capturedAt
+      || (
+        Boolean(sessionMarker?.capturedAt)
+        && String(sessionMarker.capturedAt) === String(delivery.capturedAt)
+      );
+    // A version number alone is not a unique snapshot identity: after an admin
+    // credential reset, a newly captured session can start again at v1. Trust
+    // the local profile only when both version and capturedAt identify the same
+    // server generation. Missing markers are treated as unknown and replayed.
     const sessionVersionMatches = !forceRestore
       && snapshotManaged
-      && (
-        localStateWithoutMarker
-        || (
-          sessionMarker?.profileId === profile.id
-          && restorePolicyMatches
-          && (
-            desiredSessionVersion > 0
-            && Number(sessionMarker?.version || 0) === desiredSessionVersion
-          )
-        )
-      );
+      && sessionMarker?.profileId === profile.id
+      && restorePolicyMatches
+      && capturedGenerationMatches
+      && desiredSessionVersion > 0
+      && Number(sessionMarker?.version || 0) === desiredSessionVersion;
 
     if (snapshotManaged && !sessionVersionMatches) {
       // Never delete User Data here. A new snapshot, runtime migration, admin
