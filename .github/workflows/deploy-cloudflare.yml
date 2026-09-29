@@ -73,24 +73,41 @@ jobs:
           MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
           echo "Validating published desktop runtimes: userFLOW v$EXPECTED_USERFLOW in R2 · Session Manager >= v$MIN_SESSION_MANAGER..."
 
-          sm_code="000"
           client_version=""
+          sm_latest=""
+          sm_ok="false"
           for attempt in $(seq 1 30); do
             client_json="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache'               "https://userflex-admin.luis5afp.workers.dev/api/client-update/latest?ts=$attempt" || true)"
             client_version="$(CLIENT_JSON="$client_json" node -e "try{const v=JSON.parse(process.env.CLIENT_JSON||'{}');process.stdout.write(String(v.version||''))}catch{}")"
-            sm_code="$(curl --silent --output /tmp/sm-release.json --write-out '%{http_code}'               --header "Authorization: Bearer ${{ github.token }}"               --header 'Accept: application/vnd.github+json'               "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/session-manager-v$MIN_SESSION_MANAGER")"
 
-            if [ "$client_version" = "$EXPECTED_USERFLOW" ] && [ "$sm_code" = "200" ]; then
-              echo "Desktop runtime prerequisites are published."
+            sm_latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName --jq '.[].tagName'               | grep '^session-manager-v'               | sed 's/^session-manager-v//'               | sort -V               | tail -n 1 || true)"
+            sm_ok="$(CURRENT="$sm_latest" MINIMUM="$MIN_SESSION_MANAGER" node - <<'NODE'
+          const parse = (value) => {
+            const match = String(value || '').match(/^(\d+)\.(\d+)\.(\d+)/);
+            return match ? match.slice(1).map(Number) : null;
+          };
+          const current = parse(process.env.CURRENT);
+          const minimum = parse(process.env.MINIMUM);
+          if (!current || !minimum) return process.stdout.write('false');
+          for (let index = 0; index < 3; index += 1) {
+            if (current[index] > minimum[index]) return process.stdout.write('true');
+            if (current[index] < minimum[index]) return process.stdout.write('false');
+          }
+          process.stdout.write('true');
+          NODE
+            )"
+
+            if [ "$client_version" = "$EXPECTED_USERFLOW" ] && [ "$sm_ok" = "true" ]; then
+              echo "Desktop runtime prerequisites are published. Session Manager latest=v$sm_latest"
               break
             fi
 
             if [ "$attempt" -eq 30 ]; then
-              echo "Required desktop runtime is missing after waiting. userFLOW-r2=$client_version session-manager-http=$sm_code" >&2
+              echo "Required desktop runtime is missing after waiting. userFLOW-r2=$client_version session-manager-latest=$sm_latest minimum=$MIN_SESSION_MANAGER" >&2
               exit 1
             fi
 
-            echo "Desktop runtime still publishing (attempt $attempt/30). userFLOW-r2=$client_version session-manager-http=$sm_code"
+            echo "Desktop runtime still publishing (attempt $attempt/30). userFLOW-r2=$client_version session-manager-latest=$sm_latest minimum=$MIN_SESSION_MANAGER"
             sleep 10
           done
 
