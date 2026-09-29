@@ -997,6 +997,7 @@ export async function adminProfileSessionRoutes(
       login_username: loginUsername,
       has_credentials: true,
       session_invalidated: credentialsChanged,
+      identity_replaced: credentialsChanged,
     });
   }
 
@@ -1557,6 +1558,10 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         storageStrategy: runtime.storageStrategy,
         networkStrategy: runtime.networkStrategy,
         extensionStrategy: runtime.extensionStrategy,
+        // When credentials were replaced (or the snapshot was explicitly cleared),
+        // session_ready is false. Session Manager must treat the next capture as a
+        // brand-new browser identity, never as an edit of the previous Chromium profile.
+        resetLocalProfile: profile.session_ready !== true,
       },
       credentials: credentials ? {
         username: credentials.login_username,
