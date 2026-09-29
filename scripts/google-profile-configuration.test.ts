@@ -57,4 +57,15 @@ assert.doesNotMatch(
   'the old marker-first credential reset path must not remain',
 );
 
+assert.match(
+  sessions,
+  /resetLocalProfile:\s*profile\.session_ready !== true/,
+  'after credential replacement, the next manual capture must explicitly request a brand-new local Chromium identity',
+);
+assert.match(
+  captureEngine,
+  /hardIdentityReset = !guest && profile\?\.resetLocalProfile === true[\s\S]{0,900}resetCaptureProfileForCredentialChange\(userDataDir\)/,
+  'Session Manager must wipe the entire previous browser profile when the server requests identity replacement',
+);
+
 console.log('Google profile configuration hardening: OK');
