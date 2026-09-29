@@ -878,10 +878,12 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       autoSaveTimer: null,
       autoSaveCloseTimer: null,
       stableAuthChecks: 0,
-      // Do not treat an already-loaded/stale local page as a fresh authenticated
-      // capture before credential autofill and redirects have had time to run.
-      // This prevents Chromium from auto-saving and closing immediately after launch.
-      autoSaveArmedAt: Date.now() + (credentials?.username || credentials?.password ? 15_000 : 8_000),
+      // First inspect shortly after navigation. If the saved session is already
+      // authenticated we can confirm it quickly. If it is not authenticated,
+      // give autofill/login redirects a longer recovery window before autosave.
+      autoSaveArmedAt: Date.now() + 4_000,
+      initialAuthDecisionMade: false,
+      loginRecoveryStartedAt: null,
       openAiAuthFlowSeen: false,
       openAiInitialInspectionDone: false,
       openAiAutomationActivated: false,
@@ -1022,6 +1024,26 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           void inspect()
             .then((inspection) => {
               if (active !== entry || entry.savePromise || entry.savedResult || !inspection) return;
+
+              if (!entry.initialAuthDecisionMade) {
+                entry.initialAuthDecisionMade = true;
+                if (inspection?.authenticated === true) {
+                  entry.stableAuthChecks = 1;
+                  log.log?.(`Session Manager KAIZEN initial check: ${profile.name || profile.id} already authenticated; confirming before save.`);
+                  return;
+                }
+
+                entry.stableAuthChecks = 0;
+                entry.loginRecoveryStartedAt = Date.now();
+                const recoveryMs = credentials?.username || credentials?.password ? 15_000 : 8_000;
+                entry.autoSaveArmedAt = Date.now() + recoveryMs;
+                log.log?.(
+                  `Session Manager KAIZEN initial check: ${profile.name || profile.id} needs login recovery; `
+                  + `waiting ${Math.round(recoveryMs / 1000)}s for autofill/redirects before validating again.`,
+                );
+                return;
+              }
+
               if (inspection?.authenticated === true) entry.stableAuthChecks += 1;
               else entry.stableAuthChecks = 0;
               if (entry.stableAuthChecks < 2) return;
