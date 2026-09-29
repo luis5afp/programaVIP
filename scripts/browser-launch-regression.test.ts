@@ -62,7 +62,13 @@ assert.match(
 
 assert.match(
   sessionState,
-  /clearGoogleFlowCookies[\s\S]{0,1800}Network\.deleteCookies[\s\S]{0,6500}applyCookies\(browser, cookies\)/,
+  /async function clearGoogleFlowCookies[\s\S]{0,2200}Network\.deleteCookies/,
+  'Google Flow restore must define targeted cleanup for stale Google-account cookies',
+);
+const flowCleanupPosition = sessionState.indexOf('await clearGoogleFlowCookies(browser, target)');
+const flowApplyPosition = sessionState.indexOf('const cookieResult = await applyCookies(browser, cookies);', flowCleanupPosition);
+assert.ok(
+  flowCleanupPosition >= 0 && flowApplyPosition > flowCleanupPosition,
   'a new Google Flow snapshot must clear stale Google-account cookies before installing the captured generation',
 );
 
