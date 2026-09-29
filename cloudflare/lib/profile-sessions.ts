@@ -932,11 +932,17 @@ export async function adminProfileSessionRoutes(
         updated_at: new Date().toISOString(),
       }),
     });
+    const credentialsUpdatedAt = new Date().toISOString();
     await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ updated_at: credentialsUpdatedAt }),
     });
+    await db(env, `userflex_profile_session_jobs?profile_id=eq.${profileId}&status=eq.pending`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'expired' }),
+    }).catch(() => null);
     await touchProfileClients(env, profileId);
     await requestKeeperChecks(env, [profileId], 'credentials-update');
     await audit(env, request, 'admin', admin.userId, 'profile.credentials.update', 'profile', profileId, {
@@ -1506,6 +1512,7 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       credentials: credentials ? {
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
+        updatedAt: credentials.updated_at || null,
       } : null,
       proxy: proxy ? {
         id: proxy.id,
