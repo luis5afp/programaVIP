@@ -20,6 +20,16 @@ assert.doesNotMatch(admin, /SUPABASE_SERVICE_ROLE_KEY/);
 assert.match(clientWorkflow, /Publish automatic updater feed to Cloudflare R2/);
 assert.match(clientWorkflow, /r2 object put/);
 assert.match(updates, /const KEEP_RELEASE_VERSIONS = 2;/);
+assert.doesNotMatch(
+  updates,
+  /await cachePut\(request, response\.clone\(\)\)/,
+  'latest manifest responses must not wait on Cloudflare Cache API persistence',
+);
+assert.match(
+  updates,
+  /void cachePut\(request, response\.clone\(\)\)/,
+  'edge cache population should be best-effort after the R2 manifest is ready',
+);
 assert.match(wrangler, /crons = \["0 \* \* \* \*"\]/);
 assert.match(clientWorkflow, /Keep only two Client GitHub releases/);
 assert.match(sessionWorkflow, /Keep only two Session Manager GitHub releases/);
