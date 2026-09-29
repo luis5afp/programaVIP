@@ -114,6 +114,16 @@ chrome.management.onUninstalled.addListener((extensionId) => {
   void closeManagedProfile();
 });
 
+if (chrome.permissions?.onAdded) {
+  chrome.permissions.onAdded.addListener(() => void closeManagedProfile());
+}
+if (chrome.permissions?.onRemoved) {
+  chrome.permissions.onRemoved.addListener(() => void closeManagedProfile());
+}
+if (chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener(() => void closeManagedProfile());
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create('userflex-guard', { periodInMinutes: 1 });
   void repairProtectedExtensions({ closeOnRepair: false });
