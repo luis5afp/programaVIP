@@ -878,6 +878,10 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       autoSaveTimer: null,
       autoSaveCloseTimer: null,
       stableAuthChecks: 0,
+      // Do not treat an already-loaded/stale local page as a fresh authenticated
+      // capture before credential autofill and redirects have had time to run.
+      // This prevents Chromium from auto-saving and closing immediately after launch.
+      autoSaveArmedAt: Date.now() + (credentials?.username || credentials?.password ? 15_000 : 8_000),
       openAiAuthFlowSeen: false,
       openAiInitialInspectionDone: false,
       openAiAutomationActivated: false,
@@ -942,6 +946,10 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (!background) {
         entry.autoSaveTimer = setInterval(() => {
           if (active !== entry || entry.savePromise || entry.savedResult) return;
+          if (Date.now() < Number(entry.autoSaveArmedAt || 0)) {
+            entry.stableAuthChecks = 0;
+            return;
+          }
 
           const inspect = async () => {
             if (openAiCapture) {
