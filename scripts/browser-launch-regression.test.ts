@@ -183,6 +183,42 @@ assert.doesNotMatch(
 );
 
 assert.match(
+  engine,
+  /async function managedExtensionSecuritySnapshot[\s\S]{0,3600}withholding_permissions[\s\S]{0,1800}runtime_granted_permissions/,
+  'extension configuration protection must fingerprint security-sensitive host and runtime permission state',
+);
+
+assert.match(
+  engine,
+  /collectUserPermissionSiteSettings[\s\S]{0,1000}restricted_sites[\s\S]{0,500}permitted_sites/,
+  'the global per-site extension toggle must be part of the tamper fingerprint',
+);
+
+assert.match(
+  engine,
+  /pinned_extensions[\s\S]{0,700}toolbar\?\.pinned_actions/,
+  'pin/unpin changes for managed extensions must be treated as configuration changes',
+);
+
+assert.match(
+  engine,
+  /fs\.watch\(profileDir,[\s\S]{0,1000}Preferences[\s\S]{0,300}Secure Preferences/,
+  'extension configuration protection must be event-driven from browser preference writes',
+);
+
+assert.match(
+  engine,
+  /extensionConfigTamperClosing = true[\s\S]{0,500}extension_configuration_tampered[\s\S]{0,300}killProcessTree\(entry\.process\)/,
+  'any protected extension configuration change must close the managed browser immediately',
+);
+
+assert.doesNotMatch(
+  engine,
+  /setInterval\([^\n]{0,300}managedExtensionSecuritySnapshot|setInterval\([^\n]{0,300}extensionConfig/,
+  'the configuration guard must not reintroduce periodic preference polling',
+);
+
+assert.match(
   sessionState,
   /edge:\/\/extensions[\s\S]{0,180}edge:\/\/settings[\s\S]{0,500}json\/close/,
   'extension/settings WebUI targets must be closed from outside the browser extension sandbox',
@@ -216,6 +252,18 @@ assert.match(
   guardBackground,
   /chrome\.management\.onUninstalled[\s\S]{0,500}protectedIds\.has\(id\)[\s\S]{0,500}closeManagedProfile\(\)/,
   'removing a protected extension must close the managed browser profile',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.permissions\?\.onAdded[\s\S]{0,500}closeManagedProfile\(\)[\s\S]{0,500}chrome\.permissions\?\.onRemoved/,
+  'permission changes inside Browser Guard must close the managed profile',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.storage\?\.onChanged[\s\S]{0,300}closeManagedProfile\(\)/,
+  'extension-local configuration storage changes must close the managed profile',
 );
 
 assert.match(
