@@ -53,7 +53,50 @@ function inetHost(value: unknown): string | null {
   return raw ? raw.split('/')[0] || null : null;
 }
 
-function safeState(profileId: string, credential: any, session: any, keeper: any = null) {
+function cookieExpirySummary(material: any, nowMs = Date.now()) {
+  const cookies = Array.isArray(material?.cookies) ? material.cookies : [];
+  const authLike = cookies.filter((cookie: any) => {
+    const name = String(cookie?.name || '');
+    return /(?:auth|token|session|login|jwt|sid|netflixid|securenetflixid|secure.*sid)/i.test(name)
+      && String(cookie?.value ?? '');
+  });
+  const candidates = authLike.length ? authLike : cookies.filter((cookie: any) => String(cookie?.value ?? ''));
+  const expiries = candidates
+    .map((cookie: any) => Number(cookie?.expirationDate ?? cookie?.expires ?? 0))
+    .filter((value: number) => Number.isFinite(value) && value > 0)
+    .map((seconds: number) => seconds * 1000);
+
+  if (!candidates.length) {
+    return { status: 'none' as const, expires_at: null, checked_cookies: 0 };
+  }
+  if (!expiries.length) {
+    return { status: 'no_expiry' as const, expires_at: null, checked_cookies: candidates.length };
+  }
+
+  const future = expiries.filter((value: number) => value > nowMs).sort((a: number, b: number) => a - b);
+  const expired = expiries.filter((value: number) => value <= nowMs);
+  if (!future.length) {
+    return {
+      status: 'expired' as const,
+      expires_at: new Date(Math.max(...expiries)).toISOString(),
+      checked_cookies: candidates.length,
+    };
+  }
+  if (expired.length) {
+    return {
+      status: 'mixed' as const,
+      expires_at: new Date(future[0]).toISOString(),
+      checked_cookies: candidates.length,
+    };
+  }
+  return {
+    status: 'valid' as const,
+    expires_at: new Date(future[0]).toISOString(),
+    checked_cookies: candidates.length,
+  };
+}
+
+function safeState(profileId: string, credential: any, session: any, keeper: any = null, cookieExpiry: any = null) {
   return {
     profile_id: profileId,
     has_credentials: Boolean(credential),
@@ -68,6 +111,7 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
       keeper?.enabled === true && keeper?.last_status === 'healthy' ? keeper?.last_refresh_at : null,
     ),
     updated_at: session?.updated_at || credential?.updated_at || null,
+    cookie_expiry: cookieExpiry || { status: 'none', expires_at: null, checked_cookies: 0 },
     keeper: keeper ? {
       enabled: keeper.enabled === true,
       status: keeper.last_status || 'registered',
@@ -721,8 +765,8 @@ export async function adminProfileSessionRoutes(
   if (path === '/api/profile-session-states' && method === 'GET') {
     const [credentials, sessions, archivedSessions, keepers] = await Promise.all([
       db(env, 'userflex_profile_credentials?select=profile_id,login_username,updated_at'),
-      db(env, 'userflex_profile_sessions?select=profile_id,session_version,status,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
-      db(env, 'userflex_profile_session_versions?select=profile_id,session_version,expected_egress_ip,captured_at,validated_at&order=session_version.desc'),
+      db(env, 'userflex_profile_sessions?select=profile_id,session_version,status,material_ciphertext,material_iv,expected_egress_ip,last_captured_at,last_validated_at,updated_at'),
+      db(env, 'userflex_profile_session_versions?select=profile_id,session_version,material_ciphertext,material_iv,expected_egress_ip,captured_at,validated_at&order=session_version.desc'),
       db(env, 'userflex_session_keepers?select=profile_id,enabled,last_seen_at,last_check_at,last_refresh_at,last_status,last_error,session_manager_version,session_manager_version_seen_at,updated_at'),
     ]);
     const profileIds = new Set<string>();
@@ -740,6 +784,8 @@ export async function adminProfileSessionRoutes(
         profile_id: key,
         session_version: Number(row.session_version || 0),
         status: 'ready',
+        material_ciphertext: row.material_ciphertext || null,
+        material_iv: row.material_iv || null,
         expected_egress_ip: row.expected_egress_ip || null,
         last_captured_at: row.captured_at || null,
         last_validated_at: row.validated_at || null,
@@ -747,12 +793,26 @@ export async function adminProfileSessionRoutes(
       });
     }
     const keepersById = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
-    return json([...profileIds].map((profileId) => safeState(
-      profileId,
-      credentialsById.get(profileId),
-      sessionsById.get(profileId),
-      keepersById.get(profileId),
-    )));
+    const states = await Promise.all([...profileIds].map(async (profileId) => {
+      const session = sessionsById.get(profileId);
+      let expiry = { status: 'none' as const, expires_at: null as string | null, checked_cookies: 0 };
+      if (session?.material_ciphertext && session?.material_iv) {
+        try {
+          const material = JSON.parse(await decryptProxy(env, session.material_ciphertext, session.material_iv));
+          expiry = cookieExpirySummary(material);
+        } catch {
+          expiry = { status: 'none' as const, expires_at: null, checked_cookies: 0 };
+        }
+      }
+      return safeState(
+        profileId,
+        credentialsById.get(profileId),
+        session,
+        keepersById.get(profileId),
+        expiry,
+      );
+    }));
+    return json(states);
   }
 
   if (path === '/api/profile-session-alerts' && method === 'GET') {
