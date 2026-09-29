@@ -909,6 +909,19 @@ export async function adminProfileSessionRoutes(
     const loginUsername = text(body.loginUsername, 'loginUsername', 320);
     const existing = await credentialRow(env, profileId);
     const password = typeof body.password === 'string' ? body.password : '';
+    const previousUsername = String(existing?.login_username || '').trim();
+    const usernameChanged = Boolean(
+      existing
+      && previousUsername.toLocaleLowerCase() !== loginUsername.toLocaleLowerCase()
+    );
+
+    if (usernameChanged && !password) {
+      throw new HttpError(
+        400,
+        'PASSWORD_REQUIRED_ON_USERNAME_CHANGE',
+        'Al cambiar el correo o usuario debes ingresar también la contraseña de la nueva cuenta.',
+      );
+    }
 
     let passwordFields: any = {};
     if (password) {
@@ -922,6 +935,7 @@ export async function adminProfileSessionRoutes(
       throw new HttpError(400, 'PASSWORD_REQUIRED', 'Ingresa la contraseña para preparar la sesión administrada.');
     }
 
+    const credentialsUpdatedAt = new Date().toISOString();
     await db(env, 'userflex_profile_credentials?on_conflict=profile_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -929,27 +943,61 @@ export async function adminProfileSessionRoutes(
         profile_id: profileId,
         login_username: loginUsername,
         ...passwordFields,
-        updated_at: new Date().toISOString(),
+        updated_at: credentialsUpdatedAt,
       }),
     });
-    const credentialsUpdatedAt = new Date().toISOString();
+
+    const credentialsChanged = usernameChanged || Boolean(password);
+    if (credentialsChanged) {
+      // A snapshot and its history belong to the previous credential state.
+      // Keeping them would allow the old account to reopen after editing the profile.
+      await Promise.all([
+        db(env, `userflex_profile_sessions?profile_id=eq.${profileId}`, {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' },
+        }).catch(() => null),
+        db(env, `userflex_profile_session_versions?profile_id=eq.${profileId}`, {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' },
+        }).catch(() => null),
+        db(env, `userflex_session_keepers?profile_id=eq.${profileId}`, {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' },
+        }).catch(() => null),
+        db(env, `userflex_profile_session_jobs?profile_id=eq.${profileId}&status=in.(pending,running)`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'expired' }),
+        }).catch(() => null),
+      ]);
+    }
+
     await db(env, `userflex_profiles?id=eq.${profileId}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ updated_at: credentialsUpdatedAt }),
+      body: JSON.stringify({
+        updated_at: credentialsUpdatedAt,
+        ...(credentialsChanged ? { session_ready: false } : {}),
+      }),
     });
-    await db(env, `userflex_profile_session_jobs?profile_id=eq.${profileId}&status=eq.pending`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'expired' }),
-    }).catch(() => null);
     await touchProfileClients(env, profileId);
-    await requestKeeperChecks(env, [profileId], 'credentials-update');
+    if (!credentialsChanged) {
+      await requestKeeperChecks(env, [profileId], 'credentials-update');
+    }
     await audit(env, request, 'admin', admin.userId, 'profile.credentials.update', 'profile', profileId, {
       loginUsername,
+      previousUsername: usernameChanged ? previousUsername : null,
+      usernameChanged,
       passwordChanged: Boolean(password),
+      sessionInvalidated: credentialsChanged,
     });
-    return json({ ok: true, profile_id: profileId, login_username: loginUsername, has_credentials: true });
+    return json({
+      ok: true,
+      profile_id: profileId,
+      login_username: loginUsername,
+      has_credentials: true,
+      session_invalidated: credentialsChanged,
+    });
   }
 
   if (credentialsMatch && method === 'DELETE') {
