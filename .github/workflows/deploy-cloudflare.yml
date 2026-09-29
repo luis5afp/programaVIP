@@ -90,12 +90,17 @@ jobs:
           };
           const current = parse(process.env.CURRENT);
           const minimum = parse(process.env.MINIMUM);
-          if (!current || !minimum) return process.stdout.write('false');
-          for (let index = 0; index < 3; index += 1) {
-            if (current[index] > minimum[index]) return process.stdout.write('true');
-            if (current[index] < minimum[index]) return process.stdout.write('false');
+          let ok = Boolean(current && minimum);
+          if (ok) {
+            for (let index = 0; index < 3; index += 1) {
+              if (current[index] > minimum[index]) break;
+              if (current[index] < minimum[index]) {
+                ok = false;
+                break;
+              }
+            }
           }
-          process.stdout.write('true');
+          process.stdout.write(ok ? 'true' : 'false');
           NODE
             )"
 
