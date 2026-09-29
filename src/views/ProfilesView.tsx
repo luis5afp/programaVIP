@@ -182,11 +182,14 @@ function snapshotBadge(session: ProfileSessionState | null) {
 function keeperBadge(session: ProfileSessionState | null) {
   const keeper = session?.keeper || null;
   const version = Number(session?.version || 0);
+  const lastCheckMs = keeper?.last_check_at ? Date.parse(keeper.last_check_at) : Number.NaN;
+  const checkAgeMs = Number.isFinite(lastCheckMs) ? Math.max(0, Date.now() - lastCheckMs) : Number.POSITIVE_INFINITY;
+  const LIVE_CHECK_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
   if (version < 1) {
     return {
       tone: 'neutral' as const,
-      compact: 'Sesión: sin cookies',
+      compact: '⚪ Sesión: sin cookies',
       detail: 'Sesión: no se puede comprobar porque todavía no hay cookies/snapshot guardados.',
     };
   }
@@ -194,24 +197,33 @@ function keeperBadge(session: ProfileSessionState | null) {
   if (session?.status === 'needs_auth' || keeper?.status === 'needs_admin') {
     return {
       tone: 'bad' as const,
-      compact: 'Sesión: vencida',
+      compact: '🔴 Sesión: vencida',
       detail: `Sesión vencida: una comprobación real confirmó que el sitio requiere renovar el acceso${keeper?.last_error ? ` · ${keeper.last_error}` : ''}.`,
+    };
+  }
+
+  if (keeper?.status === 'healthy' && keeper.last_check_at && checkAgeMs <= LIVE_CHECK_MAX_AGE_MS) {
+    const checked = relativeCheckTime(keeper.last_check_at);
+    return {
+      tone: 'ok' as const,
+      compact: `🟢 Sesión: activa${checked ? ` · ${checked}` : ''}`,
+      detail: `Sesión activa: Session Manager confirmó acceso autenticado${checked ? ` ${checked}` : ''}.`,
     };
   }
 
   if (keeper?.status === 'healthy' && keeper.last_check_at) {
     const checked = relativeCheckTime(keeper.last_check_at);
     return {
-      tone: 'ok' as const,
-      compact: `Sesión: activa${checked ? ` · ${checked}` : ''}`,
-      detail: `Sesión activa: Session Manager confirmó acceso autenticado${checked ? ` ${checked}` : ''}.`,
+      tone: 'warn' as const,
+      compact: `🟡 Sesión: verificar${checked ? ` · ${checked}` : ''}`,
+      detail: `La última comprobación fue ${checked || 'hace tiempo'}. Las cookies siguen guardadas, pero ese resultado ya no se muestra como sesión activa actual.`,
     };
   }
 
   if (keeper?.status === 'refreshing') {
     return {
       tone: 'warn' as const,
-      compact: 'Sesión: verificando…',
+      compact: '🟡 Sesión: verificando…',
       detail: 'Sesión: Session Manager está realizando una comprobación real.',
     };
   }
@@ -219,14 +231,14 @@ function keeperBadge(session: ProfileSessionState | null) {
   if (keeper?.status === 'error') {
     return {
       tone: 'warn' as const,
-      compact: 'Sesión: sin confirmar',
+      compact: '🟡 Sesión: sin confirmar',
       detail: `No se pudo confirmar el estado de la sesión${keeper.last_error ? ` · ${keeper.last_error}` : ''}. No se marca como vencida sin una señal clara del sitio.`,
     };
   }
 
   return {
     tone: 'warn' as const,
-    compact: 'Sesión: sin verificar',
+    compact: '🟡 Sesión: sin verificar',
     detail: 'Hay cookies/snapshot guardados, pero todavía no existe una comprobación real reciente que confirme si la cuenta sigue autenticada.',
   };
 }
