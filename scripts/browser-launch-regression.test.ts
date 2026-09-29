@@ -206,4 +206,16 @@ assert.match(
   'extension UI hardening must remain enabled without a destructive browser watchdog',
 );
 
+assert.match(
+  engine,
+  /async function suppressEdgeDeveloperModeExtensionWarning[\s\S]{0,1800}dev_mode_warning_snooze_end_time[\s\S]{0,300}99999999999000000/,
+  'userFLOW must persist Edge\'s developer-extension warning snooze only inside its managed profile',
+);
+
+assert.match(
+  engine,
+  /if \(hasManagedExtensions && browserKind\(executable\) === 'edge'\) \{\s*await suppressEdgeDeveloperModeExtensionWarning\(userDataDir\)/,
+  'managed Edge profiles must suppress the destructive developer-mode extension warning before launch',
+);
+
 console.log('Managed browser launch/autofill regression checks: OK');
