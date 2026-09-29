@@ -1178,6 +1178,7 @@ export async function restorePortableSession({ debugPort, profileUrl, profileId 
       cookiesInstalled: cookieResult.installed,
       cookiesRejected: cookieResult.rejected.length,
       googleCookiesCleared: Number(googleCleanup?.cleared || 0),
+      googleCookiesAuthoritative: isGoogleFlowTarget(target),
       indexedDbRestored: Number(indexedDb?.restored || 0),
       indexedDbTotal: Number(indexedDb?.total || 0),
       storagePolicy: effectiveStorageStrategy,
