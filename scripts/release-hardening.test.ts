@@ -16,8 +16,8 @@ assert.equal(compareVersions('bad', '0.3.22'), null);
 
 assert.equal(versionAtLeast('0.3.68', MIN_USERFLOW_VERSION), true);
 assert.equal(versionAtLeast('0.3.47', MIN_USERFLOW_VERSION), false);
-assert.equal(versionAtLeast('0.3.47', MIN_SESSION_MANAGER_VERSION), true);
-assert.equal(versionAtLeast('0.3.46', MIN_SESSION_MANAGER_VERSION), false);
+assert.equal(versionAtLeast('0.3.54', MIN_SESSION_MANAGER_VERSION), true);
+assert.equal(versionAtLeast('0.3.53', MIN_SESSION_MANAGER_VERSION), false);
 
 const clientPackage = JSON.parse(readFileSync(new URL('../client-app/package.json', import.meta.url), 'utf8'));
 const sessionPackage = JSON.parse(readFileSync(new URL('../session-manager/package.json', import.meta.url), 'utf8'));
@@ -28,7 +28,7 @@ assert.equal(versionAtLeast(sessionPackage.version, MIN_SESSION_MANAGER_VERSION)
 assert.equal(clientPackage.build?.nsis?.deleteAppDataOnUninstall, false, 'userFLOW installer must preserve local browser/user data during upgrades and uninstall by default');
 
 assert.equal(MIN_USERFLOW_VERSION, '0.3.68');
-assert.equal(MIN_SESSION_MANAGER_VERSION, '0.3.47');
+assert.equal(MIN_SESSION_MANAGER_VERSION, '0.3.54');
 assert.equal(sessionPackage.build.nsis.include, 'build/installer.nsh');
 assert.match(sessionInstaller, /taskkill\.exe \/F \/T \/IM \"userFLEX Session Manager\.exe\"/);
 
