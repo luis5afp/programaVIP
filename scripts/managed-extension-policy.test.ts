@@ -8,13 +8,13 @@ const client = readFileSync(new URL('../client-app/main.js', import.meta.url), '
 
 assert.match(
   worker,
-  /const WARNING_PERMISSIONS = new Set\(\['management'\]\)/,
-  'management must be accepted as a warning-only permission',
+  /const WARNING_PERMISSIONS = new Set\(\['management', 'proxy'\]\)/,
+  'management and proxy must be accepted as warning-only permissions',
 );
 assert.doesNotMatch(
   worker,
-  /BLOCKED_PERMISSIONS = new Set\(\[[^\]]*management/,
-  'management must not be hard blocked',
+  /BLOCKED_PERMISSIONS = new Set\(\[[^\]]*(management|proxy)/,
+  'management and proxy must not be hard blocked',
 );
 assert.match(
   worker,
