@@ -511,8 +511,8 @@ async function armManagedExtensionConfigurationGuard(entry, log = console) {
     entry.extensionConfigTamperClosing = true;
     entry.closing = true;
     log.warn?.('userFLOW detected extension configuration tampering; closing managed profile', entry.profile?.id);
+    entry.closeReason = 'extension_configuration_tampered';
     await killProcessTree(entry.process);
-    await cleanup(entry, 'extension_configuration_tampered');
   };
 
   try {
@@ -974,7 +974,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     proc.once('exit', async (code, signal) => {
       entry.exitCode = code;
       entry.signal = signal;
-      await cleanup(entry, entry.closing ? 'profile_closed' : 'browser_exit');
+      await cleanup(entry, entry.closeReason || (entry.closing ? 'profile_closed' : 'browser_exit'));
     });
 
     try {
