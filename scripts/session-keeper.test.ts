@@ -86,9 +86,9 @@ assert.match(clientMain, /session-fallback/);
 assert.match(clientMain, /fallbackRecovered/);
 assert.match(clientMain, /sessionVersion: Number\(result\?\.sessionVersion/);
 
-assert.match(profilesView, /Acceso: por uso/);
-assert.match(profilesView, /Acceso: renovar/);
-assert.match(profilesView, /no se revalida por tiempo/i);
+assert.match(profilesView, /Sesión: activa/);
+assert.match(profilesView, /Sesión: vencida/);
+assert.match(profilesView, /Sesión: sin verificar/);
 
 console.log('Session Keeper architecture: OK');
 
