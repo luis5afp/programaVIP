@@ -9,8 +9,8 @@ const BUCKET = 'userflex-extension-packages';
 const MAX_PACKAGE_BYTES = 20 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 80 * 1024 * 1024;
 const MAX_FILES = 1500;
-const WARNING_PERMISSIONS = new Set(['management']);
-const BLOCKED_PERMISSIONS = new Set(['debugger', 'nativeMessaging', 'proxy']);
+const WARNING_PERMISSIONS = new Set(['management', 'proxy']);
+const BLOCKED_PERMISSIONS = new Set(['debugger', 'nativeMessaging']);
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 
 let extensionSchemaReadyFor = '';
