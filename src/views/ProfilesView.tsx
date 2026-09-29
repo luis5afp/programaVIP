@@ -179,6 +179,44 @@ function snapshotBadge(session: ProfileSessionState | null) {
   };
 }
 
+function cookieTokenBadge(session: ProfileSessionState | null) {
+  const expiry = session?.cookie_expiry;
+  const version = Number(session?.version || 0);
+  if (version < 1 || !expiry || expiry.status === 'none') {
+    return {
+      tone: 'neutral' as const,
+      compact: '⚪ Token: sin datos',
+      detail: 'No hay cookies con información suficiente para revisar una fecha de vencimiento.',
+    };
+  }
+  if (expiry.status === 'expired') {
+    return {
+      tone: 'bad' as const,
+      compact: '🔴 Token: vencido',
+      detail: `Las cookies/tokens con fecha revisable ya vencieron${expiry.expires_at ? ` · última fecha: ${new Date(expiry.expires_at).toLocaleString()}` : ''}.`,
+    };
+  }
+  if (expiry.status === 'valid') {
+    return {
+      tone: 'ok' as const,
+      compact: `🟢 Token: vigente${expiry.expires_at ? ` · hasta ${new Date(expiry.expires_at).toLocaleDateString()}` : ''}`,
+      detail: `Las cookies/tokens revisables todavía están dentro de su fecha de vencimiento${expiry.expires_at ? ` · próxima expiración: ${new Date(expiry.expires_at).toLocaleString()}` : ''}.`,
+    };
+  }
+  if (expiry.status === 'mixed') {
+    return {
+      tone: 'warn' as const,
+      compact: '🟡 Token: mixto',
+      detail: `Algunas cookies con fecha ya vencieron y otras siguen vigentes${expiry.expires_at ? ` · próxima expiración vigente: ${new Date(expiry.expires_at).toLocaleString()}` : ''}.`,
+    };
+  }
+  return {
+    tone: 'warn' as const,
+    compact: '🟡 Token: sin fecha',
+    detail: 'Las cookies existen, pero las cookies/tokens revisados no tienen una fecha de expiración utilizable.',
+  };
+}
+
 function keeperBadge(session: ProfileSessionState | null) {
   const keeper = session?.keeper || null;
   const version = Number(session?.version || 0);
@@ -1057,8 +1095,8 @@ export function ProfilesView() {
                       return <Badge tone={snapshot.tone}>{snapshot.compact}</Badge>;
                     })()}
                     {snapshotManaged && (() => {
-                      const keeper = keeperBadge(session);
-                      return <Badge tone={keeper.tone}>{keeper.compact}</Badge>;
+                      const tokenState = cookieTokenBadge(session);
+                      return <Badge tone={tokenState.tone}>{tokenState.compact}</Badge>;
                     })()}
                     {selectedProxy ? (
                       <Badge tone={selectedProxy.enabled ? 'neutral' : 'warn'}>Proxy: {selectedProxy.name}</Badge>
@@ -1140,8 +1178,8 @@ export function ProfilesView() {
                             return <Badge tone={snapshot.tone}>{snapshot.detail}</Badge>;
                           })()}
                           {snapshotManaged && (() => {
-                            const keeper = keeperBadge(session);
-                            return <Badge tone={keeper.tone}>{keeper.detail}</Badge>;
+                            const tokenState = cookieTokenBadge(session);
+                            return <Badge tone={tokenState.tone}>{tokenState.detail}</Badge>;
                           })()}
                           {snapshotManaged && session?.keeper?.session_manager_version && (
                             <Badge tone="neutral">Session Manager: v{session.keeper.session_manager_version}</Badge>
