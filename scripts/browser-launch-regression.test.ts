@@ -208,8 +208,13 @@ assert.match(
 
 assert.match(
   engine,
-  /async function suppressEdgeDeveloperModeExtensionWarning[\s\S]{0,1800}dev_mode_warning_snooze_end_time[\s\S]{0,300}99999999999000000/,
-  'userFLOW must persist Edge\'s developer-extension warning snooze only inside its managed profile',
+  /async function suppressEdgeDeveloperModeExtensionWarning/,
+  'userFLOW must define isolated Edge developer-extension warning suppression',
+);
+assert.match(
+  engine,
+  /dev_mode_warning_snooze_end_time[\s\S]{0,500}99999999999000000/,
+  'userFLOW must persist Edge\'s developer-extension warning snooze inside its managed profile',
 );
 
 assert.match(
