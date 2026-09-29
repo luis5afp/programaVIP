@@ -46,34 +46,62 @@ async function moveAway(tabId) {
 }
 
 const PROTECTED_NAMES = new Set(['ex1', 'ex2', 'userFLEX Browser Guard']);
+const protectedIds = new Set();
+let closingForTamper = false;
 
-async function enforceProtectedExtensions() {
+async function snapshotProtectedExtensions() {
   try {
     const items = await chrome.management.getAll();
     for (const item of items) {
-      if (!PROTECTED_NAMES.has(String(item?.name || '')) || item?.enabled !== false) continue;
-      await chrome.management.setEnabled(item.id, true).catch(() => null);
+      if (!PROTECTED_NAMES.has(String(item?.name || '')) || item?.enabled === false || !item?.id) continue;
+      protectedIds.add(String(item.id));
     }
   } catch {}
 }
 
+async function closeManagedProfile() {
+  if (closingForTamper) return;
+  closingForTamper = true;
+  try {
+    const windows = await chrome.windows.getAll({ populate: false });
+    await Promise.all(
+      (Array.isArray(windows) ? windows : [])
+        .map((windowInfo) => Number(windowInfo?.id))
+        .filter(Number.isInteger)
+        .map((windowId) => chrome.windows.remove(windowId).catch(() => null)),
+    );
+  } catch {}
+}
+
 chrome.management.onDisabled.addListener((item) => {
-  if (!PROTECTED_NAMES.has(String(item?.name || ''))) return;
-  void chrome.management.setEnabled(item.id, true).catch(() => null);
+  const id = String(item?.id || '');
+  if (!id || !protectedIds.has(id)) return;
+  void (async () => {
+    await chrome.management.setEnabled(id, true).catch(() => null);
+    await closeManagedProfile();
+  })();
 });
-chrome.management.onInstalled.addListener(() => void enforceProtectedExtensions());
-chrome.management.onUninstalled.addListener(() => void enforceProtectedExtensions());
+
+chrome.management.onInstalled.addListener(() => void snapshotProtectedExtensions());
+
+chrome.management.onUninstalled.addListener((extensionId) => {
+  const id = String(extensionId || '');
+  if (!id || !protectedIds.has(id)) return;
+  void closeManagedProfile();
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   try { chrome.alarms.create('userflow-extension-keepalive', { periodInMinutes: 1 }); } catch {}
-  void enforceProtectedExtensions();
+  void snapshotProtectedExtensions();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name !== 'userflow-extension-keepalive') return;
   try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); } catch {}
-  void enforceProtectedExtensions();
+  void snapshotProtectedExtensions();
 });
+
+void snapshotProtectedExtensions();
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0 || !shouldBlock(details.url)) return;
@@ -239,8 +267,8 @@ function packageZip(manifestValue: object, contentScript: string) {
 }
 
 export function bundledExtensions(): BundledExtensionDefinition[] {
-  const ex1Version = '1.5';
-  const ex2Version = '1.4';
+  const ex1Version = '1.6';
+  const ex2Version = '1.5';
   const ex1Description = 'Protección de sesión y privacidad integrada para userFLOW, sin dependencias externas.';
   const ex2Description = 'Protección ligera del navegador integrada para userFLOW, sin dependencias externas.';
 
