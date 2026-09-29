@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 
 const UPDATE_API_URL = 'https://userflex-admin.luis5afp.workers.dev/api/client-update';
 const UPDATE_MANIFEST_URL = `${UPDATE_API_URL}/latest`;
-const UPDATE_CHECK_TIMEOUT_MS = 6_000;
+const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 const UPDATE_MANIFEST_ATTEMPTS = 3;
 const UPDATE_CHUNK_ATTEMPTS = 4;
 const UPDATE_CHUNK_TIMEOUT_MS = 120_000;
@@ -466,9 +466,17 @@ async function checkUpdatesAndContinue() {
     await updaterLog(`ERROR FINAL ${code}`);
     pushStatus({
       phase: 'error',
-      message: `Actualización detenida · ${code}. Pulsa “Reintentar verificación”.`,
+      message: `No se pudo verificar la actualización · ${code}. Abriendo v${app.getVersion()} y se reintentará en el próximo inicio…`,
       percent: null,
     });
+
+    // Update availability must never brick userFLOW. The API independently
+    // enforces the minimum supported client version during login/catalog, so a
+    // transient Cloudflare/R2/DNS failure can safely fall back to the currently
+    // installed client. This also gives the user a usable app from which to
+    // retry on the next launch instead of trapping them on the splash screen.
+    await wait(900);
+    await startMain();
   } finally {
     checking = false;
   }
