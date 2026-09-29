@@ -976,8 +976,16 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         : { enabled: false, overlays: 0, hidden: 0 };
 
       const googleAccounts = currentHost === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(currentHost);
-      const flowSignedOut = targetHostname === 'flow.google.com' && (googleAccounts || loginActionVisible);
       const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const flowPublicLanding = targetHostname === 'flow.google.com'
+        && currentHost === 'flow.google.com'
+        && (
+          location.pathname.toLowerCase() === '/about'
+          || pageText.includes('crear con google flow')
+          || pageText.includes('create with google flow')
+        );
+      const flowSignedOut = targetHostname === 'flow.google.com'
+        && (googleAccounts || loginActionVisible || flowPublicLanding);
       const netflixHouseholdRestriction = (targetHostname === 'netflix.com' || targetHostname.endsWith('.netflix.com'))
         && (
           pageText.includes('no forma parte del hogar con netflix')
