@@ -710,23 +710,6 @@ export function ProfilesView() {
     }
   }
 
-  async function openGuest(profile: Profile) {
-    try {
-      setSessionAction(profile.id);
-      setError(null);
-      setSuccess(null);
-      const result = await api.profileSessions.guest(profile.id);
-      launchCustomProtocol(result.launch_url);
-      setSuccess(
-        `Solicitud enviada a Session Manager para abrir ${profileLabel(profile)} como invitado. `
-        + 'La versión guardada por Keeper es informativa y puede estar atrasada; Session Manager validará la versión real al recibir el enlace.',
-      );
-    } catch (guestError: any) {
-      setError(guestError.message);
-    } finally {
-      setSessionAction(null);
-    }
-  }
 
   async function startCapture(profile: Profile) {
     try {
@@ -1084,15 +1067,6 @@ export function ProfilesView() {
                     >
                       <Laptop size={15} />
                     </button>
-                    <button
-                      className="profile-icon-action"
-                      disabled={sessionAction === profile.id}
-                      onClick={() => void openGuest(profile)}
-                      title="Abrir como invitado · temporal, sin snapshot ni guardado"
-                      aria-label="Abrir como invitado"
-                    >
-                      <Globe2 size={15} />
-                    </button>
                     {snapshotManaged && (
                       <button
                         className="profile-icon-action"
@@ -1213,15 +1187,6 @@ export function ProfilesView() {
                         >
                           <Laptop size={12} />
                           Abrir como cliente
-                        </button>
-                        <button
-                          className="button secondary small"
-                          disabled={sessionAction === profile.id}
-                          onClick={() => void openGuest(profile)}
-                          title="Abre Chrome/Edge en modo invitado temporal. No reutiliza ni modifica la sesión guardada."
-                        >
-                          <Globe2 size={12} />
-                          Abrir invitado
                         </button>
                         {snapshotManaged && (
                           <>
