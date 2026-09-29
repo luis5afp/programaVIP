@@ -590,6 +590,20 @@ function guestChromeArgs({ userDataDir, proxyRules, initialUrl }) {
   return args;
 }
 
+async function credentialMarkerChanged(app, profileId, credentials) {
+  if (!credentials?.updatedAt) return false;
+  const markerDir = path.join(app.getPath('userData'), 'credential-markers');
+  const markerPath = path.join(markerDir, `${safeSegment(profileId)}.json`);
+  let previous = null;
+  try {
+    previous = JSON.parse(await fsp.readFile(markerPath, 'utf8'));
+  } catch {}
+  const changed = Boolean(previous?.updatedAt && previous.updatedAt !== credentials.updatedAt);
+  await fsp.mkdir(markerDir, { recursive: true });
+  await fsp.writeFile(markerPath, JSON.stringify({ updatedAt: credentials.updatedAt }), 'utf8');
+  return changed;
+}
+
 export function createKaizenCaptureEngine({ app, log = console } = {}) {
   if (!app || typeof app.getPath !== 'function') throw new Error('El motor de captura KAIZEN requiere Electron app.');
   let active = null;
@@ -650,6 +664,13 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const extensionDir = guest || openAiCapture
       ? null
       : path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
+
+    if (!guest && await credentialMarkerChanged(app, profile.id, credentials)) {
+      await killStrayProfileProcesses(userDataDir);
+      await fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => null);
+      log.log?.(`Session Manager KAIZEN reset local capture profile after credentials changed for ${profile.name || profile.id}.`);
+    }
+
     await fsp.mkdir(userDataDir, { recursive: true });
     if (!guest) {
       await killStrayProfileProcesses(userDataDir);
