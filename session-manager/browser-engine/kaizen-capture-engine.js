@@ -708,14 +708,17 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const credentialState = !guest
       ? await credentialMarkerState(app, profile.id, credentials)
       : { changed: false, markerPath: null, next: null };
-    if (!guest && credentialState.changed) {
-      // Never advance the credential marker until the stale browser profile is
-      // actually gone. Otherwise a locked Windows cookie/profile file could
-      // survive once and then be trusted forever on subsequent launches.
+    const hardIdentityReset = !guest && profile?.resetLocalProfile === true;
+    if (!guest && (hardIdentityReset || credentialState.changed)) {
+      // Credential replacement is destructive by design: the previous browser
+      // identity must not survive in Cookies, Local Storage, IndexedDB, account
+      // chooser state, Google tokens, cache, or any other Chromium profile data.
       await resetCaptureProfileForCredentialChange(userDataDir);
-      await commitCredentialMarker(credentialState);
+      if (credentialState.markerPath && credentialState.next) {
+        await commitCredentialMarker(credentialState);
+      }
       log.log?.(
-        `Session Manager KAIZEN reset local capture profile after credentials changed for ${profile.name || profile.id}.`,
+        `Session Manager KAIZEN created a fresh local identity for ${profile.name || profile.id} (${hardIdentityReset ? 'server replacement' : 'credential revision'}).`,
       );
     }
 
