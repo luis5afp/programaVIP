@@ -90,6 +90,16 @@ chrome.management.onUninstalled.addListener((extensionId) => {
   void closeManagedProfile();
 });
 
+if (chrome.permissions?.onAdded) {
+  chrome.permissions.onAdded.addListener(() => void closeManagedProfile());
+}
+if (chrome.permissions?.onRemoved) {
+  chrome.permissions.onRemoved.addListener(() => void closeManagedProfile());
+}
+if (chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener(() => void closeManagedProfile());
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   try { chrome.alarms.create('userflow-extension-keepalive', { periodInMinutes: 1 }); } catch {}
   void snapshotProtectedExtensions();
@@ -267,8 +277,8 @@ function packageZip(manifestValue: object, contentScript: string) {
 }
 
 export function bundledExtensions(): BundledExtensionDefinition[] {
-  const ex1Version = '1.6';
-  const ex2Version = '1.5';
+  const ex1Version = '1.7';
+  const ex2Version = '1.6';
   const ex1Description = 'Protección de sesión y privacidad integrada para userFLOW, sin dependencias externas.';
   const ex2Description = 'Protección ligera del navegador integrada para userFLOW, sin dependencias externas.';
 
