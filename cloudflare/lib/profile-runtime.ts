@@ -51,6 +51,10 @@ function isNetflixProfile(profile: any) {
   return host === 'netflix.com' || host.endsWith('.netflix.com');
 }
 
+function isGoogleFlowProfile(profile: any) {
+  return profileHost(profile) === 'flow.google.com';
+}
+
 const STREAMING_HOSTS = [
   'netflix.com',
   'disneyplus.com',
@@ -88,26 +92,42 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
   const hasStoredSnapshot = profile?.session_ready === true;
   const configuredAuth = profile?.auth_strategy
     || (profile?.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
-  const authStrategy = (hasStoredSnapshot && configuredAuth === 'manual'
-    ? 'cookie-snapshot'
-    : configuredAuth) as AuthStrategy;
-  const requestedStorage = (profile?.storage_strategy
-    || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
-      ? 'local-persistent'
-      : 'portable-first-party')) as StorageStrategy;
+  const googleFlow = isGoogleFlowProfile(profile);
+
+  // Modern Google sessions may use device-bound credentials. A central cookie
+  // snapshot can still be useful as a bootstrap, but it cannot be the only
+  // authentication mechanism on another Windows device. Upgrade Flow snapshot
+  // profiles to hybrid automatically so the local browser can establish and
+  // keep its own device-bound Google session using the managed credentials.
+  const resolvedAuth = googleFlow && configuredAuth === 'cookie-snapshot'
+    ? 'hybrid'
+    : hasStoredSnapshot && configuredAuth === 'manual'
+      ? 'cookie-snapshot'
+      : configuredAuth;
+  const authStrategy = resolvedAuth as AuthStrategy;
+
+  const requestedStorage = (googleFlow && authStrategy !== 'manual'
+    ? 'local-persistent'
+    : profile?.storage_strategy
+      || (authStrategy === 'manual' || authStrategy === 'credential-autofill'
+        ? 'local-persistent'
+        : 'portable-first-party')) as StorageStrategy;
   const snapshotManaged = authStrategy === 'cookie-snapshot' || authStrategy === 'hybrid';
   const openAiSnapshot = isOpenAiProfile(profile) && snapshotManaged;
   const streamingProviderSnapshot = isStreamingProviderProfile(profile) && snapshotManaged;
   const projectStreamingSnapshot = !isStreamingProviderProfile(profile)
     && String(profile?.platform || '').trim().toLowerCase() === 'streaming'
     && snapshotManaged;
+  const googleFlowManaged = googleFlow && authStrategy !== 'manual';
   const effectiveStorage = openAiSnapshot
     ? 'cookies-only'
-    : streamingProviderSnapshot && requestedStorage !== 'cookies-only'
-      ? 'netflix-local-device'
-      : projectStreamingSnapshot && requestedStorage === 'netflix-local-device'
-        ? 'portable-first-party'
-        : requestedStorage;
+    : googleFlowManaged
+      ? 'local-persistent'
+      : streamingProviderSnapshot && requestedStorage !== 'cookies-only'
+        ? 'netflix-local-device'
+        : projectStreamingSnapshot && requestedStorage === 'netflix-local-device'
+          ? 'portable-first-party'
+          : requestedStorage;
   return {
     browserEngine: (profile?.browser_engine || 'chrome-native') as BrowserEngine,
     authStrategy,
@@ -115,10 +135,9 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
     networkStrategy: (profile?.network_strategy || 'auto') as NetworkStrategy,
     extensionStrategy: (profile?.extension_strategy
       || (authStrategy === 'manual' ? 'guard-only' : 'custom')) as ExtensionStrategy,
-    // Known third-party STREAMING providers preserve device-bound browser storage
-    // locally, but cookie-snapshot/hybrid profiles still receive administrator
-    // cookies. deviceLocalAuth means "keep local device state", not "disable cookies".
-    deviceLocalAuth: streamingProviderSnapshot,
+    // Device-bound providers must keep the authenticated browser state on the
+    // client machine. Administrator cookies remain a bootstrap/fallback only.
+    deviceLocalAuth: streamingProviderSnapshot || googleFlowManaged,
   };
 }
 
