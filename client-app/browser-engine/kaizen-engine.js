@@ -417,6 +417,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     await fsp.cp(source, target, { recursive: true });
     const safeStrategy = ['guard-only', 'main', 'google', 'custom'].includes(strategy) ? strategy : 'guard-only';
     const streamingDomEnabled = options.streamingDomEnabled === true;
+    const managedExtensionNames = [...new Set(
+      (Array.isArray(options.managedExtensionNames) ? options.managedExtensionNames : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 64),
+    )];
     const contentRules = (Array.isArray(options.contentRules) ? options.contentRules : [])
       .slice(0, 150)
       .map((item) => ({
@@ -432,6 +438,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       [
         `globalThis.USERFLEX_RUNTIME_STRATEGY = ${JSON.stringify(safeStrategy)};`,
         `globalThis.USERFLEX_STREAMING_DOM = ${JSON.stringify(streamingDomEnabled)};`,
+        `globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = ${JSON.stringify(managedExtensionNames)};`,
         `globalThis.USERFLEX_CONTENT_RULES = ${JSON.stringify(contentRules)};`,
         '',
       ].join('\n'),
@@ -719,6 +726,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       runtime.extensionStrategy,
       {
         streamingDomEnabled,
+        managedExtensionNames: (Array.isArray(managedExtensions) ? managedExtensions : [])
+          .map((item) => item?.name)
+          .filter((name) => typeof name === 'string' && name.trim()),
         contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules : [],
       },
     );
