@@ -24,7 +24,8 @@ assert.match(deployWorkflow, /EXPECTED_USERFLOW/);
 assert.match(deployWorkflow, /MIN_SESSION_MANAGER/);
 assert.match(deployWorkflow, /gh release list/);
 assert.match(deployWorkflow, /session-manager-v/);
-assert.match(deployWorkflow, /session-manager-latest=/);
+assert.match(deployWorkflow, /Desktop runtime prerequisites ready/);
+assert.match(deployWorkflow, /Session Manager latest=v\$sm_latest/);
 
 assert.match(auth, /userflow_version/);
 assert.match(auth, /userflow_version_seen_at/);
