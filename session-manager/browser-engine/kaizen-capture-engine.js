@@ -203,8 +203,21 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       try{el.blur();}catch{}
     }catch{}
   };
+  const securityChallengeActive=()=>{
+    try{
+      const frames=Array.from(document.querySelectorAll('iframe'));
+      if(frames.some((frame)=>{
+        const src=String(frame.getAttribute('src')||'').toLowerCase();
+        const title=String(frame.getAttribute('title')||'').toLowerCase();
+        return src.includes('challenges.cloudflare.com')||src.includes('/turnstile/')||title.includes('cloudflare')||title.includes('challenge');
+      })) return true;
+      if(document.querySelector('.cf-turnstile,[data-sitekey][data-callback],[class*="turnstile"]')) return true;
+      const text=String(document.body?.innerText||'').replace(/\s+/g,' ').toLowerCase();
+      return text.includes('la verificación falló')||text.includes('verification failed')||text.includes('verificando que eres humano')||text.includes('verify you are human');
+    }catch{return false;}
+  };
   const autofill=()=>{
-    if(!credentials) return;
+    if(!credentials||securityChallengeActive()) return;
     const inputs=Array.from(document.querySelectorAll('input')).filter((el)=>visible(el)&&!el.disabled&&!el.readOnly);
     const pass=inputs.find((el)=>{
       const hint=[el.type,el.name,el.id,el.autocomplete,el.placeholder,el.getAttribute('aria-label')||''].join(' ').toLowerCase();
@@ -218,6 +231,10 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     if(pass&&!pass.value) setNativeValue(pass,credentials.password||'');
   };
   const install=()=>{
+    if(securityChallengeActive()){
+      try{document.getElementById('userflex-session-overlay')?.remove();}catch{}
+      return;
+    }
     if(document.getElementById('userflex-session-overlay')) return;
     const wrap=document.createElement('div');
     wrap.id='userflex-session-overlay';
