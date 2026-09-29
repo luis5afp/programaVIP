@@ -176,22 +176,10 @@ assert.match(
   'managed browser launches must suppress Edge extension toolbar management features when supported',
 );
 
-assert.match(
+assert.doesNotMatch(
   engine,
-  /async function managedExtensionPathsHealth[\s\S]{0,1800}Preferences[\s\S]{0,800}Secure Preferences/,
-  'userFLOW must verify protected extension state from the persistent browser profile',
-);
-
-assert.match(
-  engine,
-  /extensionGuardTimer = setInterval\(\(\) => void enforceManagedExtensionHealth\(entry\), 3000\)/,
-  'managed extensions must be checked continuously without high-frequency polling',
-);
-
-assert.match(
-  engine,
-  /recoverManagedExtensions[\s\S]{0,1500}managed_extension_recovery[\s\S]{0,900}await launch\(\{ \.\.\.relaunch, forceRestore: false \}\)/,
-  'removing or disabling a managed extension must trigger an automatic browser recovery',
+  /managedExtensionPathsHealth|extensionGuardTimer|recoverManagedExtensions|managed_extension_recovery/,
+  'active profiles must never be force-killed from an inferred extension Preferences mismatch',
 );
 
 assert.match(
@@ -213,9 +201,9 @@ assert.match(
 );
 
 assert.match(
-  main,
-  /reason === 'managed_extension_recovery'/,
-  'automatic extension recovery must not close the active profile usage record',
+  engine,
+  /--disable-features=SignInProfileCreation,SigninConsistency,ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu/,
+  'extension UI hardening must remain enabled without a destructive browser watchdog',
 );
 
 console.log('Managed browser launch/autofill regression checks: OK');

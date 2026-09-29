@@ -323,37 +323,6 @@ async function clearStartupSessionArtifacts(userDataDir) {
     fsp.rm(artifact, { recursive: true, force: true }).catch(() => null)));
 }
 
-async function managedExtensionPathsHealth(userDataDir, extensionDirs = []) {
-  const expected = [...new Set(
-    extensionDirs
-      .filter((dir) => typeof dir === 'string' && dir)
-      .map((dir) => path.resolve(dir).toLowerCase()),
-  )];
-  if (!expected.length) return { healthy: true, missing: [] };
-
-  const enabledPaths = new Set();
-  let parsedAny = false;
-  for (const preferenceFile of ['Preferences', 'Secure Preferences']) {
-    try {
-      const preferences = JSON.parse(await fsp.readFile(path.join(userDataDir, 'Default', preferenceFile), 'utf8'));
-      const settings = preferences?.extensions?.settings;
-      if (!settings || typeof settings !== 'object') continue;
-      parsedAny = true;
-      for (const value of Object.values(settings)) {
-        const extensionPath = typeof value?.path === 'string'
-          ? path.resolve(value.path).toLowerCase()
-          : '';
-        if (!extensionPath || Number(value?.state) !== 1) continue;
-        enabledPaths.add(extensionPath);
-      }
-    } catch {}
-  }
-  if (!parsedAny) return null;
-
-  const missing = expected.filter((dir) => !enabledPaths.has(dir));
-  return { healthy: missing.length === 0, missing };
-}
-
 async function killProcessTree(proc) {
   if (!proc?.pid) return;
   if (process.platform === 'win32') {
@@ -383,7 +352,6 @@ async function browserPublicIp(debugPort) {
 export function createKaizenBrowserEngine({ app, onClosed, log = console } = {}) {
   if (!app || typeof app.getPath !== 'function') throw new Error('El motor KAIZEN requiere la instancia de Electron app.');
   const processes = new Map();
-  const extensionRecoveryHistory = new Map();
 
   const profileKey = (clientId, profileId) => `${safeSegment(clientId, 'client')}:${safeSegment(profileId)}`;
   const clientProfilesDir = (clientId) => path.join(
@@ -442,7 +410,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (!entry || entry.cleaned) return;
     entry.cleaned = true;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
-    if (entry.extensionGuardTimer) clearInterval(entry.extensionGuardTimer);
     try { await entry.relay?.close(); } catch {}
     if (processes.get(entry.key) === entry) processes.delete(entry.key);
     try { await onClosed?.(entry, reason); } catch (error) {
@@ -452,52 +419,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
       await fsp.rm(profileExtensionDir(entry.clientId, entry.profile.id), { recursive: true, force: true }).catch(() => null);
     }
-  }
-
-  function extensionRecoveryAllowed(key) {
-    const now = Date.now();
-    const recent = (extensionRecoveryHistory.get(key) || []).filter((time) => now - time < 60_000);
-    if (recent.length >= 3) {
-      extensionRecoveryHistory.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    extensionRecoveryHistory.set(key, recent);
-    return true;
-  }
-
-  async function recoverManagedExtensions(entry, health) {
-    if (!entry || entry.cleaned || entry.closing || entry.extensionRecoveryInFlight) return;
-    if (!extensionRecoveryAllowed(entry.key)) {
-      log.warn?.('userFLOW managed-extension recovery paused after repeated failures', entry.profile?.id, health?.missing || []);
-      return;
-    }
-
-    entry.extensionRecoveryInFlight = true;
-    const relaunch = entry.relaunchOptions;
-    log.warn?.('userFLOW restoring protected extensions', entry.profile?.id, health?.missing || []);
-    try {
-      entry.closing = true;
-      await killProcessTree(entry.process);
-      await cleanup(entry, 'managed_extension_recovery');
-      await new Promise((resolve) => setTimeout(resolve, 450));
-      await launch({ ...relaunch, forceRestore: false });
-    } catch (error) {
-      log.error?.('userFLOW managed-extension recovery failed:', error?.message || error);
-    }
-  }
-
-  async function enforceManagedExtensionHealth(entry) {
-    if (!entry || entry.cleaned || entry.closing || !entry.extensionDirs?.length) return;
-    const health = await managedExtensionPathsHealth(entry.userDataDir, entry.extensionDirs);
-    if (!health) return;
-    if (health.healthy) {
-      entry.extensionHealthFailures = 0;
-      return;
-    }
-    entry.extensionHealthFailures = Number(entry.extensionHealthFailures || 0) + 1;
-    if (entry.extensionHealthFailures < 2) return;
-    await recoverManagedExtensions(entry, health);
   }
 
   async function close(clientId, profileId, reason = 'profile_closed') {
@@ -807,19 +728,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       sessionMarker,
       managedExtensions: Array.isArray(managedExtensions) ? managedExtensions : [],
       extensionDirs: extensionDirs.map((dir) => path.resolve(dir)),
-      extensionGuardTimer: null,
-      extensionHealthFailures: 0,
-      extensionRecoveryInFlight: false,
-      relaunchOptions: {
-        clientId,
-        profile,
-        connection,
-        delivery,
-        credentials,
-        managedExtensions,
-        usageId,
-        ephemeral,
-      },
     };
     processes.set(key, entry);
 
@@ -932,11 +840,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
       entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
       entry.devtoolsTimer.unref?.();
-      if (entry.extensionDirs.length) {
-        entry.extensionGuardTimer = setInterval(() => void enforceManagedExtensionHealth(entry), 3000);
-        entry.extensionGuardTimer.unref?.();
-      }
-
       return {
         ok: true,
         reused: false,
