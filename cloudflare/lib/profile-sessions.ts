@@ -795,7 +795,11 @@ export async function adminProfileSessionRoutes(
     const keepersById = new Map((keepers || []).map((row: any) => [row.profile_id, row]));
     const states = await Promise.all([...profileIds].map(async (profileId) => {
       const session = sessionsById.get(profileId);
-      let expiry = { status: 'none' as const, expires_at: null as string | null, checked_cookies: 0 };
+      let expiry: ReturnType<typeof cookieExpirySummary> = {
+        status: 'none',
+        expires_at: null,
+        checked_cookies: 0,
+      };
       if (session?.material_ciphertext && session?.material_iv) {
         try {
           const material = JSON.parse(await decryptProxy(env, session.material_ciphertext, session.material_iv));
