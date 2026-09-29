@@ -69,54 +69,59 @@ jobs:
 
       - name: Validate desktop release prerequisites
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
-          MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
-          echo "Validating published desktop runtimes: userFLOW v$EXPECTED_USERFLOW in R2 · Session Manager >= v$MIN_SESSION_MANAGER..."
+          export EXPECTED_USERFLOW="$(node -p "require('./client-app/package.json').version")"
+          export MIN_USERFLOW="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_USERFLOW_VERSION))")"
+          export MIN_SESSION_MANAGER="$(node --experimental-strip-types -e "import('./cloudflare/lib/release-compat.ts').then(m=>process.stdout.write(m.MIN_SESSION_MANAGER_VERSION))")"
+          echo "Validating desktop runtimes: userFLOW v$EXPECTED_USERFLOW (minimum v$MIN_USERFLOW) · Session Manager >= v$MIN_SESSION_MANAGER..."
 
-          client_version=""
-          sm_latest=""
-          sm_ok="false"
-          for attempt in $(seq 1 30); do
-            client_json="$(curl --silent --show-error --max-time 15 --header 'Cache-Control: no-cache'               "https://userflex-admin.luis5afp.workers.dev/api/client-update/latest?ts=$attempt" || true)"
-            client_version="$(CLIENT_JSON="$client_json" node -e "try{const v=JSON.parse(process.env.CLIENT_JSON||'{}');process.stdout.write(String(v.version||''))}catch{}")"
+          node - <<'NODE'
+          const parse = (value) => {
+            const match = String(value || '').match(/^(\d+)\.(\d+)\.(\d+)/);
+            return match ? match.slice(1).map(Number) : null;
+          };
+          const atLeast = (currentValue, minimumValue) => {
+            const current = parse(currentValue);
+            const minimum = parse(minimumValue);
+            if (!current || !minimum) return false;
+            for (let index = 0; index < 3; index += 1) {
+              if (current[index] > minimum[index]) return true;
+              if (current[index] < minimum[index]) return false;
+            }
+            return true;
+          };
+          if (!atLeast(process.env.EXPECTED_USERFLOW, process.env.MIN_USERFLOW)) {
+            console.error(`userFLOW ${process.env.EXPECTED_USERFLOW} is below minimum ${process.env.MIN_USERFLOW}`);
+            process.exit(1);
+          }
+          NODE
 
-            sm_latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName --jq '.[].tagName'               | grep '^session-manager-v'               | sed 's/^session-manager-v//'               | sort -V               | tail -n 1 || true)"
-            sm_ok="$(CURRENT="$sm_latest" MINIMUM="$MIN_SESSION_MANAGER" node - <<'NODE'
+          sm_latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 --json tagName --jq '.[].tagName'             | grep '^session-manager-v'             | sed 's/^session-manager-v//'             | sort -V             | tail -n 1 || true)"
+
+          if [ -z "$sm_latest" ]; then
+            echo "No published Session Manager release was found." >&2
+            exit 1
+          fi
+
+          CURRENT="$sm_latest" MINIMUM="$MIN_SESSION_MANAGER" node - <<'NODE'
           const parse = (value) => {
             const match = String(value || '').match(/^(\d+)\.(\d+)\.(\d+)/);
             return match ? match.slice(1).map(Number) : null;
           };
           const current = parse(process.env.CURRENT);
           const minimum = parse(process.env.MINIMUM);
-          let ok = Boolean(current && minimum);
-          if (ok) {
-            for (let index = 0; index < 3; index += 1) {
-              if (current[index] > minimum[index]) break;
-              if (current[index] < minimum[index]) {
-                ok = false;
-                break;
-              }
-            }
+          if (!current || !minimum) process.exit(1);
+          for (let index = 0; index < 3; index += 1) {
+            if (current[index] > minimum[index]) process.exit(0);
+            if (current[index] < minimum[index]) process.exit(1);
           }
-          process.stdout.write(ok ? 'true' : 'false');
+          process.exit(0);
           NODE
-            )"
 
-            if [ "$client_version" = "$EXPECTED_USERFLOW" ] && [ "$sm_ok" = "true" ]; then
-              echo "Desktop runtime prerequisites are published. Session Manager latest=v$sm_latest"
-              break
-            fi
-
-            if [ "$attempt" -eq 30 ]; then
-              echo "Required desktop runtime is missing after waiting. userFLOW-r2=$client_version session-manager-latest=$sm_latest minimum=$MIN_SESSION_MANAGER" >&2
-              exit 1
-            fi
-
-            echo "Desktop runtime still publishing (attempt $attempt/30). userFLOW-r2=$client_version session-manager-latest=$sm_latest minimum=$MIN_SESSION_MANAGER"
-            sleep 10
-          done
+          echo "Desktop runtime prerequisites ready. userFLOW=v$EXPECTED_USERFLOW · Session Manager latest=v$sm_latest"
 
       - name: Configure proxy encryption secret
         shell: bash
