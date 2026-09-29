@@ -42,6 +42,30 @@ assert.match(
   /const finalPages = await browser\.pages\(\);[\s\S]{0,600}await extra\.close\(\)/,
   'snapshot restoration must close stale startup tabs',
 );
+assert.match(
+  engine,
+  /capturedGenerationMatches[\s\S]{0,700}sessionMarker\?\.capturedAt[\s\S]{0,700}delivery\.capturedAt/,
+  'managed snapshot reuse must compare capturedAt so a new v1 generation cannot be mistaken for an old v1 snapshot',
+);
+
+assert.doesNotMatch(
+  engine,
+  /localStateWithoutMarker\s*\|\|/,
+  'portable managed profiles without a marker must replay the server snapshot instead of trusting unknown local cookies',
+);
+
+assert.match(
+  sessionState,
+  /flowTarget[\s\S]{0,400}isGoogleAccountsDomain\(cookie\?\.domain\)/,
+  'Google Flow cookie repair must include Google Accounts host cookies as well as flow.google.com cookies',
+);
+
+assert.match(
+  sessionState,
+  /clearGoogleFlowCookies[\s\S]{0,1800}Network\.deleteCookies[\s\S]{0,6500}applyCookies\(browser, cookies\)/,
+  'a new Google Flow snapshot must clear stale Google-account cookies before installing the captured generation',
+);
+
 
 assert.match(
   sessionState,
