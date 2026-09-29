@@ -58,7 +58,7 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
     profile_id: profileId,
     has_credentials: Boolean(credential),
     login_username: credential?.login_username || null,
-    status: Number(session?.session_version || 0) > 0 ? 'active' : session?.status === 'unconfigured' ? 'empty' : session?.status || 'empty',
+    status: session?.status === 'needs_auth' ? 'needs_auth' : Number(session?.session_version || 0) > 0 ? 'active' : session?.status === 'unconfigured' ? 'empty' : session?.status || 'empty',
     version: Number(session?.session_version || 0),
     public_ip: session?.expected_egress_ip || null,
     captured_at: session?.last_captured_at || null,
