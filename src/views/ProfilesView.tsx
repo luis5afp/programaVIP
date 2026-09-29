@@ -807,13 +807,32 @@ export function ProfilesView() {
         || authStrategy === 'hybrid'
         || (authStrategy === 'cookie-snapshot' && Boolean(loginUsername));
 
+      let credentialsResult: {
+        login_username: string;
+        session_invalidated?: boolean;
+      } | null = null;
+
+      // Credentials are identity-critical. Persist and verify them before the
+      // remaining secondary settings so an edit can never report success while
+      // Session Manager would still receive the previous account.
+      if (shouldSaveCredentials) {
+        credentialsResult = await api.profileSessions.credentials(
+          savedProfile.id,
+          loginUsername,
+          loginPassword || undefined,
+        );
+        if (
+          String(credentialsResult.login_username || '').trim().toLocaleLowerCase()
+          !== loginUsername.toLocaleLowerCase()
+        ) {
+          throw new Error('El servidor no confirmó las nuevas credenciales. No se iniciará una captura con la cuenta anterior.');
+        }
+      }
+
       await Promise.all([
         api.profilePlans.set(savedProfile.id, selectedPlanIds),
         api.profileExtensions.set(savedProfile.id, selectedExtensionIds),
         api.profileProxyDefaults.set(savedProfile.id, profileProxyId),
-        shouldSaveCredentials
-          ? api.profileSessions.credentials(savedProfile.id, loginUsername, loginPassword || undefined)
-          : Promise.resolve(),
       ]);
       let importedCookies: { version: number; inspection: CookieImportInspection } | null = null;
       if (cookieFile) {
@@ -831,7 +850,9 @@ export function ProfilesView() {
               + importedCookies.inspection.invalid_cookies;
             return `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} correctamente · snapshot v${importedCookies.version} · ${importedCookies.inspection.matching_cookies} cookies de ${importedCookies.inspection.target_host} importadas${ignored ? ` · ${ignored} cookies de otras webs/expiradas/invalidas ignoradas` : ''}.`;
           })()
-        : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
+        : credentialsResult?.session_invalidated
+          ? `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} correctamente · credenciales reemplazadas · snapshot anterior invalidado. Renueva la sesión para generar cookies de la cuenta nueva.`
+          : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
 
       await load();
       setError(null);
