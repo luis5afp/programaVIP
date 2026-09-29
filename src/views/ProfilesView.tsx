@@ -29,8 +29,8 @@ type SessionManagerRelease = {
 };
 
 const FALLBACK_SESSION_MANAGER_RELEASE: SessionManagerRelease = {
-  version: '0.3.51',
-  downloadUrl: 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.51/userFLEX-Session-Manager-0.3.51-Setup.exe',
+  version: '0.3.54',
+  downloadUrl: 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.54/userFLEX-Session-Manager-0.3.54-Setup.exe',
 };
 
 function compareReleaseVersions(left: string, right: string) {
