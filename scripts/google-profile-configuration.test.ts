@@ -42,9 +42,13 @@ const captureEngine = readFileSync(
   new URL('../session-manager/browser-engine/kaizen-capture-engine.js', import.meta.url),
   'utf8',
 );
-assert.match(
-  captureEngine,
-  /resetCaptureProfileForCredentialChange[\s\S]{0,1800}fs\.existsSync\(userDataDir\)[\s\S]{0,2200}commitCredentialMarker\(credentialState\)/,
+const resetHelperPosition = captureEngine.indexOf('async function resetCaptureProfileForCredentialChange');
+const deletionVerificationPosition = captureEngine.indexOf('!fs.existsSync(userDataDir)', resetHelperPosition);
+const markerCommitPosition = captureEngine.indexOf('await commitCredentialMarker(credentialState)', deletionVerificationPosition);
+assert.ok(
+  resetHelperPosition >= 0
+    && deletionVerificationPosition > resetHelperPosition
+    && markerCommitPosition > deletionVerificationPosition,
   'Session Manager must verify the old local profile is deleted before accepting the new credential marker',
 );
 assert.doesNotMatch(
