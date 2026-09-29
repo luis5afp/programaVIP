@@ -812,6 +812,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         Boolean(sessionMarker?.capturedAt)
         && String(sessionMarker.capturedAt) === String(delivery.capturedAt)
       );
+    const googleFlowSnapshot = target.hostname.toLowerCase() === 'flow.google.com';
+    const googleFlowAuthoritativeReplayReady = !googleFlowSnapshot
+      || sessionMarker?.restore?.googleCookiesAuthoritative === true;
     // A version number alone is not a unique snapshot identity: after an admin
     // credential reset, a newly captured session can start again at v1. Trust
     // the local profile only when both version and capturedAt identify the same
@@ -821,6 +824,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       && sessionMarker?.profileId === profile.id
       && restorePolicyMatches
       && capturedGenerationMatches
+      && googleFlowAuthoritativeReplayReady
       && desiredSessionVersion > 0
       && Number(sessionMarker?.version || 0) === desiredSessionVersion;
 
