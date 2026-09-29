@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 const RELEASE_API = 'https://api.github.com/repos/luis5afp/programaVIP/releases/tags/session-runtime-latest';
@@ -101,12 +100,10 @@ async function verifyRuntimeDirectory(dir, manifest) {
 }
 
 async function installDependencyShims(runtimeDir) {
-  const require = createRequire(import.meta.url);
-  const puppeteerEntry = require.resolve('puppeteer-core');
-  const socksEntry = require.resolve('socks');
-  const puppeteerUrl = pathToFileURL(puppeteerEntry).href;
-  const socksUrl = pathToFileURL(socksEntry).href;
-
+  // The hot runtime lives under userData, outside app.asar. Resolve the heavy
+  // dependencies through a require rooted at the installed Core so Electron's
+  // ASAR/module resolver remains in control.
+  const corePackageUrl = new URL('./package.json', import.meta.url).href;
   const puppeteerDir = path.join(runtimeDir, 'node_modules', 'puppeteer-core');
   const socksDir = path.join(runtimeDir, 'node_modules', 'socks');
   await fs.mkdir(puppeteerDir, { recursive: true });
@@ -119,7 +116,7 @@ async function installDependencyShims(runtimeDir) {
   );
   await fs.writeFile(
     path.join(puppeteerDir, 'index.mjs'),
-    `import mod from ${JSON.stringify(puppeteerUrl)};\nexport default mod;\nexport * from ${JSON.stringify(puppeteerUrl)};\n`,
+    `import { createRequire } from 'node:module';\nconst require = createRequire(${JSON.stringify(corePackageUrl)});\nconst mod = require('puppeteer-core');\nexport default mod?.default || mod;\n`,
     'utf8',
   );
 
@@ -130,7 +127,7 @@ async function installDependencyShims(runtimeDir) {
   );
   await fs.writeFile(
     path.join(socksDir, 'index.mjs'),
-    `import mod from ${JSON.stringify(socksUrl)};\nexport default mod;\nexport const SocksClient = mod.SocksClient;\n`,
+    `import { createRequire } from 'node:module';\nconst require = createRequire(${JSON.stringify(corePackageUrl)});\nconst mod = require('socks');\nexport default mod;\nexport const SocksClient = mod.SocksClient;\n`,
     'utf8',
   );
 }
