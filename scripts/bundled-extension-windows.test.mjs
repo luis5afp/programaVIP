@@ -60,6 +60,20 @@ async function killTree(pid) {
   });
 }
 
+async function seedDeveloperModeWarningSnooze(profileDir) {
+  const defaultDir = path.join(profileDir, 'Default');
+  await mkdir(defaultDir, { recursive: true });
+  const preferencesPath = path.join(defaultDir, 'Preferences');
+  const preferences = {
+    extensions: {
+      ui: {
+        dev_mode_warning_snooze_end_time: '99999999999000000',
+      },
+    },
+  };
+  await writeFile(preferencesPath, JSON.stringify(preferences), 'utf8');
+}
+
 function websocketRpc(socket) {
   let nextId = 0;
   const pending = new Map();
@@ -86,6 +100,7 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
   await mkdir(extensionDir, { recursive: true });
   await mkdir(profileDir, { recursive: true });
   await unpack(definition.packageBytes, extensionDir);
+  await seedDeveloperModeWarningSnooze(profileDir);
 
   const manifest = JSON.parse(await readFile(path.join(extensionDir, 'manifest.json'), 'utf8'));
   assert.equal(manifest.manifest_version, 3);
@@ -122,6 +137,13 @@ async function testExtension(edgeExe, definition, index, pageUrl) {
 
   try {
     await waitForJson(`http://127.0.0.1:${port}/json/version`, 25000);
+
+    const persistedPreferences = JSON.parse(await readFile(path.join(profileDir, 'Default', 'Preferences'), 'utf8'));
+    assert.equal(
+      persistedPreferences?.extensions?.ui?.dev_mode_warning_snooze_end_time,
+      '99999999999000000',
+      `${definition.name}: Edge discarded the managed developer-mode warning snooze preference`,
+    );
 
     // Mirror userFLOW: Edge starts on about:blank, waits briefly for
     // --load-extension registration, then performs the first real navigation.
