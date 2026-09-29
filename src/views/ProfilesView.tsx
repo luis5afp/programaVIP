@@ -23,7 +23,72 @@ type ProfilePlanMembership = {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COOKIE_JSON_BYTES = 8 * 1024 * 1024;
-const SESSION_MANAGER_DOWNLOAD_URL = 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.51/userFLEX-Session-Manager-0.3.51-Setup.exe';
+type SessionManagerRelease = {
+  version: string;
+  downloadUrl: string;
+};
+
+const FALLBACK_SESSION_MANAGER_RELEASE: SessionManagerRelease = {
+  version: '0.3.51',
+  downloadUrl: 'https://github.com/luis5afp/programaVIP/releases/download/session-manager-v0.3.51/userFLEX-Session-Manager-0.3.51-Setup.exe',
+};
+
+function compareReleaseVersions(left: string, right: string) {
+  const a = left.split('.').map((value) => Number(value));
+  const b = right.split('.').map((value) => Number(value));
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = Number(a[index] || 0) - Number(b[index] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+async function latestSessionManagerRelease(): Promise<SessionManagerRelease> {
+  const cacheKey = 'userflex-session-manager-release-v1';
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (
+        typeof parsed?.version === 'string'
+        && typeof parsed?.downloadUrl === 'string'
+        && Number(parsed?.cachedAt || 0) > Date.now() - 5 * 60 * 1000
+      ) {
+        return { version: parsed.version, downloadUrl: parsed.downloadUrl };
+      }
+    }
+  } catch {}
+
+  const response = await fetch('https://api.github.com/repos/luis5afp/programaVIP/releases?per_page=30', {
+    headers: { Accept: 'application/vnd.github+json' },
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`GitHub releases respondió ${response.status}`);
+  const releases = await response.json();
+  const candidates = (Array.isArray(releases) ? releases : [])
+    .filter((release: any) => release && release.draft !== true && release.prerelease !== true)
+    .map((release: any) => {
+      const match = /^session-manager-v(\d+\.\d+\.\d+)$/.exec(String(release.tag_name || ''));
+      if (!match) return null;
+      const version = match[1];
+      const expectedAsset = `userFLEX-Session-Manager-${version}-Setup.exe`;
+      const asset = Array.isArray(release.assets)
+        ? release.assets.find((item: any) => String(item?.name || '') === expectedAsset)
+        : null;
+      const downloadUrl = String(asset?.browser_download_url || '');
+      return downloadUrl ? { version, downloadUrl } : null;
+    })
+    .filter(Boolean)
+    .sort((left: any, right: any) => compareReleaseVersions(right.version, left.version));
+
+  const latest = candidates[0] as SessionManagerRelease | undefined;
+  if (!latest) throw new Error('No se encontró una release válida de Session Manager.');
+
+  try {
+    sessionStorage.setItem(cacheKey, JSON.stringify({ ...latest, cachedAt: Date.now() }));
+  } catch {}
+  return latest;
+}
 const DEFAULT_CATEGORIES = ['Chat', 'Imagen', 'Video', 'Audio', 'STREAMING', 'Pro'];
 
 const STREAMING_HOSTS = [
@@ -312,6 +377,7 @@ export function ProfilesView() {
   const [captureLaunch, setCaptureLaunch] = useState<CaptureLaunch>(null);
   const [captureRetryReady, setCaptureRetryReady] = useState(false);
   const [captureSaveMessage, setCaptureSaveMessage] = useState<string | null>(null);
+  const [sessionManagerRelease, setSessionManagerRelease] = useState<SessionManagerRelease>(FALLBACK_SESSION_MANAGER_RELEASE);
   const captureRetryInFlight = useRef(false);
   const [browserEngine, setBrowserEngine] = useState<BrowserEngine>('chrome-native');
   const [authStrategy, setAuthStrategy] = useState<AuthStrategy>('manual');
@@ -367,6 +433,20 @@ export function ProfilesView() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void latestSessionManagerRelease()
+      .then((release) => {
+        if (!cancelled) setSessionManagerRelease(release);
+      })
+      .catch(() => {
+        // Keep the packaged fallback if GitHub is temporarily unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1991,8 +2071,8 @@ export function ProfilesView() {
               <Globe2 size={14} />
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
-            <a className="button secondary" href={SESSION_MANAGER_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v0.3.51
+            <a className="button secondary" href={sessionManagerRelease.downloadUrl} target="_blank" rel="noreferrer">
+              Instalar / actualizar Session Manager v{sessionManagerRelease.version}
             </a>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
