@@ -65,6 +65,20 @@ assert.match(
   /async function clearGoogleFlowCookies[\s\S]{0,2200}Network\.deleteCookies/,
   'Google Flow restore must define targeted cleanup for stale Google-account cookies',
 );
+
+assert.match(
+  sessionState,
+  /googleCookiesAuthoritative:\s*isGoogleFlowTarget\(target\)/,
+  'Flow restore must persist a marker proving that stale Google cookies were authoritatively replaced',
+);
+
+assert.match(
+  engine,
+  /googleFlowAuthoritativeReplayReady[\s\S]{0,450}googleCookiesAuthoritative === true[\s\S]{0,900}sessionVersionMatches/,
+  'legacy Flow markers must force one authoritative server-snapshot replay even when version and capturedAt already match',
+);
+
+
 const flowCleanupPosition = sessionState.indexOf('await clearGoogleFlowCookies(browser, target)');
 const flowApplyPosition = sessionState.indexOf('const cookieResult = await applyCookies(browser, cookies);', flowCleanupPosition);
 assert.ok(
