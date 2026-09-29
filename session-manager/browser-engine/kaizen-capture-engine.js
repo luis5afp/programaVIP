@@ -607,25 +607,41 @@ function guestChromeArgs({ userDataDir, proxyRules, initialUrl }) {
   return args;
 }
 
-async function credentialMarkerChanged(app, profileId, credentials) {
-  if (!credentials?.updatedAt) return false;
+async function credentialMarkerState(app, profileId, credentials) {
+  if (!credentials?.updatedAt) return { changed: false, markerPath: null, next: null };
   const markerDir = path.join(app.getPath('userData'), 'credential-markers');
   const markerPath = path.join(markerDir, `${safeSegment(profileId)}.json`);
+  const next = {
+    updatedAt: String(credentials.updatedAt || ''),
+    username: String(credentials?.username || '').trim(),
+  };
   let previous = null;
   try {
     previous = JSON.parse(await fsp.readFile(markerPath, 'utf8'));
   } catch {}
-  // Missing marker means this Core/runtime has never confirmed which credentials
-  // own the existing Chromium profile. Reset once so an older Google/account
-  // identity can never survive the first launch after this protection ships.
-  const changed = !previous || previous.updatedAt !== credentials.updatedAt;
-  await fsp.mkdir(markerDir, { recursive: true });
-  await fsp.writeFile(
-    markerPath,
-    JSON.stringify({ updatedAt: credentials.updatedAt, username: String(credentials?.username || '') }),
-    'utf8',
+  const changed = !previous
+    || String(previous?.updatedAt || '') !== next.updatedAt
+    || String(previous?.username || '').trim().toLocaleLowerCase() !== next.username.toLocaleLowerCase();
+  return { changed, markerPath, next };
+}
+
+async function commitCredentialMarker(state) {
+  if (!state?.markerPath || !state?.next) return;
+  await fsp.mkdir(path.dirname(state.markerPath), { recursive: true });
+  await fsp.writeFile(state.markerPath, JSON.stringify(state.next), 'utf8');
+}
+
+async function resetCaptureProfileForCredentialChange(userDataDir) {
+  await killStrayProfileProcesses(userDataDir);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    await fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => null);
+    if (!fs.existsSync(userDataDir)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+    await killStrayProfileProcesses(userDataDir);
+  }
+  throw new Error(
+    'No se pudo limpiar el perfil local anterior. Cierra todas las ventanas Chrome/Edge de Session Manager y vuelve a intentar.',
   );
-  return changed;
 }
 
 export function createKaizenCaptureEngine({ app, log = console } = {}) {
@@ -689,10 +705,18 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       ? null
       : path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
 
-    if (!guest && await credentialMarkerChanged(app, profile.id, credentials)) {
-      await killStrayProfileProcesses(userDataDir);
-      await fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => null);
-      log.log?.(`Session Manager KAIZEN reset local capture profile after credentials changed for ${profile.name || profile.id}.`);
+    const credentialState = !guest
+      ? await credentialMarkerState(app, profile.id, credentials)
+      : { changed: false, markerPath: null, next: null };
+    if (!guest && credentialState.changed) {
+      // Never advance the credential marker until the stale browser profile is
+      // actually gone. Otherwise a locked Windows cookie/profile file could
+      // survive once and then be trusted forever on subsequent launches.
+      await resetCaptureProfileForCredentialChange(userDataDir);
+      await commitCredentialMarker(credentialState);
+      log.log?.(
+        `Session Manager KAIZEN reset local capture profile after credentials changed for ${profile.name || profile.id}.`,
+      );
     }
 
     await fsp.mkdir(userDataDir, { recursive: true });
