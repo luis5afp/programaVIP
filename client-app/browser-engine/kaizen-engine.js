@@ -1031,7 +1031,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             version: Number(sessionMarker?.version || desiredSessionVersion),
             format: sessionMarker?.format || delivery.material.format || null,
             storagePolicy: sessionMarker?.restore?.storagePolicy || desiredStoragePolicy,
-            recoveredFromLocalState: localStateWithoutMarker,
+            recoveredFromLocalState: false,
             cookieRepair,
           };
         } else {
