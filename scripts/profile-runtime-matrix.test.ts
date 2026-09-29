@@ -40,6 +40,24 @@ const snapshot = runtimeForProfile({
 assert.equal(snapshotAuthentication(snapshot), true);
 assert.equal(credentialAuthentication(snapshot), false);
 
+const flowSnapshot = runtimeForProfile({
+  url: 'https://flow.google.com/',
+  session_mode: 'managed-first-party',
+  auth_strategy: 'cookie-snapshot',
+  storage_strategy: 'portable-first-party',
+  network_strategy: 'auto',
+});
+assert.equal(
+  flowSnapshot.authStrategy,
+  'hybrid',
+  'Google Flow snapshot profiles must also deliver managed credentials for device-bound Google login recovery',
+);
+assert.equal(flowSnapshot.storageStrategy, 'local-persistent');
+assert.equal(flowSnapshot.deviceLocalAuth, true);
+assert.equal(snapshotAuthentication(flowSnapshot), true);
+assert.equal(credentialAuthentication(flowSnapshot), true);
+
+
 const netflixSnapshot = runtimeForProfile({
   url: 'https://www.netflix.com/browse',
   session_mode: 'managed-first-party',
