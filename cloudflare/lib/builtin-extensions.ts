@@ -45,7 +45,7 @@ async function moveAway(tabId) {
   }
 }
 
-const PROTECTED_NAMES = new Set(['ex1', 'ex2', 'userFLEX Browser Guard']);
+const PROTECTED_NAMES = new Set(['ex1', 'ex2', 'userFLEX Browser Guard', 'Toolspoint-Extension']);
 const protectedIds = new Set();
 let closingForTamper = false;
 
