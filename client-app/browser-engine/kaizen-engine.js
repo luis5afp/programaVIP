@@ -323,6 +323,40 @@ async function clearStartupSessionArtifacts(userDataDir) {
     fsp.rm(artifact, { recursive: true, force: true }).catch(() => null)));
 }
 
+async function suppressEdgeDeveloperModeExtensionWarning(userDataDir) {
+  // Edge intentionally warns about unpacked/command-line extensions and offers
+  // a destructive "Disable extensions" action. userFLOW uses an isolated Edge
+  // User Data directory per managed profile, so persist Edge's own snooze pref
+  // only inside that dedicated profile. This does not modify the user's normal
+  // Edge profile or machine-wide policy.
+  const defaultDir = path.join(userDataDir, 'Default');
+  const preferencesPath = path.join(defaultDir, 'Preferences');
+  await fsp.mkdir(defaultDir, { recursive: true });
+
+  let preferences = {};
+  try {
+    const raw = await fsp.readFile(preferencesPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    preferences = parsed;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return false;
+  }
+
+  if (!preferences.extensions || typeof preferences.extensions !== 'object' || Array.isArray(preferences.extensions)) {
+    preferences.extensions = {};
+  }
+  if (!preferences.extensions.ui || typeof preferences.extensions.ui !== 'object' || Array.isArray(preferences.extensions.ui)) {
+    preferences.extensions.ui = {};
+  }
+
+  const snoozeEnd = '99999999999000000';
+  if (preferences.extensions.ui.dev_mode_warning_snooze_end_time === snoozeEnd) return true;
+  preferences.extensions.ui.dev_mode_warning_snooze_end_time = snoozeEnd;
+  await fsp.writeFile(preferencesPath, JSON.stringify(preferences), 'utf8');
+  return true;
+}
+
 async function killProcessTree(proc) {
   if (!proc?.pid) return;
   if (process.platform === 'win32') {
@@ -623,6 +657,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await fsp.mkdir(userDataDir, { recursive: true });
     }
     await clearStartupSessionArtifacts(userDataDir);
+    if (hasManagedExtensions && browserKind(executable) === 'edge') {
+      await suppressEdgeDeveloperModeExtensionWarning(userDataDir);
+    }
 
     let relay = null;
     let proxyRules = null;
