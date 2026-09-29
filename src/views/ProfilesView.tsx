@@ -2072,8 +2072,11 @@ export function ProfilesView() {
               {!captureRetryReady ? 'Esperando apertura de Chromium...' : 'No se abrió: generar enlace nuevo'}
             </button>
             <a className="button secondary" href={sessionManagerRelease.downloadUrl} target="_blank" rel="noreferrer">
-              Instalar / actualizar Session Manager v{sessionManagerRelease.version}
+              Instalar Core Session Manager v{sessionManagerRelease.version}
             </a>
+            <div className="help" style={{ padding: 10, border: '1px solid #dbeafe', background: '#f8fafc', borderRadius: 10 }}>
+              <strong>Instalación única:</strong> desde el Core 0.3.54, el motor de captura, autofill, cookies, validación y reglas web se actualiza automáticamente al iniciar una comprobación. No necesitas reinstalar Session Manager por cada corrección del runtime.
+            </div>
             <div className="help">
               Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
               Si no lo consigue, pulsa “Guardar ahora” en el panel flotante de Chromium. Después de un guardado correcto, Chromium se cerrará y volverás a este panel con la confirmación. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
