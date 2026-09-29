@@ -1531,7 +1531,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const profile = await profileRow(env, job.profile_id);
     const credentials = await credentialRow(env, job.profile_id);
     const proxy = await captureProxyForProfile(env, profile);
-    const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    const runtime = runtimeForProfile(profile);
+    const authStrategy = runtime.authStrategy;
     if (authStrategy === 'hybrid' && !credentials) {
       throw new HttpError(409, 'CAPTURE_CONFIGURATION_INVALID', 'El perfil híbrido ya no tiene credenciales guardadas.');
     }
@@ -1553,9 +1554,9 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         url: profile.url,
         browserEngine: profile.browser_engine || 'chrome-native',
         authStrategy,
-        storageStrategy: profile.storage_strategy || 'portable-first-party',
-        networkStrategy: profile.network_strategy || 'auto',
-        extensionStrategy: profile.extension_strategy || 'custom',
+        storageStrategy: runtime.storageStrategy,
+        networkStrategy: runtime.networkStrategy,
+        extensionStrategy: runtime.extensionStrategy,
       },
       credentials: credentials ? {
         username: credentials.login_username,
@@ -1640,7 +1641,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const credentials = await credentialRow(env, keeper.profile_id);
     const proxy = await captureProxyForProfile(env, profile);
     const session = await sessionRow(env, keeper.profile_id);
-    const authStrategy = profile.auth_strategy || (profile.session_mode === 'managed-first-party' ? 'cookie-snapshot' : 'manual');
+    const runtime = runtimeForProfile(profile);
+    const authStrategy = runtime.authStrategy;
     if (!['cookie-snapshot', 'hybrid'].includes(authStrategy)) {
       const now = new Date().toISOString();
       await db(env, `userflex_session_keepers?profile_id=eq.${keeper.profile_id}`, {
@@ -1676,15 +1678,16 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         url: profile.url,
         browserEngine: profile.browser_engine || 'chrome-native',
         authStrategy,
-        storageStrategy: profile.storage_strategy || 'portable-first-party',
-        networkStrategy: profile.network_strategy || 'auto',
-        extensionStrategy: profile.extension_strategy || 'custom',
+        storageStrategy: runtime.storageStrategy,
+        networkStrategy: runtime.networkStrategy,
+        extensionStrategy: runtime.extensionStrategy,
       },
       currentVersion: Number(session?.session_version || 0),
       realtime: null,
       credentials: credentials ? {
         username: credentials.login_username,
         password: await decryptProxy(env, credentials.password_ciphertext, credentials.password_iv),
+        updatedAt: credentials.updated_at || null,
       } : null,
       proxy: proxy ? {
         id: proxy.id,
