@@ -243,7 +243,7 @@ function hasPersistentBrowserState(userDataDir) {
   return candidates.some((candidate) => fs.existsSync(candidate));
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], userAgent = null }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [] }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -267,9 +267,6 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], us
     '--disable-domain-reliability',
     '--disable-popup-blocking',
   ];
-  if (userAgent && typeof userAgent === 'string' && userAgent.length <= 600 && !/[\r\n]/.test(userAgent)) {
-    args.push(`--user-agent=${userAgent}`);
-  }
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
   const validExtensionDirs = extensionDirs
     .filter((dir) => typeof dir === 'string' && fs.existsSync(path.join(dir, 'manifest.json')));
@@ -494,12 +491,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const snapshotManaged = snapshotAuthentication(runtime);
     const credentialManaged = credentialAuthentication(runtime);
     const credentialsAvailable = Boolean(credentials?.username && credentials?.password);
-    // Only inject the credential helper when the profile's auth strategy
-    // actually requires managed credentials. Cookie-snapshot profiles may also
-    // receive stored credentials as an emergency fallback, but injecting the
-    // helper on every authenticated page makes heavy SPAs react to their DOM
-    // changes unnecessarily (notably account menus in editors such as Digen).
-    const credentialHelperEnabled = credentialManaged && credentialsAvailable;
+    // The Worker can intentionally deliver stored credentials to cookie-snapshot
+    // profiles as a recovery fallback. If those credentials are present, keep
+    // the helper available on actual login surfaces instead of discarding the
+    // payload client-side. session-state.js already avoids sustained scanning on
+    // performance-sensitive authenticated shells.
+    const optionalSnapshotCredentials = runtime.authStrategy === 'cookie-snapshot'
+      && credentialsAvailable
+      && credentials?.required === false;
+    const credentialHelperEnabled = credentialsAvailable
+      && (credentialManaged || optionalSnapshotCredentials);
     const desiredSessionVersion = snapshotManaged ? Number(delivery?.version || 0) : 0;
     const desiredCredentialRevision = credentialHelperEnabled ? String(credentials?.updatedAt || '') : '';
     const desiredRuntimeKey = runtimeKey(runtime);
@@ -737,10 +738,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       .map((item) => item?.dir)
       .filter((dir) => typeof dir === 'string');
     const extensionDirs = [extensionDir, ...managedExtensionDirs].filter(Boolean);
-    const capturedUserAgent = snapshotManaged && typeof delivery?.material?.browser?.userAgent === 'string'
-      ? delivery.material.browser.userAgent
-      : null;
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, userAgent: capturedUserAgent });
+    // Do not replay a captured User-Agent from another browser/device. That can
+    // disagree with Client Hints and the actual TLS/browser engine identity,
+    // which causes some sites to classify the session as suspicious.
+    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs });
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
