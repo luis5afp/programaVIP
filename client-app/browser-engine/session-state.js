@@ -544,6 +544,13 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost));
       if (!Array.isArray(allowedOrigins) || (!allowedOrigins.includes(location.origin) && !googleAuthAllowed)) return;
 
+      const GLOBAL_KEY = '__userflexCredentialAutofillV395';
+      const existingAutomation = globalThis[GLOBAL_KEY];
+      if (existingAutomation?.refresh) {
+        try { existingAutomation.refresh(); } catch {}
+        return;
+      }
+
       const HELPER_ID = '__userflex-credential-helper';
       let dismissed = false;
       let helperHost = null;
@@ -892,6 +899,12 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         }
       };
 
+      globalThis[GLOBAL_KEY] = {
+        refresh() {
+          try { fillAvailable(); } catch {}
+        },
+      };
+
       if (document.documentElement) start();
       else addEventListener('DOMContentLoaded', start, { once: true });
     };
@@ -904,19 +917,55 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         return host === domain || host.endsWith(`.${domain}`);
       }),
     };
-    const existingPages = await browser.pages();
-    const pages = existingPages.length ? existingPages : [await browser.newPage()];
+    const prepared = new WeakSet();
     let immediatePages = 0;
 
-    for (const page of pages) {
-      await page.evaluateOnNewDocument(bootstrap, payload);
+    const instrument = async (page) => {
+      if (!page) return;
       try {
+        if (!prepared.has(page)) {
+          prepared.add(page);
+          await page.evaluateOnNewDocument(bootstrap, payload);
+        }
         if (credentialAutofillAllowsUrl(page.url(), payload.allowedOrigins)) {
           await page.evaluate(bootstrap, payload);
           immediatePages += 1;
         }
       } catch {}
-    }
+    };
+
+    const onTarget = async (targetHandle) => {
+      try {
+        if (targetHandle.type() !== 'page') return;
+        await instrument(await targetHandle.page());
+      } catch {}
+    };
+
+    browser.on('targetcreated', onTarget);
+    browser.on('targetchanged', onTarget);
+
+    const existingPages = await browser.pages();
+    const pages = existingPages.length ? existingPages : [await browser.newPage()];
+    await Promise.all(pages.map(instrument));
+
+    // Google authentication can replace or create a page target between the
+    // identifier and password challenges. Keep this CDP connection alive only
+    // for the bounded login window so those targets receive the same trusted-
+    // origin helper. The timer is unref'd and the browser process owns the
+    // actual profile lifetime.
+    let monitorClosed = false;
+    const closeMonitor = async () => {
+      if (monitorClosed) return;
+      monitorClosed = true;
+      try { browser.off('targetcreated', onTarget); } catch {}
+      try { browser.off('targetchanged', onTarget); } catch {}
+      await browser.disconnect().catch(() => null);
+    };
+    const monitorTimer = setTimeout(() => void closeMonitor(), 120000);
+    monitorTimer.unref?.();
+    browser.once('disconnected', () => {
+      try { clearTimeout(monitorTimer); } catch {}
+    });
 
     return {
       installed: true,
@@ -926,9 +975,11 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
       passwordProtection: 'masked-no-reveal-no-copy',
       pagesPrepared: pages.length,
       immediatePages,
+      targetMonitoring: true,
     };
-  } finally {
+  } catch (error) {
     await browser.disconnect().catch(() => null);
+    throw error;
   }
 }
 
