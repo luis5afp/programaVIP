@@ -410,6 +410,23 @@ async function closeBrowserGracefully(entry) {
   return exited || entry.process?.exitCode !== null;
 }
 
+async function closeNativeBrowserWindow(proc, timeoutMs = 5000) {
+  if (!proc?.pid || proc.exitCode !== null) return true;
+  if (process.platform === 'win32') {
+    const pid = Number(proc.pid);
+    await runPowerShell(`
+      $p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue
+      if ($p) { [void]$p.CloseMainWindow() }
+    `, 3000);
+    if (await waitForProcessExit(proc, timeoutMs)) return true;
+  } else {
+    try { proc.kill('SIGTERM'); } catch {}
+    if (await waitForProcessExit(proc, timeoutMs)) return true;
+  }
+  await killProcessTree(proc);
+  return waitForProcessExit(proc, 2500);
+}
+
 async function devtoolsPageStates(debugPort) {
   try {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, {
@@ -602,14 +619,34 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
   return args;
 }
 
-function challengeSafeChromeArgs({ userDataDir, debugPort, proxyRules, initialUrl }) {
+function challengeSafeChromeArgs({ userDataDir, proxyRules, initialUrl }) {
+  const args = [
+    `--user-data-dir=${userDataDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--start-maximized',
+    '--lang=es-ES',
+  ];
+  if (proxyRules) {
+    args.push(
+      `--proxy-server=${proxyRules}`,
+      '--proxy-bypass-list=localhost;127.0.0.1;[::1]',
+      '--disable-quic',
+    );
+  }
+  args.push(initialUrl || 'about:blank');
+  return args;
+}
+
+function challengeReadbackChromeArgs({ userDataDir, debugPort, proxyRules, initialUrl }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
     '--no-first-run',
     '--no-default-browser-check',
-    '--start-maximized',
+    '--window-position=-32000,-32000',
+    '--window-size=1200,900',
     '--lang=es-ES',
   ];
   if (proxyRules) {
@@ -918,16 +955,83 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       };
     }
 
-    const debugPort = await freePort();
+    let debugPort = challengeSafeCapture ? null : await freePort();
     const secret = crypto.randomBytes(32).toString('base64url');
     let entry = null;
 
     const confirmAuthenticatedSession = async () => {
-      const first = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      const activeDebugPort = Number(entry?.debugPort || 0);
+      if (!activeDebugPort) return false;
+      const first = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
       if (first?.authenticated !== true) return false;
       await new Promise((resolve) => setTimeout(resolve, 700));
-      const second = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      const second = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
       return second?.authenticated === true;
+    };
+
+    const prepareChallengeSafeReadback = async () => {
+      if (!entry?.challengeSafeCapture || entry.captureReadbackReady) return;
+      if (entry.captureReadbackPromise) return entry.captureReadbackPromise;
+
+      entry.captureReadbackPromise = (async () => {
+        entry.restartingForCapture = true;
+        log.log?.(
+          'Session Manager Turnstile safe-auth mode: human phase complete; '
+          + 'closing clean browser before readback capture.',
+        );
+
+        await closeNativeBrowserWindow(entry.process, 5000);
+        await markProfileExitedCleanly(userDataDir).catch(() => null);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        const nextDebugPort = await freePort();
+        const readbackProcess = spawn(executable, challengeReadbackChromeArgs({
+          userDataDir,
+          debugPort: nextDebugPort,
+          proxyRules,
+          initialUrl: profile.url,
+        }), {
+          detached: false,
+          windowsHide: false,
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+
+        entry.process = readbackProcess;
+        entry.debugPort = nextDebugPort;
+        debugPort = nextDebugPort;
+        entry.captureReadbackReady = true;
+        entry.restartingForCapture = false;
+
+        readbackProcess.stderr?.on('data', (chunk) => {
+          const text = String(chunk || '').trim();
+          if (text && /ERROR|FATAL|proxy/i.test(text)) {
+            log.warn?.('Session Manager readback Chrome:', text.slice(0, 800));
+          }
+        });
+        readbackProcess.once('error', (error) => {
+          log.error?.('Session Manager readback Chrome spawn failed:', error?.message || error);
+          if (active === entry) void close('readback_spawn_error');
+        });
+        readbackProcess.once('exit', () => {
+          if (active === entry && !entry.restartingForCapture) {
+            active = null;
+            entry.closed = true;
+            void entry.control?.close().catch(() => null);
+            void entry.relay?.close().catch(() => null);
+          }
+        });
+
+        if (!await waitForDevtools(nextDebugPort, 20_000)) {
+          throw new Error('No se pudo abrir el modo de lectura de sesión después de completar la verificación humana.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      })();
+
+      try {
+        return await entry.captureReadbackPromise;
+      } finally {
+        entry.captureReadbackPromise = null;
+      }
     };
 
     const saveCapture = async ({ authenticated: preverifiedAuthenticated = false } = {}) => {
@@ -936,11 +1040,14 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (entry.savePromise) return entry.savePromise;
 
       entry.savePromise = (async () => {
+        if (entry.challengeSafeCapture && !entry.captureReadbackReady) {
+          await prepareChallengeSafeReadback();
+        }
         const authenticated = preverifiedAuthenticated === true
           ? true
           : await confirmAuthenticatedSession();
         const captured = await capturePortableSession({
-          debugPort,
+          debugPort: entry.debugPort,
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
@@ -1002,7 +1109,6 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const launchArgs = challengeSafeCapture
       ? challengeSafeChromeArgs({
           userDataDir,
-          debugPort,
           proxyRules,
           initialUrl: profile.url,
         })
@@ -1051,6 +1157,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       openAiAutomationPromise: null,
       openAiRouteRecoveryAttempts: 0,
       challengeSafeCapture,
+      captureReadbackReady: false,
+      captureReadbackPromise: null,
+      restartingForCapture: false,
       devtoolsTimer: null,
       temporaryProfile: false,
       guest: false,
@@ -1067,7 +1176,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry) void close('spawn_error');
     });
     proc.once('exit', () => {
-      if (active === entry) {
+      if (active === entry && !entry.restartingForCapture) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
         if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
@@ -1087,7 +1196,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (challengeSafeCapture) {
         log.log?.(
           'Session Manager Turnstile safe-auth mode: browser left fully manual; '
-          + 'no Puppeteer/CDP attachment until the administrator explicitly saves the authenticated session.',
+          + 'no extension, Puppeteer, CDP attachment, or remote-debugging port until the administrator explicitly saves the authenticated session.',
         );
       } else if (!openAiCapture || background) {
         const browser = await connectCaptureBrowser(debugPort);
