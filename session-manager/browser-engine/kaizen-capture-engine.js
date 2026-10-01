@@ -75,6 +75,111 @@ function runPowerShell(script, timeout = 8_000) {
   });
 }
 
+function runPowerShellWithEnv(script, environment = {}, timeout = 12_000) {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      timeout,
+      env: { ...process.env, ...environment },
+    }, () => resolve());
+  });
+}
+
+async function nativeCredentialAutofill({ userDataDir, username, password, log = console }) {
+  if (process.platform !== 'win32' || (!username && !password)) return false;
+
+  const escapedProfile = String(userDataDir || '').replace(/'/g, "''");
+  const script = `
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    $username = $env:USERFLEX_AUTOFILL_USERNAME
+    $password = $env:USERFLEX_AUTOFILL_PASSWORD
+    $profileNeedle = '${escapedProfile}'
+
+    function Set-ElementValue($element, $value) {
+      if (-not $element -or [string]::IsNullOrEmpty($value)) { return $false }
+      try {
+        $pattern = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+          $pattern.SetValue($value)
+          return $true
+        }
+      } catch {}
+      return $false
+    }
+
+    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+      $candidatePids = @(
+        Get-CimInstance Win32_Process |
+          Where-Object {
+            ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and
+            $_.CommandLine -and $_.CommandLine.Contains($profileNeedle)
+          } |
+          Select-Object -ExpandProperty ProcessId
+      )
+
+      foreach ($pid in $candidatePids) {
+        try {
+          $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+          if (-not $proc -or $proc.MainWindowHandle -eq 0) { continue }
+          $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+          if (-not $root) { continue }
+
+          $edits = $root.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Edit
+            ))
+          )
+
+          $usernameDone = [string]::IsNullOrEmpty($username)
+          $passwordDone = [string]::IsNullOrEmpty($password)
+
+          foreach ($edit in $edits) {
+            $name = ''
+            $automationId = ''
+            $isPassword = $false
+            try { $name = [string]$edit.Current.Name } catch {}
+            try { $automationId = [string]$edit.Current.AutomationId } catch {}
+            try {
+              $isPassword = [bool]$edit.GetCurrentPropertyValue(
+                [System.Windows.Automation.AutomationElement]::IsPasswordProperty
+              )
+            } catch {}
+
+            $label = ($name + ' ' + $automationId).ToLowerInvariant()
+            if (-not $passwordDone -and ($isPassword -or $label -match 'password|passwd|contrase')) {
+              if (Set-ElementValue $edit $password) { $passwordDone = $true }
+              continue
+            }
+
+            if (-not $usernameDone -and -not $isPassword -and
+                ($label -match 'username|email|user|correo|usuario|login')) {
+              if (Set-ElementValue $edit $username) { $usernameDone = $true }
+            }
+          }
+
+          if ($usernameDone -and $passwordDone) { exit 0 }
+        } catch {}
+      }
+
+      Start-Sleep -Milliseconds 500
+    }
+
+    exit 1
+  `;
+
+  await runPowerShellWithEnv(script, {
+    USERFLEX_AUTOFILL_USERNAME: String(username || ''),
+    USERFLEX_AUTOFILL_PASSWORD: String(password || ''),
+  }, 15_000);
+
+  log.log?.('Session Manager native credential assist attempted through Windows UI Automation.');
+  return true;
+}
+
 async function killStrayProfileProcesses(userDataDir) {
   if (process.platform !== 'win32') return;
   const escaped = userDataDir.replace(/'/g, "''");
@@ -728,6 +833,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (!entry) return;
     active = null;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    if (entry.nativeAutofillTimer) clearTimeout(entry.nativeAutofillTimer);
     if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
     if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
     entry.closed = true;
@@ -1160,12 +1266,28 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       captureReadbackReady: false,
       captureReadbackPromise: null,
       restartingForCapture: false,
+      nativeAutofillTimer: null,
       devtoolsTimer: null,
       temporaryProfile: false,
       guest: false,
       closed: false,
     };
     active = entry;
+
+    if (challengeSafeCapture && (credentials?.username || credentials?.password)) {
+      entry.nativeAutofillTimer = setTimeout(() => {
+        if (active !== entry || entry.closed || entry.restartingForCapture) return;
+        void nativeCredentialAutofill({
+          userDataDir,
+          username: credentials?.username || '',
+          password: credentials?.password || '',
+          log,
+        }).catch((error) => {
+          log.warn?.('Session Manager native credential assist failed:', error?.message || error);
+        });
+      }, 900);
+      entry.nativeAutofillTimer.unref?.();
+    }
 
     proc.stderr?.on('data', (chunk) => {
       const text = String(chunk || '').trim();
@@ -1179,6 +1301,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry && !entry.restartingForCapture) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+        if (entry.nativeAutofillTimer) clearTimeout(entry.nativeAutofillTimer);
         if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
         if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
         entry.closed = true;
