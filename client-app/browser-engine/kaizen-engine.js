@@ -358,180 +358,7 @@ async function suppressEdgeDeveloperModeExtensionWarning(userDataDir) {
 }
 
 
-function canonicalPermissionValue(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => canonicalPermissionValue(item))
-      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-  }
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, canonicalPermissionValue(value[key])]),
-    );
-  }
-  return value ?? null;
-}
 
-function collectUserPermissionSiteSettings(value, found = [], depth = 0) {
-  if (!value || typeof value !== 'object' || depth > 8) return found;
-  if (!Array.isArray(value)) {
-    const restricted = Array.isArray(value.restricted_sites) ? [...value.restricted_sites].map(String).sort() : null;
-    const permitted = Array.isArray(value.permitted_sites) ? [...value.permitted_sites].map(String).sort() : null;
-    if (restricted || permitted) {
-      found.push({
-        restricted_sites: restricted || [],
-        permitted_sites: permitted || [],
-      });
-    }
-    for (const child of Object.values(value)) {
-      collectUserPermissionSiteSettings(child, found, depth + 1);
-    }
-  }
-  return found;
-}
-
-async function managedExtensionSecuritySnapshot(userDataDir, extensionDirs = []) {
-  const normalizedDirs = [...new Set(
-    extensionDirs
-      .filter((dir) => typeof dir === 'string' && dir)
-      .map((dir) => path.resolve(dir).toLowerCase()),
-  )].sort();
-  if (!normalizedDirs.length) return null;
-
-  const profileDir = path.join(userDataDir, 'Default');
-  const sources = {};
-  const managedIds = new Set();
-  let parsedPreferences = null;
-
-  for (const fileName of ['Preferences', 'Secure Preferences']) {
-    const filePath = path.join(profileDir, fileName);
-    let preferences;
-    try {
-      preferences = JSON.parse(await fsp.readFile(filePath, 'utf8'));
-    } catch {
-      if (fileName === 'Preferences') return null;
-      continue;
-    }
-    if (fileName === 'Preferences') parsedPreferences = preferences;
-
-    const settings = preferences?.extensions?.settings;
-    const entries = [];
-    if (settings && typeof settings === 'object') {
-      for (const [id, value] of Object.entries(settings)) {
-        const extensionPath = typeof value?.path === 'string'
-          ? path.resolve(value.path).toLowerCase()
-          : '';
-        if (!extensionPath || !normalizedDirs.includes(extensionPath)) continue;
-        managedIds.add(String(id));
-        entries.push({
-          id: String(id),
-          path: extensionPath,
-          state: Number(value?.state ?? -1),
-          disable_reasons: canonicalPermissionValue(value?.disable_reasons),
-          withholding_permissions: Boolean(value?.withholding_permissions),
-          runtime_granted_permissions: canonicalPermissionValue(value?.runtime_granted_permissions),
-          active_permissions: canonicalPermissionValue(value?.active_permissions),
-          granted_permissions: canonicalPermissionValue(value?.granted_permissions),
-          incognito: Boolean(value?.incognito),
-          newAllowFileAccess: Boolean(value?.newAllowFileAccess),
-          allowFileAccess: Boolean(value?.allowFileAccess),
-          browser_action_visible: value?.browser_action_visible ?? null,
-          browser_action_pinned: value?.browser_action_pinned ?? null,
-        });
-      }
-    }
-    entries.sort((a, b) => a.id.localeCompare(b.id));
-    sources[fileName] = entries;
-  }
-
-  if (!parsedPreferences) return null;
-  const ids = [...managedIds].sort();
-  if (!ids.length) return null;
-
-  const pinnedExtensions = Array.isArray(parsedPreferences?.extensions?.pinned_extensions)
-    ? parsedPreferences.extensions.pinned_extensions.filter((id) => ids.includes(String(id))).map(String)
-    : [];
-  const pinnedActions = Array.isArray(parsedPreferences?.toolbar?.pinned_actions)
-    ? parsedPreferences.toolbar.pinned_actions.filter((id) => ids.some((managedId) => String(id).includes(managedId))).map(String)
-    : [];
-  const siteSettings = collectUserPermissionSiteSettings(parsedPreferences)
-    .map((item) => canonicalPermissionValue(item))
-    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-
-  const snapshot = {
-    ids,
-    sources,
-    pinnedExtensions,
-    pinnedActions,
-    siteSettings,
-    extensionUi: {
-      developer_mode: Boolean(parsedPreferences?.extensions?.ui?.developer_mode),
-      pinned_by_default: Boolean(parsedPreferences?.extensions?.pinned_by_default),
-      pin_extensions_menu_button: Boolean(parsedPreferences?.extensions?.pin_extensions_menu_button),
-    },
-  };
-  return {
-    ids,
-    fingerprint: JSON.stringify(snapshot),
-  };
-}
-
-async function armManagedExtensionConfigurationGuard(entry, log = console) {
-  if (!entry?.extensionDirs?.length || entry.extensionConfigWatcher) return false;
-  const profileDir = path.join(entry.userDataDir, 'Default');
-
-  let baseline = null;
-  for (let attempt = 0; attempt < 8 && !baseline; attempt += 1) {
-    baseline = await managedExtensionSecuritySnapshot(entry.userDataDir, entry.extensionDirs);
-    if (!baseline) await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  if (!baseline) {
-    log.warn?.('userFLOW could not arm extension configuration guard for profile', entry.profile?.id);
-    return false;
-  }
-
-  entry.extensionConfigBaseline = baseline.fingerprint;
-  entry.extensionConfigIds = baseline.ids;
-  entry.extensionConfigCheckTimer = null;
-  entry.extensionConfigTamperClosing = false;
-
-  const check = async () => {
-    entry.extensionConfigCheckTimer = null;
-    if (entry.cleaned || entry.closing || entry.extensionConfigTamperClosing) return;
-
-    let current = await managedExtensionSecuritySnapshot(entry.userDataDir, entry.extensionDirs);
-    if (!current) {
-      await new Promise((resolve) => setTimeout(resolve, 160));
-      current = await managedExtensionSecuritySnapshot(entry.userDataDir, entry.extensionDirs);
-    }
-    if (!current || current.fingerprint === entry.extensionConfigBaseline) return;
-
-    entry.extensionConfigTamperClosing = true;
-    entry.closing = true;
-    log.warn?.('userFLOW detected extension configuration tampering; closing managed profile', entry.profile?.id);
-    entry.closeReason = 'extension_configuration_tampered';
-    await killProcessTree(entry.process);
-  };
-
-  try {
-    entry.extensionConfigWatcher = fs.watch(profileDir, { persistent: false }, (_eventType, fileName) => {
-      const name = String(fileName || '');
-      if (name !== 'Preferences' && name !== 'Secure Preferences') return;
-      if (entry.extensionConfigCheckTimer || entry.cleaned || entry.closing) return;
-      entry.extensionConfigCheckTimer = setTimeout(() => void check(), 120);
-      entry.extensionConfigCheckTimer.unref?.();
-    });
-    entry.extensionConfigWatcher.on('error', (error) => {
-      log.warn?.('userFLOW extension configuration watcher error:', error?.message || error);
-    });
-    return true;
-  } catch (error) {
-    log.warn?.('userFLOW could not watch extension configuration:', error?.message || error);
-    return false;
-  }
-}
 
 async function killProcessTree(proc) {
   if (!proc?.pid) return;
@@ -627,8 +454,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (!entry || entry.cleaned) return;
     entry.cleaned = true;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
-    if (entry.extensionConfigCheckTimer) clearTimeout(entry.extensionConfigCheckTimer);
-    try { entry.extensionConfigWatcher?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
     if (processes.get(entry.key) === entry) processes.delete(entry.key);
     try { await onClosed?.(entry, reason); } catch (error) {
@@ -950,11 +775,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       stderr: [],
       startedAt: Date.now(),
       devtoolsTimer: null,
-      extensionConfigWatcher: null,
-      extensionConfigCheckTimer: null,
-      extensionConfigBaseline: null,
-      extensionConfigIds: [],
-      extensionConfigTamperClosing: false,
       sessionVersion: sessionVersionMatches
         ? Number(sessionMarker?.version || desiredSessionVersion)
         : desiredSessionVersion,
@@ -1104,11 +924,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
-      if (extensionDirs.length) {
-        launchStage = 'extension-guard';
-        await armManagedExtensionConfigurationGuard(entry, log);
-      }
-
       launchStage = 'ready';
       return {
         ok: true,
@@ -1170,14 +985,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
               ? fallbackError.message
               : String(fallbackError || 'No se pudo abrir la página del perfil.');
           }
-        }
-
-        // A degraded profile is intentionally left open, so arm the extension
-        // Preferences guard only after the browser has reached its post-bootstrap
-        // state. This preserves tamper protection without racing normal startup.
-        if (extensionDirs.length) {
-          const guardArmed = await armManagedExtensionConfigurationGuard(entry, log).catch(() => false);
-          warning.extensionGuardArmed = guardArmed === true;
         }
 
         return {
@@ -1409,11 +1216,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const runtime = runtimeFor(profile);
       const wantsSnapshot = snapshotAuthentication(runtime);
       const wantsCredentials = credentialAuthentication(runtime);
-      const optionalCredentialHelper = runtime.authStrategy === 'cookie-snapshot' && Boolean(profile.credentialVersion);
-      const tracksCredentialRevision = wantsCredentials || optionalCredentialHelper;
       const desiredVersion = wantsSnapshot ? Number(profile.sessionVersion || 0) : 0;
       const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
-      const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
+      const desiredCredentialRevision = wantsCredentials ? String(profile.credentialVersion || '') : '';
       const desiredRuntimeKey = runtimeKey(runtime);
       const desiredManagedExtensionKey = managedExtensionKey(profile);
       const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
@@ -1438,6 +1243,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             : snapshotChanged
               ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
               : 'credentials_changed';
+        log.warn?.('userFLOW catalog reconciliation closing active profile', {
+          profileId: profile.id,
+          reason,
+          runtimeChanged: Boolean(runtimeChanged),
+          extensionsChanged: Boolean(extensionsChanged),
+          snapshotChanged: Boolean(snapshotChanged),
+          credentialsChanged: Boolean(credentialsChanged),
+        });
         await close(clientId, profile.id, reason).catch(() => null);
 
         // Mandatory persistence invariant: runtime/snapshot/admin changes may
