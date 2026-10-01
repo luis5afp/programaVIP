@@ -28,21 +28,29 @@ function existingFile(candidates) {
   return null;
 }
 
-export function resolveCaptureBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
+export function resolveCaptureBrowserExecutable(
+  resourcesPath = process.resourcesPath,
+  browserEngine = 'chrome-native',
+  { preferSystemBrowser = false } = {},
+) {
   const localApp = process.env.LOCALAPPDATA || '';
   const programFiles = process.env.PROGRAMFILES || '';
   const programFilesX86 = process.env['PROGRAMFILES(X86)'] || '';
   if (browserEngine === 'nstchrome') {
     return existingFile([path.join(resourcesPath, 'nstchrome', 'chrome.exe')]);
   }
-  return existingFile([
-    path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
+
+  const bundled = path.join(resourcesPath, 'chrome_native', 'chrome.exe');
+  const systemBrowsers = [
     programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  ]);
+  ];
+  return existingFile(preferSystemBrowser
+    ? [...systemBrowsers, bundled]
+    : [bundled, ...systemBrowsers]);
 }
 
 async function freePort() {
@@ -110,6 +118,15 @@ function isOpenAiProfileUrl(profileUrl) {
       || host.endsWith('.chatgpt.com')
       || host === 'openai.com'
       || host.endsWith('.openai.com');
+  } catch {
+    return false;
+  }
+}
+
+function isTurnstileSensitiveProfileUrl(profileUrl) {
+  try {
+    const host = new URL(String(profileUrl || '')).hostname.replace(/^www\./i, '').toLowerCase();
+    return host === 'toolspoint.net' || host.endsWith('.toolspoint.net');
   } catch {
     return false;
   }
@@ -585,6 +602,27 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
   return args;
 }
 
+function challengeSafeChromeArgs({ userDataDir, debugPort, proxyRules, initialUrl }) {
+  const args = [
+    `--user-data-dir=${userDataDir}`,
+    `--remote-debugging-port=${debugPort}`,
+    '--remote-debugging-address=127.0.0.1',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--start-maximized',
+    '--lang=es-ES',
+  ];
+  if (proxyRules) {
+    args.push(
+      `--proxy-server=${proxyRules}`,
+      '--proxy-bypass-list=localhost;127.0.0.1;[::1]',
+      '--disable-quic',
+    );
+  }
+  args.push(initialUrl || 'about:blank');
+  return args;
+}
+
 function guestChromeArgs({ userDataDir, proxyRules, initialUrl }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -683,7 +721,19 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     }
     await close(guest ? 'replace_guest' : 'replace_capture');
 
-    const executable = resolveCaptureBrowserExecutable(process.resourcesPath, profile.browserEngine || 'chrome-native');
+    // Cloudflare explicitly does not support solving production challenges in
+    // automated browsers. ToolsPoint embeds Turnstile on its login page, so keep
+    // the browser clean and detached until the administrator finishes the human
+    // verification and requests an explicit save from the Admin panel.
+    const challengeSafeCapture = !guest
+      && !background
+      && isTurnstileSensitiveProfileUrl(profile.url);
+
+    const executable = resolveCaptureBrowserExecutable(
+      process.resourcesPath,
+      profile.browserEngine || 'chrome-native',
+      { preferSystemBrowser: challengeSafeCapture },
+    );
     if (!executable) {
       throw Object.assign(
         new Error(profile.browserEngine === 'nstchrome'
@@ -701,7 +751,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         )
       : path.join(app.getPath('userData'), 'browserProfilesData', safeSegment(profile.id));
     const openAiCapture = isOpenAiProfileUrl(profile.url);
-    const extensionDir = guest || openAiCapture
+    const extensionDir = guest || openAiCapture || challengeSafeCapture
       ? null
       : path.join(app.getPath('userData'), 'capture-extension', safeSegment(profile.id));
 
@@ -785,6 +835,21 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
               `El proxy del perfil no puede completar la verificación segura de ChatGPT con ${authTarget.host}. ${detail}`,
             );
           }
+        }
+      }
+
+      if (challengeSafeCapture) {
+        try {
+          await probeKaizenProxyHttps(proxy, {
+            host: 'challenges.cloudflare.com',
+            port: 443,
+            path: '/',
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error || 'conexión rechazada');
+          throw new Error(
+            `El proxy del perfil no puede cargar Cloudflare Turnstile (challenges.cloudflare.com). ${detail}`,
+          );
         }
       }
 
@@ -928,18 +993,29 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         profileUrl: profile.url,
         extensionStrategy: profile.extensionStrategy || 'custom',
       });
-    } else {
+    } else if (openAiCapture) {
       log.log?.('Session Manager OpenAI safe-auth mode: capture extension disabled for security challenge compatibility.');
+    } else if (challengeSafeCapture) {
+      log.log?.('Session Manager Turnstile safe-auth mode: capture extension disabled until manual verification is complete.');
     }
 
-    const proc = spawn(executable, chromeArgs({
-      userDataDir,
-      debugPort,
-      proxyRules,
-      extensionDir,
-      background,
-      initialUrl: openAiCapture ? profile.url : 'about:blank',
-    }), {
+    const launchArgs = challengeSafeCapture
+      ? challengeSafeChromeArgs({
+          userDataDir,
+          debugPort,
+          proxyRules,
+          initialUrl: profile.url,
+        })
+      : chromeArgs({
+          userDataDir,
+          debugPort,
+          proxyRules,
+          extensionDir,
+          background,
+          initialUrl: openAiCapture ? profile.url : 'about:blank',
+        });
+
+    const proc = spawn(executable, launchArgs, {
       detached: false,
       windowsHide: false,
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -974,6 +1050,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       openAiAutomationActivated: false,
       openAiAutomationPromise: null,
       openAiRouteRecoveryAttempts: 0,
+      challengeSafeCapture,
       devtoolsTimer: null,
       temporaryProfile: false,
       guest: false,
@@ -1007,7 +1084,12 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     });
 
     try {
-      if (!openAiCapture || background) {
+      if (challengeSafeCapture) {
+        log.log?.(
+          'Session Manager Turnstile safe-auth mode: browser left fully manual; '
+          + 'no Puppeteer/CDP attachment until the administrator explicitly saves the authenticated session.',
+        );
+      } else if (!openAiCapture || background) {
         const browser = await connectCaptureBrowser(debugPort);
         entry.browser = browser;
         entry.automation = await installCaptureAutomation({
@@ -1030,7 +1112,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         entry.publicIp = verifiedPublicIp || proxy.publicIp || null;
       }
 
-      if (!background) {
+      if (!background && !challengeSafeCapture) {
         entry.autoSaveTimer = setInterval(() => {
           if (active !== entry || entry.savePromise || entry.savedResult) return;
           if (Date.now() < Number(entry.autoSaveArmedAt || 0)) {
@@ -1152,6 +1234,8 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         debugPort,
         profileDir: userDataDir,
         publicIp: entry.publicIp || null,
+        challengeSafeCapture,
+        manualSaveRequired: challengeSafeCapture,
       };
     } catch (error) {
       await close('launch_failed');
