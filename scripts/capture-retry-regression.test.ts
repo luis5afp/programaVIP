@@ -24,5 +24,20 @@ assert.match(
   /Este enlace de captura ya fue aceptado por Session Manager/,
   'replayed capture tokens must return an actionable server message',
 );
+assert.match(
+  profiles,
+  /function saveActiveCaptureFromPanel\(\)[\s\S]{0,260}launchCustomProtocol\(captureLaunch\.saveUrl\)/,
+  'Admin must expose the existing save protocol so challenge-safe captures can be saved without an injected page overlay',
+);
+assert.match(
+  profiles,
+  /Guardar sesión ahora/,
+  'capture modal must expose an explicit panel-side save action',
+);
+assert.match(
+  profiles,
+  /Cloudflare[\s\S]{0,260}sin automatización/,
+  'capture UI must explain that human verification is completed without browser automation',
+);
 
 console.log('Capture retry regression: OK');
