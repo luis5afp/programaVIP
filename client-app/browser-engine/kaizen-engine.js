@@ -999,13 +999,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         await new Promise((resolve) => setTimeout(resolve, 1600));
       }
 
-      // Arm security guards before any session restore/navigation. If a later
-      // recoverable bootstrap step fails and the browser stays open, managed
-      // extension protections must already be active.
-      if (extensionDirs.length) {
-        launchStage = 'extension-guard';
-        await armManagedExtensionConfigurationGuard(entry, log);
-      }
+      // DevTools protection can start immediately, but the Preferences watcher
+      // must wait until Chromium/Edge finishes bootstrap. Browsers legitimately
+      // rewrite extension Preferences while registering unpacked extensions and
+      // applying first-run state; fingerprinting too early can misclassify that
+      // startup churn as user tampering and close the profile.
       entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
       entry.devtoolsTimer.unref?.();
 
@@ -1100,6 +1098,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
+      if (extensionDirs.length) {
+        launchStage = 'extension-guard';
+        await armManagedExtensionConfigurationGuard(entry, log);
+      }
+
       launchStage = 'ready';
       return {
         ok: true,
@@ -1161,6 +1164,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
               ? fallbackError.message
               : String(fallbackError || 'No se pudo abrir la página del perfil.');
           }
+        }
+
+        // A degraded profile is intentionally left open, so arm the extension
+        // Preferences guard only after the browser has reached its post-bootstrap
+        // state. This preserves tamper protection without racing normal startup.
+        if (extensionDirs.length) {
+          const guardArmed = await armManagedExtensionConfigurationGuard(entry, log).catch(() => false);
+          warning.extensionGuardArmed = guardArmed === true;
         }
 
         return {
