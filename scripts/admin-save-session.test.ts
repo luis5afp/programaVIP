@@ -15,9 +15,14 @@ const clientMain = readFileSync(new URL('../client-app/main.js', import.meta.url
 const clientStyles = readFileSync(new URL('../client-app/styles.css', import.meta.url), 'utf8');
 const adminStyles = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 
-assert.doesNotMatch(admin, /Guardar sesión \/ generar snapshot/, 'Admin must not expose a second save button');
-assert.doesNotMatch(admin, /saveCaptureFromAdmin/, 'Admin must not send a second save command for the active ticket');
-assert.match(admin, /Guardado automático activo/);
+assert.doesNotMatch(admin, /Guardar sesión \/ generar snapshot/, 'Admin must not expose the old duplicate snapshot action');
+assert.match(
+  admin,
+  /function saveActiveCaptureFromPanel\(\)[\s\S]{0,260}launchCustomProtocol\(captureLaunch\.saveUrl\)/,
+  'Admin must expose the existing idempotent save protocol for challenge-safe captures',
+);
+assert.match(admin, /Guardar sesión ahora/);
+assert.match(admin, /Captura segura de sesión/);
 assert.match(admin, /window\.setInterval\(\(\) => void checkSavedSnapshot\(\), 1200\)/);
 assert.match(admin, /setCaptureLaunch\(null\)/);
 assert.match(admin, /Sesión guardada y verificada correctamente/);
