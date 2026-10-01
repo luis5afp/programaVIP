@@ -1221,7 +1221,7 @@ export function ProfilesView() {
                       className="profile-icon-action"
                       disabled={sessionAction === profile.id}
                       onClick={() => void openAsClient(profile)}
-                      title="Abrir como cliente · prueba el perfil exactamente como lo recibe userFLOW"
+                      title="Abrir como cliente · usa el mismo payload de servidor en un perfil temporal limpio de userFLOW"
                       aria-label="Abrir como cliente"
                     >
                       <Laptop size={15} />
@@ -1342,7 +1342,7 @@ export function ProfilesView() {
                           className="button secondary small"
                           disabled={sessionAction === profile.id}
                           onClick={() => void openAsClient(profile)}
-                          title="Abre el perfil con userFLOW usando snapshot, autofill, extensiones y red reales."
+                          title="Abre el perfil con userFLOW usando snapshot, autofill, extensiones, reglas y red reales sobre un perfil temporal limpio."
                         >
                           <Laptop size={12} />
                           Abrir como cliente
@@ -1524,7 +1524,7 @@ export function ProfilesView() {
                   </Badge>
                 </div>
                 {validationJob.status === 'pending' && <div className="help">Esperando que Windows abra userFLOW...</div>}
-                {validationJob.status === 'running' && <div className="help">userFLOW está ejecutando el perfil temporal con la configuración real.</div>}
+                {validationJob.status === 'running' && <div className="help">userFLOW está ejecutando un perfil temporal limpio con el mismo payload de servidor que recibe el cliente.</div>}
                 {validationJob.error && <div style={{ color: '#b91c1c', fontSize: 12 }}>{validationJob.error}</div>}
                 {validationJob.result && (
                   <div style={{ display: 'grid', gap: 5, fontSize: 12 }}>
@@ -1532,6 +1532,17 @@ export function ProfilesView() {
                     <div><b>Navegador:</b> {String(validationJob.result.browser || 'desconocido')}</div>
                     <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
                     {validationJob.result.publicIp && <div><b>IP detectada:</b> {String(validationJob.result.publicIp)}</div>}
+                    {validationJob.result.testParity && (
+                      <div>
+                        <b>Paridad cliente:</b>{' '}
+                        {validationJob.result.testParity.payload === 'client-launch' ? 'payload real' : 'parcial'}
+                        {' · '}
+                        {Number(validationJob.result.testParity.managedExtensions || 0)} extensiones
+                        {' · '}
+                        {Number(validationJob.result.testParity.contentRules || 0)} reglas
+                        {validationJob.result.testParity.cleanDeviceState ? ' · estado local limpio/temporal' : ''}
+                      </div>
+                    )}
                     {validationJob.result.inspection && (
                       <>
                         <div><b>URL final:</b> {String(validationJob.result.inspection.currentUrl || '')}</div>
