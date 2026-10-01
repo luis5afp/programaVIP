@@ -276,6 +276,12 @@ export interface ProfileValidationJob {
     restore?: Record<string, unknown> | null;
     autofill?: Record<string, unknown> | null;
     inspection?: Record<string, unknown> | null;
+    testParity?: {
+      payload?: string | null;
+      cleanDeviceState?: boolean;
+      managedExtensions?: number;
+      contentRules?: number;
+    } | null;
     testedAt?: string;
   } | null;
   error: string | null;

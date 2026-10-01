@@ -22,6 +22,8 @@ import {
   validateCapturedMaterialData,
 } from './session-material';
 import { latestValidationTimestamp, managedSessionHealth } from './session-health-policy';
+import { managedExtensionsForProfiles } from './extensions';
+import { managedContentRulesForProfiles } from './content-rules';
 import {
   requestAllKeeperChecks,
   requestKeeperChecks,
@@ -128,7 +130,7 @@ function safeState(profileId: string, credential: any, session: any, keeper: any
 async function profileRow(env: Env, profileId: string) {
   const rows = await db(
     env,
-    `userflex_profiles?select=id,name,url,session_mode,session_ready,enabled,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
+    `userflex_profiles?select=id,name,url,platform,image_url,tags,updated_at,session_mode,session_ready,enabled,browser_engine,auth_strategy,storage_strategy,network_strategy,extension_strategy&id=eq.${profileId}&limit=1`,
   );
   const profile = rows?.[0];
   if (!profile) throw new HttpError(404, 'PROFILE_NOT_FOUND', 'El perfil no existe.');
@@ -692,10 +694,11 @@ function safeDiagnosticUrl(value: unknown) {
 function safeRuntimeDiagnostic(value: any) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const allowed = ['browserEngine', 'authStrategy', 'storageStrategy', 'networkStrategy', 'extensionStrategy'];
-  const out: Record<string, string> = {};
+  const out: Record<string, string | boolean> = {};
   for (const key of allowed) {
     if (typeof value[key] === 'string') out[key] = value[key].slice(0, 64);
   }
+  if (typeof value.deviceLocalAuth === 'boolean') out.deviceLocalAuth = value.deviceLocalAuth;
   return out;
 }
 
@@ -734,6 +737,12 @@ function safeValidationResult(value: any) {
     restore,
     autofill,
     inspection,
+    testParity: value?.testParity && typeof value.testParity === 'object' ? {
+      payload: typeof value.testParity.payload === 'string' ? value.testParity.payload.slice(0, 64) : null,
+      cleanDeviceState: value.testParity.cleanDeviceState === true,
+      managedExtensions: Math.max(0, Number(value.testParity.managedExtensions || 0)),
+      contentRules: Math.max(0, Number(value.testParity.contentRules || 0)),
+    } : null,
     testedAt: new Date().toISOString(),
   };
 }
@@ -1334,6 +1343,47 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
   const path = new URL(request.url).pathname;
   const method = request.method.toUpperCase();
 
+  const clientTestExtensionPackageMatch = path.match(/^\/api\/client-test\/extensions\/([0-9a-f-]{36})\/package$/i);
+  if (clientTestExtensionPackageMatch && method === 'GET') {
+    assertUserflowVersion(request);
+    const rawToken = String(new URL(request.url).searchParams.get('token') || '');
+    const job = await validationJob(env, rawToken);
+    const extensionId = uuid(clientTestExtensionPackageMatch[1], 'extensionId');
+    const extensionMap = await managedExtensionsForProfiles(env, [job.profile_id]);
+    const authorized = (extensionMap.get(String(job.profile_id)) || [])
+      .find((item: any) => String(item?.id || '') === extensionId);
+    if (!authorized) throw new HttpError(403, 'EXTENSION_NOT_AUTHORIZED_FOR_PROFILE');
+
+    const expectedSha = String(new URL(request.url).searchParams.get('sha') || '').toLowerCase();
+    if (expectedSha && expectedSha !== String(authorized.sha256 || '').toLowerCase()) {
+      throw new HttpError(409, 'EXTENSION_VERSION_CHANGED', 'La extensión cambió desde que comenzó la prueba. Vuelve a abrirla como cliente.');
+    }
+
+    const rows = await db(
+      env,
+      `userflex_extensions?select=package_path,package_sha256,package_size&id=eq.${extensionId}&enabled=eq.true&validation_status=eq.runtime_valid&limit=1`,
+    );
+    const extension = rows?.[0];
+    if (!extension?.package_path || !env.EXTENSION_PACKAGES) {
+      throw new HttpError(404, 'EXTENSION_PACKAGE_NOT_FOUND');
+    }
+    const object = await env.EXTENSION_PACKAGES.get(extension.package_path);
+    if (!object) throw new HttpError(404, 'EXTENSION_PACKAGE_NOT_FOUND');
+
+    const declaredSize = Number(extension.package_size || 0);
+    if (object.size < 1 || object.size !== declaredSize || object.size > 20 * 1024 * 1024) {
+      throw new HttpError(502, 'EXTENSION_PACKAGE_SIZE');
+    }
+
+    const headers = new Headers({
+      'Content-Type': 'application/zip',
+      'Content-Length': String(object.size),
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return new Response(object.body, { status: 200, headers });
+  }
+
   if (path === '/api/client-test/bootstrap' && method === 'POST') {
     assertUserflowVersion(request);
     const body = await bodyJson(request);
@@ -1413,6 +1463,16 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       };
     }
 
+    const [extensionMap, contentRuleMap] = await Promise.all([
+      managedExtensionsForProfiles(env, [profile.id]),
+      managedContentRulesForProfiles(env, [profile.id]),
+    ]);
+    const managedExtensions = (extensionMap.get(String(profile.id)) || []).map((item: any) => ({
+      ...item,
+      packageUrl: `/api/client-test/extensions/${item.id}/package?token=${encodeURIComponent(rawToken)}&sha=${encodeURIComponent(item.sha256)}`,
+    }));
+    const managedContentRules = contentRuleMap.get(String(profile.id)) || [];
+
     return json({
       ok: true,
       job: { id: job.id, expiresAt: job.expires_at },
@@ -1420,9 +1480,15 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
         id: profile.id,
         name: profile.name,
         url: profile.url,
+        platform: profile.platform || null,
+        tags: Array.isArray(profile.tags) ? profile.tags : [],
+        imageUrl: profile.image_url || null,
+        imageVersion: profile.updated_at || null,
         sessionMode: profile.session_mode,
         sessionReady: profile.session_ready === true,
         runtime,
+        extensions: managedExtensions,
+        contentRules: managedContentRules,
       },
       connection,
       sessionDelivery,

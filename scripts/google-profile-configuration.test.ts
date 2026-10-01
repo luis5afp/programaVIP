@@ -5,6 +5,14 @@ const sessions = readFileSync(
   new URL('../cloudflare/lib/profile-sessions.ts', import.meta.url),
   'utf8',
 );
+const clientMain = readFileSync(
+  new URL('../client-app/main.js', import.meta.url),
+  'utf8',
+);
+const profilesView = readFileSync(
+  new URL('../src/views/ProfilesView.tsx', import.meta.url),
+  'utf8',
+);
 
 assert.match(
   sessions,
@@ -36,6 +44,38 @@ assert.match(
   sessions,
   /\/api\/session-keeper\/bootstrap[\s\S]{0,6500}updatedAt: credentials\.updated_at \|\| null/,
   'Session Keeper must receive the credential revision so stale local Google identities are reset after an admin edit',
+);
+
+assert.match(
+  sessions,
+  /managedExtensionsForProfiles\(env, \[profile\.id\]\)[\s\S]{0,500}managedContentRulesForProfiles\(env, \[profile\.id\]\)/,
+  'open-as-client bootstrap must include the same managed extensions and content rules as a real client launch',
+);
+const clientTestPackageRoute = sessions.indexOf('clientTestExtensionPackageMatch');
+const clientTestPackageRead = sessions.indexOf('EXTENSION_PACKAGES.get', clientTestPackageRoute);
+assert.ok(
+  clientTestPackageRoute >= 0 && clientTestPackageRead > clientTestPackageRoute,
+  'open-as-client must expose token-scoped managed extension packages without requiring a separate client login',
+);
+assert.match(
+  sessions,
+  /profile:[\s\S]{0,650}extensions:\s*managedExtensions[\s\S]{0,180}contentRules:\s*managedContentRules/,
+  'client-test profile payload must carry extensions and content rules into userFLOW',
+);
+assert.match(
+  clientMain,
+  /handleClientTestProtocol[\s\S]{0,1800}prepareManagedExtensions\(profile\?\.extensions \|\| \[\], \{ token: false \}\)[\s\S]{0,900}managedExtensions,/,
+  'userFLOW client-test must download and launch the profile with its real managed extensions',
+);
+assert.match(
+  clientMain,
+  /profile\?\.runtime\?\.deviceLocalAuth === true[\s\S]{0,650}inspectionNeedsLogin\(inspection\)[\s\S]{0,500}engine\.inspect/,
+  'Flow client-test must wait through device-bound Google redirects before classifying authentication',
+);
+assert.match(
+  profilesView,
+  /mismo payload de servidor[\s\S]{0,180}perfil temporal limpio/,
+  'Admin UI must state that open-as-client uses real server payload but clean local device state',
 );
 
 const captureEngine = readFileSync(
