@@ -155,8 +155,8 @@ assert.match(
 
 assert.match(
   engine,
-  /const credentialHelperEnabled = credentialManaged && credentialsAvailable/,
-  'optional stored credentials must not inject the helper into cookie-snapshot profiles',
+  /optionalSnapshotCredentials = runtime\.authStrategy === 'cookie-snapshot'[\s\S]{0,260}credentials\?\.required === false[\s\S]{0,220}credentialHelperEnabled = credentialsAvailable/,
+  'optional stored credentials must remain available as a cookie-snapshot login fallback',
 );
 
 assert.match(
