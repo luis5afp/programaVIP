@@ -1906,18 +1906,29 @@ async function handleClientTestProtocol(rawUrl) {
     }
 
     testClientId = `validation_${bootstrap.job.id}`;
-    const result = await getKaizenBrowserEngine().launch({
+    const managedExtensions = await prepareManagedExtensions(profile?.extensions || [], { token: false });
+    const engine = getKaizenBrowserEngine();
+    const result = await engine.launch({
       clientId: testClientId,
       profile,
       connection: bootstrap.connection || { mode: 'direct', locked: false },
       delivery: bootstrap.sessionDelivery || null,
       credentials: bootstrap.credentialDelivery || null,
+      managedExtensions,
       usageId: null,
       ephemeral: true,
     });
-    const inspection = await getKaizenBrowserEngine()
-      .inspect(testClientId, profile.id)
-      .catch(() => null);
+
+    // FLOW and other device-bound providers can spend a few seconds completing
+    // redirects/hydration after the browser is visible. Match the real client
+    // behavior by allowing the page to settle before classifying the session.
+    let inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
+    if (profile?.runtime?.deviceLocalAuth === true) {
+      for (let attempt = 0; attempt < 3 && inspectionNeedsLogin(inspection); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1800 : 2500));
+        inspection = await engine.inspect(testClientId, profile.id).catch(() => inspection);
+      }
+    }
 
     const authStrategy = profile?.runtime?.authStrategy || 'manual';
     const loginFieldsVisible = Boolean(inspection?.usernameFieldVisible || inspection?.passwordFieldVisible);
@@ -1951,6 +1962,12 @@ async function handleClientTestProtocol(rawUrl) {
       ok: true,
       outcome,
       inspection,
+      testParity: {
+        payload: 'client-launch',
+        cleanDeviceState: true,
+        managedExtensions: managedExtensions.length,
+        contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules.length : 0,
+      },
     };
     await apiRequest('/api/client-test/report', {
       method: 'POST',
