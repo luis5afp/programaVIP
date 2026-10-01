@@ -162,6 +162,39 @@ assert.match(
 
 assert.match(
   engine,
+  /recoverableLaunchStages = new Set\(\[[\s\S]{0,300}'session-restore'[\s\S]{0,300}'navigation'[\s\S]{0,300}'credential-autofill'/,
+  'recoverable profile bootstrap stages must be explicitly allowlisted',
+);
+
+const recoverableCatchStart = engine.indexOf('if (browserStillRunning && recoverableLaunchStages.has(launchStage))');
+const recoverableCatchEnd = engine.indexOf("profileState: 'launch-degraded'", recoverableCatchStart);
+assert.ok(
+  recoverableCatchStart >= 0 && recoverableCatchEnd > recoverableCatchStart,
+  'recoverable bootstrap failures must keep the browser process alive and return degraded diagnostics',
+);
+
+assert.match(
+  engine,
+  /launchStage === 'session-restore'[\s\S]{0,800}navigateBrowserHome\(debugPort, profile\.url, \{ closeExtraPages: true \}\)/,
+  'failed session restore must make a best-effort navigation to the profile home without killing the browser',
+);
+
+const fatalKill = engine.indexOf('await killProcessTree(proc);', recoverableCatchEnd);
+const fatalCleanup = engine.indexOf('launch_failed:${launchStage}', fatalKill);
+assert.ok(
+  fatalKill > recoverableCatchEnd && fatalCleanup > fatalKill,
+  'non-recoverable launch failures must still fail closed and terminate the managed browser',
+);
+
+assert.match(
+  engine,
+  /armManagedExtensionConfigurationGuard\(entry, log\)[\s\S]{0,500}closeDevtoolsTargets/,
+  'security guards must be armed before recoverable bootstrap stages can leave a browser open',
+);
+
+
+assert.match(
+  engine,
   /resolveManagedExtensionBrowserExecutable[\s\S]{0,1200}chrome_native[\s\S]{0,400}edgeCandidates\(\)[\s\S]{0,400}nativeChromeCandidates/,
   'managed extensions must prefer bundled Chromium/Edge before branded Chrome',
 );

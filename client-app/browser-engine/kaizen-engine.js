@@ -958,6 +958,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     };
     processes.set(key, entry);
 
+    // Track the exact bootstrap phase so recoverable page/session failures can
+    // leave the browser visible with a useful diagnostic instead of looking
+    // like an unexplained crash. Security/control-plane failures remain fatal.
+    let launchStage = 'browser-control';
+    const recoverableLaunchStages = new Set([
+      'session-restore',
+      'navigation',
+      'credential-autofill',
+    ]);
+
     proc.stderr?.on('data', (chunk) => {
       const text = String(chunk || '').trim();
       if (!text) return;
@@ -975,6 +985,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     });
 
     try {
+      launchStage = 'browser-control';
       const browser = await connectKaizenBrowser(debugPort);
       await browser.disconnect().catch(() => null);
 
@@ -987,6 +998,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       if (hasManagedExtensions) {
         await new Promise((resolve) => setTimeout(resolve, 1600));
       }
+
+      // Arm security guards before any session restore/navigation. If a later
+      // recoverable bootstrap step fails and the browser stays open, managed
+      // extension protections must already be active.
+      if (extensionDirs.length) {
+        launchStage = 'extension-guard';
+        await armManagedExtensionConfigurationGuard(entry, log);
+      }
+      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
+      entry.devtoolsTimer.unref?.();
 
       let deviceLocalAuthMigration = null;
       if (runtime.deviceLocalAuth === true && netflixTarget) {
@@ -1011,15 +1032,27 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
       let autofill = null;
       if (credentialManaged && !credentialsAvailable) {
+        launchStage = 'credentials-validation';
         throw new Error('El perfil necesita credenciales administradas y el servidor no las entregó.');
       }
 
       let restore = null;
       if (snapshotManaged) {
+        launchStage = 'session-preconditions';
         if (!delivery?.ready || !delivery?.materialIncluded || !delivery?.material) {
           throw new Error('La sesión capturada del perfil todavía no está lista.');
         }
+        if (!['userflex-browser-session-v1', 'userflex-browser-session-v2'].includes(delivery.material.format)) {
+          throw new Error('El material de sesión del perfil no es compatible con el motor KAIZEN.');
+        }
+        if (delivery.material.profileId && delivery.material.profileId !== profile.id) {
+          throw new Error('La sesión entregada no pertenece a este perfil.');
+        }
+        if (delivery.material.allowedOrigin && delivery.material.allowedOrigin !== target.origin) {
+          throw new Error('El origen de la sesión no coincide con la web del perfil.');
+        }
 
+        launchStage = 'session-restore';
         if (sessionVersionMatches) {
           // The lightweight marker may still be current even when a site/user
           // removed one or more cookies locally. Repair only cookies that are
@@ -1050,6 +1083,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           entry.sessionMarker = sessionMarker;
         }
       } else {
+        launchStage = 'navigation';
         await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
       }
 
@@ -1057,6 +1091,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       // Injecting it before Chrome finishes startup can bind it to a restored
       // stale tab instead of the tab the user actually sees.
       if (credentialHelperEnabled) {
+        launchStage = 'credential-autofill';
         autofill = await installCredentialAutofill({
           debugPort,
           profileUrl: profile.url,
@@ -1065,12 +1100,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
-      if (extensionDirs.length) {
-        await armManagedExtensionConfigurationGuard(entry, log);
-      }
-
-      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
-      entry.devtoolsTimer.unref?.();
+      launchStage = 'ready';
       return {
         ok: true,
         reused: false,
@@ -1105,9 +1135,62 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         scriptDiagnostics,
       };
     } catch (error) {
+      const browserStillRunning = proc.exitCode === null && !entry.spawnError;
+      if (browserStillRunning && recoverableLaunchStages.has(launchStage)) {
+        const warning = {
+          stage: launchStage,
+          code: String(error?.code || 'PROFILE_BOOTSTRAP_DEGRADED'),
+          message: error instanceof Error ? error.message : String(error || 'Error de inicialización del perfil.'),
+        };
+        entry.degraded = true;
+        entry.launchWarning = warning;
+        log.warn?.(
+          `userFLOW kept browser open after recoverable ${launchStage} failure for ${profile.name || profile.id}: ${warning.message}`,
+        );
+
+        // Session restoration can fail after a synthetic/blank bootstrap page.
+        // Best-effort navigation leaves the user on the intended site for
+        // diagnosis/manual sign-in without weakening proxy or extension guards.
+        if (launchStage === 'session-restore') {
+          try {
+            await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
+            warning.fallbackNavigation = 'profile-home';
+          } catch (fallbackError) {
+            warning.fallbackNavigation = 'failed';
+            warning.fallbackError = fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError || 'No se pudo abrir la página del perfil.');
+          }
+        }
+
+        return {
+          ok: true,
+          reused: false,
+          degraded: true,
+          external: true,
+          pid: proc.pid,
+          browser: entry.browserKind,
+          debugPort,
+          profileDir: userDataDir,
+          network: connection?.mode || 'direct',
+          networkLocked: connection?.locked === true,
+          publicIp: entry.publicIp || null,
+          sessionVersion: Number(entry.sessionVersion || desiredSessionVersion),
+          profileState: 'launch-degraded',
+          runtime,
+          streamingDomController: {
+            ...streamingDomController,
+            guardRevision,
+          },
+          scriptDiagnostics,
+          launchWarning: warning,
+        };
+      }
+
       entry.closing = true;
       await killProcessTree(proc);
-      await cleanup(entry, 'launch_failed');
+      await cleanup(entry, `launch_failed:${launchStage}`);
+      if (error && typeof error === 'object' && !error.launchStage) error.launchStage = launchStage;
       throw error;
     }
   }
