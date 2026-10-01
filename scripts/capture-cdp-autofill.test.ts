@@ -38,11 +38,16 @@ assert.doesNotMatch(
   /remote-debugging-port|load-extension|disable-extensions-except/,
   'Turnstile human phase must not expose remote debugging or load the capture extension',
 );
-assert.match(
-  engine,
-  /async function nativeCredentialAutofill[\s\S]{0,900}UIAutomationClient[\s\S]{0,2600}ValuePattern[\s\S]{0,2200}USERFLEX_AUTOFILL_PASSWORD/,
-  'ToolsPoint safe-auth must fill credentials through Windows accessibility without browser DOM automation',
+const nativeAutofillStart = engine.indexOf('async function nativeCredentialAutofill');
+const nativeAutofillEnd = engine.indexOf('\nasync function killStrayProfileProcesses', nativeAutofillStart);
+assert.ok(
+  nativeAutofillStart >= 0 && nativeAutofillEnd > nativeAutofillStart,
+  'native credential autofill helper must be present',
 );
+const nativeAutofillSource = engine.slice(nativeAutofillStart, nativeAutofillEnd);
+assert.match(nativeAutofillSource, /UIAutomationClient/);
+assert.match(nativeAutofillSource, /ValuePattern/);
+assert.match(nativeAutofillSource, /USERFLEX_AUTOFILL_PASSWORD/);
 assert.match(
   engine,
   /runPowerShellWithEnv\(script,[\s\S]{0,220}USERFLEX_AUTOFILL_USERNAME[\s\S]{0,220}USERFLEX_AUTOFILL_PASSWORD/,
