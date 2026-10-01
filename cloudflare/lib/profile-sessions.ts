@@ -694,10 +694,11 @@ function safeDiagnosticUrl(value: unknown) {
 function safeRuntimeDiagnostic(value: any) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const allowed = ['browserEngine', 'authStrategy', 'storageStrategy', 'networkStrategy', 'extensionStrategy'];
-  const out: Record<string, string> = {};
+  const out: Record<string, string | boolean> = {};
   for (const key of allowed) {
     if (typeof value[key] === 'string') out[key] = value[key].slice(0, 64);
   }
+  if (typeof value.deviceLocalAuth === 'boolean') out.deviceLocalAuth = value.deviceLocalAuth;
   return out;
 }
 
