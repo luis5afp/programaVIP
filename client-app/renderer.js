@@ -234,6 +234,14 @@ async function launchProfile(profile, card) {
         );
       }
 
+      if (result?.inspection?.humanVerificationVisible === true) {
+        const provider = String(result.inspection.humanVerificationProvider || 'del sitio');
+        setError(
+          catalogError,
+          `El sitio solicita una verificación humana (${provider}). Completa esa verificación manualmente; userFLOW no la omite ni la automatiza.`,
+        );
+      }
+
       const streamingProfile = categoryKey(categoryLabel(profile)) === 'streaming'
         || profile?.runtime?.storageStrategy === 'netflix-local-device';
 

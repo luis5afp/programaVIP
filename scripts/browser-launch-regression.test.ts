@@ -38,6 +38,24 @@ assert.ok(
 );
 
 assert.match(
+  engine,
+  /optionalSnapshotCredentials = runtime\.authStrategy === 'cookie-snapshot'[\s\S]{0,260}credentials\?\.required === false[\s\S]{0,220}credentialHelperEnabled = credentialsAvailable/,
+  'cookie-snapshot profiles must use delivered managed credentials as a login fallback instead of discarding them client-side',
+);
+
+assert.doesNotMatch(
+  engine,
+  /--user-agent=/,
+  'managed launches must use the native browser User-Agent so HTTP UA, Client Hints, TLS and engine identity stay consistent',
+);
+
+assert.match(
+  sessionState,
+  /humanVerificationVisible[\s\S]{0,700}cloudflare-turnstile[\s\S]{0,260}google-recaptcha[\s\S]{0,260}hcaptcha/,
+  'runtime inspection must report human-verification surfaces without attempting to bypass them',
+);
+
+assert.match(
   sessionState,
   /const finalPages = await browser\.pages\(\);[\s\S]{0,600}await extra\.close\(\)/,
   'snapshot restoration must close stale startup tabs',
@@ -137,8 +155,8 @@ assert.match(
 
 assert.match(
   engine,
-  /const credentialHelperEnabled = credentialManaged && credentialsAvailable/,
-  'optional stored credentials must not inject the helper into cookie-snapshot profiles',
+  /optionalSnapshotCredentials = runtime\.authStrategy === 'cookie-snapshot'[\s\S]{0,260}credentials\?\.required === false[\s\S]{0,220}credentialHelperEnabled = credentialsAvailable/,
+  'optional stored credentials must remain available as a cookie-snapshot login fallback',
 );
 
 assert.match(

@@ -1004,6 +1004,8 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         passwordFilled: false,
         loginActionVisible: false,
         helperVisible: false,
+        humanVerificationVisible: false,
+        humanVerificationProvider: null,
       };
     }
     return await page.evaluate(({ targetHostname, streamingProfile }) => {
@@ -1062,6 +1064,24 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
 
       const googleAccounts = currentHost === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(currentHost);
       const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const challengeFrameSources = Array.from(document.querySelectorAll('iframe'))
+        .map((frame) => String(frame.getAttribute('src') || '').toLowerCase())
+        .filter(Boolean);
+      const hasTurnstile = challengeFrameSources.some((src) => src.includes('challenges.cloudflare.com'))
+        || Boolean(document.querySelector('[data-sitekey][data-callback], .cf-turnstile'));
+      const hasRecaptcha = challengeFrameSources.some((src) => src.includes('recaptcha'))
+        || Boolean(document.querySelector('.g-recaptcha, [data-sitekey][data-action]'));
+      const hasHcaptcha = challengeFrameSources.some((src) => src.includes('hcaptcha'))
+        || Boolean(document.querySelector('.h-captcha'));
+      const humanVerificationText = /verify (?:that )?you(?:'|’)re human|verify you are human|confirm you are human|human verification|verifica(?:r)? que eres humano|comprueba que eres humano|no soy un robot|i am not a robot|captcha/.test(pageText);
+      const humanVerificationVisible = hasTurnstile || hasRecaptcha || hasHcaptcha || humanVerificationText;
+      const humanVerificationProvider = hasTurnstile
+        ? 'cloudflare-turnstile'
+        : hasRecaptcha
+          ? 'google-recaptcha'
+          : hasHcaptcha
+            ? 'hcaptcha'
+            : humanVerificationText ? 'generic' : null;
       const flowPublicLanding = targetHostname === 'flow.google.com'
         && currentHost === 'flow.google.com'
         && (
@@ -1102,6 +1122,8 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
         passwordFilled: Boolean(password && String(password.value || '').length > 0),
         loginActionVisible,
         helperVisible: Boolean(document.getElementById('__userflex-credential-helper')),
+        humanVerificationVisible,
+        humanVerificationProvider,
       };
     }, { targetHostname, streamingProfile: streamingProfile === true }).catch(() => ({
       currentUrl: page.url(),
