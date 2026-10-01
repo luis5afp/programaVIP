@@ -19,6 +19,7 @@ for (const [originsFor, allows] of [
     'https://accounts.google.com',
   ]);
   assert.equal(allows('https://accounts.google.com/v3/signin/identifier', flowOrigins), true);
+  assert.equal(allows('https://accounts.google.com/v3/signin/challenge/pwd?TL=test', flowOrigins), true);
   assert.equal(allows('https://accounts.google.com.co/accounts/SetSID?ssdc=1', flowOrigins), true);
   assert.equal(allows('https://accounts.google.co.uk/accounts/SetSID', flowOrigins), true);
   assert.equal(allows('https://accounts.google.de/accounts/SetSID', flowOrigins), true);
@@ -92,6 +93,17 @@ assert.match(
   /MutationObserver[\s\S]{0,900}addedNodes[\s\S]{0,900}scheduleFill/,
   'client autofill must follow delayed multi-step login fields without high-frequency attribute scanning',
 );
+assert.match(
+  clientState,
+  /browser\.on\('targetcreated', onTarget\)[\s\S]{0,180}browser\.on\('targetchanged', onTarget\)/,
+  'client autofill must follow new or replaced Google authentication targets through the password challenge',
+);
+assert.match(
+  clientState,
+  /__userflexCredentialAutofillV395[\s\S]{0,220}existingAutomation\?\.refresh/,
+  'client autofill reinstrumentation must be idempotent when targetchanged fires repeatedly',
+);
+
 assert.match(
   clientState,
   /setInterval\(\(\) => scheduleFill\(0\), 15000\)[\s\S]{0,500}120000/,
