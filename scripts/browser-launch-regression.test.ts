@@ -166,9 +166,10 @@ assert.match(
   'recoverable profile bootstrap stages must be explicitly allowlisted',
 );
 
-assert.match(
-  engine,
-  /recoverableLaunchStages\.has\(launchStage\)[\s\S]{0,1400}profileState: 'launch-degraded'/,
+const recoverableCatchStart = engine.indexOf('if (browserStillRunning && recoverableLaunchStages.has(launchStage))');
+const recoverableCatchEnd = engine.indexOf("profileState: 'launch-degraded'", recoverableCatchStart);
+assert.ok(
+  recoverableCatchStart >= 0 && recoverableCatchEnd > recoverableCatchStart,
   'recoverable bootstrap failures must keep the browser process alive and return degraded diagnostics',
 );
 
@@ -178,9 +179,10 @@ assert.match(
   'failed session restore must make a best-effort navigation to the profile home without killing the browser',
 );
 
-assert.match(
-  engine,
-  /launch_failed:\$\{launchStage\}[\s\S]{0,300}killProcessTree\(proc\)/,
+const fatalKill = engine.indexOf('await killProcessTree(proc);', recoverableCatchEnd);
+const fatalCleanup = engine.indexOf('launch_failed:${launchStage}', fatalKill);
+assert.ok(
+  fatalKill > recoverableCatchEnd && fatalCleanup > fatalKill,
   'non-recoverable launch failures must still fail closed and terminate the managed browser',
 );
 
