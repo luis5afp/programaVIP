@@ -40,9 +40,15 @@ assert.match(
 assert.match(main, /safeStorage\.encryptString\(JSON\.stringify\(\{[\s\S]{0,180}identifier[\s\S]{0,180}password/, 'quick-login credentials must be encrypted with Electron safeStorage');
 assert.match(main, /loginCredentialsPath\(\)[\s\S]{0,220}login-credentials\.json/, 'quick-login credentials must use a dedicated local file');
 assert.match(main, /await saveLoginCredentials\(identifier, password\)/, 'successful client login must refresh the encrypted quick-login cache');
-assert.match(
-  main,
-  /async function syncClientConfiguration[\s\S]{0,900}const clientId = String\([\s\S]{0,260}authMeta\?\.client\?\.id[\s\S]{0,700}reconcileCatalogProfiles\(clientId, catalogProfiles\)/,
+const syncStart = main.indexOf('async function syncClientConfiguration(');
+const syncEnd = main.indexOf('\nfunction clearHeartbeatTimer(', syncStart);
+assert.ok(syncStart >= 0 && syncEnd > syncStart, 'client configuration sync must be discoverable');
+const syncSource = main.slice(syncStart, syncEnd);
+const clientIdPos = syncSource.indexOf('const clientId = String(');
+const authClientPos = syncSource.indexOf('authMeta?.client?.id', clientIdPos);
+const reconcilePos = syncSource.indexOf('reconcileCatalogProfiles(clientId, catalogProfiles)', authClientPos);
+assert.ok(
+  clientIdPos >= 0 && authClientPos > clientIdPos && reconcilePos > authClientPos,
   'client configuration sync must resolve clientId locally before profile reconciliation',
 );
 assert.match(preload, /savedLogin:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('userflex:saved-login'\)/, 'renderer must read quick-login data only through preload IPC');
