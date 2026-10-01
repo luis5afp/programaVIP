@@ -736,6 +736,12 @@ function safeValidationResult(value: any) {
     restore,
     autofill,
     inspection,
+    testParity: value?.testParity && typeof value.testParity === 'object' ? {
+      payload: typeof value.testParity.payload === 'string' ? value.testParity.payload.slice(0, 64) : null,
+      cleanDeviceState: value.testParity.cleanDeviceState === true,
+      managedExtensions: Math.max(0, Number(value.testParity.managedExtensions || 0)),
+      contentRules: Math.max(0, Number(value.testParity.contentRules || 0)),
+    } : null,
     testedAt: new Date().toISOString(),
   };
 }
