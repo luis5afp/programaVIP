@@ -186,10 +186,22 @@ assert.ok(
   'non-recoverable launch failures must still fail closed and terminate the managed browser',
 );
 
-assert.match(
-  engine,
-  /armManagedExtensionConfigurationGuard\(entry, log\)[\s\S]{0,500}closeDevtoolsTargets/,
-  'security guards must be armed before recoverable bootstrap stages can leave a browser open',
+const firstExtensionGuard = launch.indexOf('armManagedExtensionConfigurationGuard(entry, log)');
+assert.ok(
+  firstExtensionGuard > autofillPosition,
+  'the extension Preferences guard must arm only after normal session/navigation/autofill bootstrap settles',
+);
+
+const earlyDevtoolsGuard = launch.indexOf('closeDevtoolsTargets(debugPort)');
+assert.ok(
+  earlyDevtoolsGuard >= 0 && earlyDevtoolsGuard < firstExtensionGuard,
+  'DevTools protection may start early while the Preferences fingerprint waits for stable browser state',
+);
+
+const degradedGuard = engine.indexOf('armManagedExtensionConfigurationGuard(entry, log)', recoverableCatchStart);
+assert.ok(
+  degradedGuard > recoverableCatchStart && degradedGuard < recoverableCatchEnd,
+  'a degraded browser left open must still arm extension tamper protection after fallback bootstrap',
 );
 
 
