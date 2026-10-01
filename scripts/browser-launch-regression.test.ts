@@ -213,6 +213,24 @@ assert.match(
 
 assert.match(
   engine,
+  /managedExtensionKey:\s*desiredManagedExtensionKey/,
+  'running profiles must store a catalog-comparable managed extension fingerprint separately from the full launch fingerprint',
+);
+
+assert.match(
+  engine,
+  /extensionsChanged = runningEntry[\s\S]{0,260}runningEntry\.managedExtensionKey[\s\S]{0,220}desiredManagedExtensionKey/,
+  'catalog reconciliation must compare managed extension assignments without Browser Guard or streaming DOM launch metadata',
+);
+
+assert.doesNotMatch(
+  engine,
+  /extensionsChanged = runningEntry[^\n]*runningEntry\.extensionKey/,
+  'revisiting the catalog must not compare the full launch fingerprint against catalog-only extension metadata',
+);
+
+assert.match(
+  engine,
   /hasManagedExtensions[\s\S]{0,350}resolveManagedExtensionBrowserExecutable/,
   'profiles with managed extensions must use the extension-capable browser resolver',
 );

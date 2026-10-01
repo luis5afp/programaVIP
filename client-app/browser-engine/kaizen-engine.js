@@ -728,8 +728,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       credentialHelper: credentialHelperEnabled,
       contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules.length : 0,
     };
+    const desiredManagedExtensionKey = managedExtensionKey(profile);
     const desiredExtensionKey = [
-      managedExtensionKey(profile),
+      desiredManagedExtensionKey,
       `guard:${guardRevision}`,
       `streaming-dom:${streamingDomEnabled ? '1' : '0'}`,
     ].join('|');
@@ -928,6 +929,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       profile,
       runtime,
       runtimeKey: desiredRuntimeKey,
+      // Keep the catalog-visible managed extension/rule fingerprint separate
+      // from the full launch fingerprint. The latter also includes Browser Guard
+      // and streaming DOM state and must never be compared directly to catalog
+      // metadata, otherwise merely revisiting the catalog looks like a change.
+      managedExtensionKey: desiredManagedExtensionKey,
       extensionKey: desiredExtensionKey,
       credentialRevision: desiredCredentialRevision,
       connection,
@@ -1409,12 +1415,16 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const snapshotReady = !wantsSnapshot || (profile.sessionReady === true && desiredVersion > 0);
       const desiredCredentialRevision = tracksCredentialRevision ? String(profile.credentialVersion || '') : '';
       const desiredRuntimeKey = runtimeKey(runtime);
-      const desiredExtensionKey = managedExtensionKey(profile);
+      const desiredManagedExtensionKey = managedExtensionKey(profile);
       const desiredPolicy = effectiveStoragePolicy(new URL(profile.url), runtime.storageStrategy);
       const preserveDeviceLocalState = wantsSnapshot && desiredPolicy === 'netflix-local-device';
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
-      const extensionsChanged = runningEntry && String(runningEntry.extensionKey || '') !== desiredExtensionKey;
+      // Catalog reconciliation must compare only the server-managed extension
+      // assignment/content-rule fingerprint. entry.extensionKey is a launch-only
+      // fingerprint that also contains Browser Guard and streaming DOM state.
+      const extensionsChanged = runningEntry
+        && String(runningEntry.managedExtensionKey || '') !== desiredManagedExtensionKey;
       const snapshotChanged = runningEntry && wantsSnapshot && !snapshotReady;
       const credentialsChanged = runningEntry
         && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
