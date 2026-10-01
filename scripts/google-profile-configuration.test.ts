@@ -51,9 +51,10 @@ assert.match(
   /managedExtensionsForProfiles\(env, \[profile\.id\]\)[\s\S]{0,500}managedContentRulesForProfiles\(env, \[profile\.id\]\)/,
   'open-as-client bootstrap must include the same managed extensions and content rules as a real client launch',
 );
-assert.match(
-  sessions,
-  /\/api\/client-test\/extensions\/[\s\S]{0,900}EXTENSION_PACKAGES\.get/,
+const clientTestPackageRoute = sessions.indexOf('clientTestExtensionPackageMatch');
+const clientTestPackageRead = sessions.indexOf('EXTENSION_PACKAGES.get', clientTestPackageRoute);
+assert.ok(
+  clientTestPackageRoute >= 0 && clientTestPackageRead > clientTestPackageRoute,
   'open-as-client must expose token-scoped managed extension packages without requiring a separate client login',
 );
 assert.match(
