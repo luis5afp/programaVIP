@@ -1855,6 +1855,10 @@ async function openProfile(profileId) {
       }
     }
 
+    if (!inspection && result?.scriptDiagnostics?.credentialHelper === true) {
+      inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+    }
+
     return {
       ...result,
       ok: true,
