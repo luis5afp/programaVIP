@@ -884,7 +884,7 @@ export function ProfilesView() {
         expiresAt: result.expires_at || null,
         baselineVersion: stateFor(profile.id)?.version || 0,
       });
-      setCaptureSaveMessage('Esperando que completes el acceso. Cuando la sesión sea válida se guardará automáticamente.');
+      setCaptureSaveMessage('Completa el acceso. Si aparece CAPTCHA/Turnstile, resuélvelo manualmente; después puedes pulsar “Guardar sesión ahora”.');
       setCaptureRetryReady(false);
       launchCustomProtocol(result.launch_url);
       window.setTimeout(() => setCaptureRetryReady(true), 6000);
@@ -911,7 +911,7 @@ export function ProfilesView() {
         expiresAt: result.expires_at || null,
         baselineVersion: stateFor(current.profileId)?.version || current.baselineVersion,
       } : current);
-      setCaptureSaveMessage('Nuevo Chromium abierto. El guardado automático se activará cuando la sesión quede iniciada.');
+      setCaptureSaveMessage('Nuevo Chromium abierto. Completa cualquier CAPTCHA/Turnstile manualmente y usa “Guardar sesión ahora” cuando ya estés dentro de la cuenta.');
       launchCustomProtocol(result.launch_url);
       window.setTimeout(() => setCaptureRetryReady(true), 6000);
       window.setTimeout(() => void load(), 2500);
@@ -922,6 +922,14 @@ export function ProfilesView() {
       captureRetryInFlight.current = false;
       setSessionAction(null);
     }
+  }
+
+  function saveActiveCaptureFromPanel() {
+    if (!captureLaunch?.saveUrl) return;
+    setError(null);
+    setCaptureSaveMessage('Solicitando guardado al Session Manager…');
+    launchCustomProtocol(captureLaunch.saveUrl);
+    window.setTimeout(() => void load(), 1800);
   }
 
   async function clearSession(profile: Profile) {
@@ -2092,10 +2100,10 @@ export function ProfilesView() {
               </div>
             </div>
             <div style={{ padding: 12, border: '1px solid #c7d2fe', background: '#eef2ff', borderRadius: 10 }}>
-              <strong>Guardado automático activo</strong>
+              <strong>Captura segura de sesión</strong>
               <div className="help" style={{ marginTop: 5 }}>
-                Cuando userFLEX detecte que la cuenta ya está iniciada, guardará el snapshot y cerrará Chromium automáticamente.
-                Si la detección automática no puede confirmarlo, usa el botón flotante “Guardar ahora” dentro de Chromium.
+                En sitios normales userFLEX puede guardar automáticamente. Si aparece CAPTCHA/Turnstile, completa la verificación humana
+                sin automatización y, cuando ya estés dentro de la cuenta, pulsa <b>Guardar sesión ahora</b> desde este panel.
               </div>
             </div>
             {captureSaveMessage && (
@@ -2103,6 +2111,14 @@ export function ProfilesView() {
                 <strong>{captureSaveMessage}</strong>
               </div>
             )}
+            <button
+              className="button"
+              disabled={sessionAction === captureLaunch.profileId}
+              onClick={saveActiveCaptureFromPanel}
+            >
+              <ShieldCheck size={14} />
+              Guardar sesión ahora
+            </button>
             <button
               className="button secondary"
               disabled={!captureRetryReady || sessionAction === captureLaunch.profileId}
@@ -2118,8 +2134,8 @@ export function ProfilesView() {
               <strong>Instalación única:</strong> desde el Core 0.3.54, el motor de captura, autofill, cookies, validación y reglas web se actualiza automáticamente al iniciar una comprobación. No necesitas reinstalar Session Manager por cada corrección del runtime.
             </div>
             <div className="help">
-              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. userFLEX intentará guardar automáticamente al detectar una sesión estable.
-              Si no lo consigue, pulsa “Guardar ahora” en el panel flotante de Chromium. Después de un guardado correcto, Chromium se cerrará y volverás a este panel con la confirmación. La captura incluye cookies, Local Storage, Session Storage e IndexedDB.
+              Completa el inicio de sesión, 2FA o CAPTCHA en Chromium. En páginas protegidas por Cloudflare, userFLEX deja el navegador sin automatización durante la verificación.
+              Cuando la cuenta ya esté abierta, vuelve a este panel y pulsa “Guardar sesión ahora”. Después de un guardado correcto, Chromium se cerrará y el snapshot incluirá cookies, Local Storage, Session Storage e IndexedDB.
               El enlace es temporal{captureLaunch.expiresAt ? ` y vence a las ${new Date(captureLaunch.expiresAt).toLocaleTimeString()}` : ''}.
             </div>
           </div>
