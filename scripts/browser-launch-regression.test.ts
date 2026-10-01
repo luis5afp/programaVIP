@@ -186,24 +186,11 @@ assert.ok(
   'non-recoverable launch failures must still fail closed and terminate the managed browser',
 );
 
-const firstExtensionGuard = launch.indexOf('armManagedExtensionConfigurationGuard(entry, log)');
-assert.ok(
-  firstExtensionGuard > autofillPosition,
-  'the extension Preferences guard must arm only after normal session/navigation/autofill bootstrap settles',
+assert.doesNotMatch(
+  engine,
+  /managedExtensionSecuritySnapshot|armManagedExtensionConfigurationGuard|extensionConfigWatcher|extensionConfigTamperClosing/,
+  'normal Chromium/Edge Preferences writes must never be treated as proof of extension tampering',
 );
-
-const earlyDevtoolsGuard = launch.indexOf('closeDevtoolsTargets(debugPort)');
-assert.ok(
-  earlyDevtoolsGuard >= 0 && earlyDevtoolsGuard < firstExtensionGuard,
-  'DevTools protection may start early while the Preferences fingerprint waits for stable browser state',
-);
-
-const degradedGuard = engine.indexOf('armManagedExtensionConfigurationGuard(entry, log)', recoverableCatchStart);
-assert.ok(
-  degradedGuard > recoverableCatchStart && degradedGuard < recoverableCatchEnd,
-  'a degraded browser left open must still arm extension tamper protection after fallback bootstrap',
-);
-
 
 assert.match(
   engine,
@@ -227,6 +214,30 @@ assert.doesNotMatch(
   engine,
   /extensionsChanged = runningEntry[^\n]*runningEntry\.extensionKey/,
   'revisiting the catalog must not compare the full launch fingerprint against catalog-only extension metadata',
+);
+
+assert.match(
+  engine,
+  /const desiredCredentialRevision = wantsCredentials \? String\(profile\.credentialVersion \|\| ''\) : ''/,
+  'catalog reconciliation must track credential revisions only for auth strategies that actually use managed credentials',
+);
+
+assert.doesNotMatch(
+  engine,
+  /optionalCredentialHelper|tracksCredentialRevision/,
+  'cookie-snapshot profiles must not be closed because optional unused credentials have a revision',
+);
+
+assert.match(
+  main,
+  /const shouldReconcile = reason !== 'catalog' \|\| configChanged/,
+  'normal catalog navigation must be non-destructive when the server configuration revision has not changed',
+);
+
+assert.match(
+  main,
+  /if \(clientId && shouldReconcile\)[\s\S]{0,220}reconcileCatalogProfiles/,
+  'live process reconciliation must be gated behind the catalog/config-change decision',
 );
 
 assert.match(
@@ -289,40 +300,16 @@ assert.doesNotMatch(
   'active profiles must never be force-killed from an inferred extension Preferences mismatch',
 );
 
-assert.match(
-  engine,
-  /async function managedExtensionSecuritySnapshot[\s\S]{0,3600}withholding_permissions[\s\S]{0,1800}runtime_granted_permissions/,
-  'extension configuration protection must fingerprint security-sensitive host and runtime permission state',
-);
-
-assert.match(
-  engine,
-  /collectUserPermissionSiteSettings[\s\S]{0,1000}restricted_sites[\s\S]{0,500}permitted_sites/,
-  'the global per-site extension toggle must be part of the tamper fingerprint',
-);
-
-assert.match(
-  engine,
-  /pinned_extensions[\s\S]{0,700}toolbar\?\.pinned_actions/,
-  'pin/unpin changes for managed extensions must be treated as configuration changes',
-);
-
-assert.match(
-  engine,
-  /fs\.watch\(profileDir,[\s\S]{0,1000}Preferences[\s\S]{0,300}Secure Preferences/,
-  'extension configuration protection must be event-driven from browser preference writes',
-);
-
-assert.match(
-  engine,
-  /extensionConfigTamperClosing = true[\s\S]{0,500}extension_configuration_tampered[\s\S]{0,300}killProcessTree\(entry\.process\)/,
-  'any protected extension configuration change must close the managed browser immediately',
-);
-
 assert.doesNotMatch(
   engine,
-  /setInterval\([^\n]{0,300}managedExtensionSecuritySnapshot|setInterval\([^\n]{0,300}extensionConfig/,
-  'the configuration guard must not reintroduce periodic preference polling',
+  /fs\.watch\([^\n]*Preferences|Secure Preferences[\s\S]{0,600}killProcessTree/,
+  'browser preference-file churn must never force-close an active profile',
+);
+
+assert.match(
+  guardBackground,
+  /chrome\.management\.onDisabled[\s\S]{0,900}closeManagedProfile\(\)[\s\S]{0,900}chrome\.management\.onUninstalled/,
+  'Browser Guard must keep direct event-driven disable/uninstall tamper enforcement',
 );
 
 assert.match(
