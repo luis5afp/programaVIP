@@ -1857,6 +1857,7 @@ async function openProfile(profileId) {
       sessionRecovered,
       fallbackRecovered,
       inspection,
+      launchWarning: result?.launchWarning || null,
     };
   } catch (error) {
     await closeWorkspaceUsage(usage, 'launch_failed');
