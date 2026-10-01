@@ -221,6 +221,19 @@ async function launchProfile(profile, card) {
     if (!result?.ok) {
       setError(catalogError, result?.error?.message || 'No se pudo abrir el perfil.');
     } else {
+      if (result?.launchWarning?.message) {
+        const stageLabels = {
+          'session-restore': 'sesión',
+          navigation: 'navegación',
+          'credential-autofill': 'credenciales',
+        };
+        const stage = stageLabels[result.launchWarning.stage] || result.launchWarning.stage || 'inicio';
+        setError(
+          catalogError,
+          `El navegador quedó abierto, pero userFLOW detectó un problema durante ${stage}: ${result.launchWarning.message}`,
+        );
+      }
+
       const streamingProfile = categoryKey(categoryLabel(profile)) === 'streaming'
         || profile?.runtime?.storageStrategy === 'netflix-local-device';
 
