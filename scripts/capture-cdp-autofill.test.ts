@@ -30,6 +30,31 @@ assert.match(
 );
 assert.match(
   engine,
+  /function challengeSafeChromeArgs\([\s\S]{0,450}--no-first-run[\s\S]{0,500}return args/,
+  'Turnstile human phase must use a minimal native browser launch',
+);
+assert.doesNotMatch(
+  engine.match(/function challengeSafeChromeArgs\([\s\S]*?\n\}/)?.[0] || '',
+  /remote-debugging-port|load-extension|disable-extensions-except/,
+  'Turnstile human phase must not expose remote debugging or load the capture extension',
+);
+assert.match(
+  engine,
+  /async function nativeCredentialAutofill[\s\S]{0,900}UIAutomationClient[\s\S]{0,2600}ValuePattern[\s\S]{0,2200}USERFLEX_AUTOFILL_PASSWORD/,
+  'ToolsPoint safe-auth must fill credentials through Windows accessibility without browser DOM automation',
+);
+assert.match(
+  engine,
+  /runPowerShellWithEnv\(script,[\s\S]{0,220}USERFLEX_AUTOFILL_USERNAME[\s\S]{0,220}USERFLEX_AUTOFILL_PASSWORD/,
+  'managed credentials must be passed to the native helper via environment variables rather than command-line interpolation',
+);
+assert.match(
+  engine,
+  /challengeSafeCapture && \(credentials\?\.username \|\| credentials\?\.password\)[\s\S]{0,650}nativeCredentialAutofill/,
+  'challenge-safe ToolsPoint capture must schedule native credential fill when managed credentials are available',
+);
+assert.match(
+  engine,
   /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,
   'challenge-safe captures must prefer an installed system Chrome or Edge over bundled Chromium',
 );
