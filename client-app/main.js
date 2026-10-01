@@ -721,8 +721,15 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   if (configChanged && !freshCatalog) freshCatalog = await catalog();
   if (freshCatalog) {
     mergeValidationMeta(freshCatalog);
-      const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
-    if (clientId) {
+    const catalogProfiles = Array.isArray(freshCatalog.profiles) ? freshCatalog.profiles : [];
+
+    // Opening/refreshing the catalog is a navigation/read operation. It must not
+    // be able to terminate a running browser merely because catalog metadata was
+    // re-read. Reconcile live processes on startup/login and when the server
+    // revision actually changes; a normal catalog visit with the same revision
+    // is deliberately non-destructive.
+    const shouldReconcile = reason !== 'catalog' || configChanged;
+    if (clientId && shouldReconcile) {
       await getKaizenBrowserEngine()
         .reconcileCatalogProfiles(clientId, catalogProfiles)
         .catch((error) => console.warn('KAIZEN profile reconciliation failed:', error?.message || error));
