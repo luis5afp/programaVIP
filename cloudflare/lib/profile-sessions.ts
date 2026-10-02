@@ -733,6 +733,19 @@ function safeValidationResult(value: any) {
     network: typeof value?.network === 'string' ? value.network.slice(0, 80) : null,
     publicIp: typeof value?.publicIp === 'string' ? value.publicIp.slice(0, 64) : null,
     sessionVersion: Number(value?.sessionVersion || 0),
+    clientVersion: typeof value?.clientVersion === 'string' ? value.clientVersion.slice(0, 32) : null,
+    errorCode: typeof value?.errorCode === 'string' ? value.errorCode.slice(0, 120) : null,
+    launchStage: typeof value?.launchStage === 'string' ? value.launchStage.slice(0, 80) : null,
+    launchDiagnostics: value?.launchDiagnostics && typeof value.launchDiagnostics === 'object' ? {
+      browser: typeof value.launchDiagnostics.browser === 'string' ? value.launchDiagnostics.browser.slice(0, 80) : null,
+      executable: typeof value.launchDiagnostics.executable === 'string' ? value.launchDiagnostics.executable.slice(0, 260) : null,
+      exitCode: Number.isFinite(Number(value.launchDiagnostics.exitCode)) ? Number(value.launchDiagnostics.exitCode) : null,
+      signal: typeof value.launchDiagnostics.signal === 'string' ? value.launchDiagnostics.signal.slice(0, 80) : null,
+      processAlive: value.launchDiagnostics.processAlive === true,
+      stderr: Array.isArray(value.launchDiagnostics.stderr)
+        ? value.launchDiagnostics.stderr.slice(-6).map((line: any) => String(line || '').slice(0, 600))
+        : [],
+    } : null,
     runtime: safeRuntimeDiagnostic(value?.runtime),
     restore,
     autofill,
