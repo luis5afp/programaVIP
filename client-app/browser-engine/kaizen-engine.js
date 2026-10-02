@@ -832,9 +832,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     };
     processes.set(key, entry);
 
-    // Track the exact bootstrap phase so recoverable page/session failures can
-    // leave the browser visible with a useful diagnostic instead of looking
-    // like an unexplained crash. Security/control-plane failures remain fatal.
+    // Track the exact bootstrap phase so recoverable control/page/session failures
+    // leave a running browser visible with a useful diagnostic instead of looking
+    // like an unexplained crash. Spawn failures and pre-launch security/network
+    // failures still fail closed before a managed browser becomes usable.
     let launchStage = 'browser-control';
     const recoverableLaunchStages = new Set([
       'browser-control',
