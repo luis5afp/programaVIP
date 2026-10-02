@@ -511,8 +511,8 @@ export async function waitForDevtools(debugPort, timeoutMs = 25_000) {
   return false;
 }
 
-export async function connectKaizenBrowser(debugPort) {
-  const ready = await waitForDevtools(debugPort);
+export async function connectKaizenBrowser(debugPort, timeoutMs = 25_000) {
+  const ready = await waitForDevtools(debugPort, timeoutMs);
   if (!ready) throw new Error('El navegador del perfil no abrió su puerto de control.');
   return puppeteer.connect({
     browserURL: `http://127.0.0.1:${debugPort}`,
