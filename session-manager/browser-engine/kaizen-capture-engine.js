@@ -81,7 +81,13 @@ function runPowerShellWithEnv(script, environment = {}, timeout = 12_000) {
       windowsHide: true,
       timeout,
       env: { ...process.env, ...environment },
-    }, () => resolve());
+      maxBuffer: 512 * 1024,
+    }, (error, stdout, stderr) => resolve({
+      ok: !error,
+      code: Number(error?.code ?? 0),
+      stdout: String(stdout || ''),
+      stderr: String(stderr || ''),
+    }));
   });
 }
 
@@ -99,17 +105,31 @@ async function nativeCredentialAutofill({ userDataDir, username, password, log =
 
     function Set-ElementValue($element, $value) {
       if (-not $element -or [string]::IsNullOrEmpty($value)) { return $false }
+      try { $element.SetFocus() } catch {}
+      Start-Sleep -Milliseconds 35
+
       try {
         $pattern = $null
         if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
-          $pattern.SetValue($value)
+          if (-not $pattern.Current.IsReadOnly) {
+            $pattern.SetValue($value)
+            return $true
+          }
+        }
+      } catch {}
+
+      try {
+        $legacy = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$legacy)) {
+          $legacy.SetValue($value)
           return $true
         }
       } catch {}
+
       return $false
     }
 
-    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+    for ($attempt = 0; $attempt -lt 50; $attempt++) {
       $candidatePids = @(
         Get-CimInstance Win32_Process |
           Where-Object {
@@ -161,23 +181,34 @@ async function nativeCredentialAutofill({ userDataDir, username, password, log =
             }
           }
 
-          if ($usernameDone -and $passwordDone) { exit 0 }
+          if ($usernameDone -and $passwordDone) {
+            Write-Output 'USERFLEX_AUTOFILL_OK'
+            exit 0
+          }
         } catch {}
       }
 
       Start-Sleep -Milliseconds 500
     }
 
+    Write-Output 'USERFLEX_AUTOFILL_FAILED'
     exit 1
   `;
 
-  await runPowerShellWithEnv(script, {
+  const result = await runPowerShellWithEnv(script, {
     USERFLEX_AUTOFILL_USERNAME: String(username || ''),
     USERFLEX_AUTOFILL_PASSWORD: String(password || ''),
-  }, 15_000);
+  }, 30_000);
 
-  log.log?.('Session Manager native credential assist attempted through Windows UI Automation.');
-  return true;
+  const filled = result.ok && result.stdout.includes('USERFLEX_AUTOFILL_OK');
+  if (filled) {
+    log.log?.('Session Manager native credential assist filled the managed login fields.');
+  } else {
+    log.warn?.(
+      'Session Manager native credential assist could not resolve the login fields through Windows UI Automation.',
+    );
+  }
+  return filled;
 }
 
 async function killStrayProfileProcesses(userDataDir) {
@@ -730,6 +761,10 @@ function challengeSafeChromeArgs({ userDataDir, proxyRules, initialUrl }) {
     '--no-first-run',
     '--no-default-browser-check',
     '--start-maximized',
+    // Accessibility is a native Chromium feature, not DevTools/browser
+    // automation. It makes HTML form controls visible to Windows UI Automation
+    // while the Turnstile phase remains free of CDP, Puppeteer and extensions.
+    '--force-renderer-accessibility',
     '--lang=es-ES',
   ];
   if (proxyRules) {
@@ -1285,7 +1320,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         }).catch((error) => {
           log.warn?.('Session Manager native credential assist failed:', error?.message || error);
         });
-      }, 900);
+      }, 1400);
       entry.nativeAutofillTimer.unref?.();
     }
 
