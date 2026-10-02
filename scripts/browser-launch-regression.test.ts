@@ -193,8 +193,8 @@ assert.match(
 
 assert.match(
   sessionState,
-  /new InputEvent\('input'/,
-  'autofill must emit a native input event for controlled login fields',
+  /new InputEventCtor\('input'[\s\S]{0,220}composed: true/,
+  'autofill must emit a native input event in the target field realm for controlled login fields',
 );
 
 assert.match(
