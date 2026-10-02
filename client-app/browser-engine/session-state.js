@@ -544,7 +544,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           || /^accounts\.google\.(?:[a-z]{2}|(?:com|co)\.[a-z]{2})$/i.test(currentHost));
       if (!Array.isArray(allowedOrigins) || (!allowedOrigins.includes(location.origin) && !googleAuthAllowed)) return;
 
-      const GLOBAL_KEY = '__userflexCredentialAutofillV395';
+      const GLOBAL_KEY = '__userflexCredentialAutofillV4102';
       const existingAutomation = globalThis[GLOBAL_KEY];
       if (existingAutomation?.refresh) {
         try { existingAutomation.refresh(); } catch {}
@@ -570,9 +570,12 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         }
       };
 
+      const isInput = (element) =>
+        Boolean(element && String(element.tagName || '').toLowerCase() === 'input');
+
       const fieldKind = (element) => {
-        if (!(element instanceof HTMLInputElement)) return null;
-        if (element.dataset.userflexCredentialProtected === '1') return 'password';
+        if (!isInput(element)) return null;
+        if (element.dataset?.userflexCredentialProtected === '1') return 'password';
         const type = String(element.type || '').toLowerCase();
         const hint = [
           type,
@@ -580,15 +583,18 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           element.id,
           element.autocomplete,
           element.placeholder,
-          element.getAttribute('aria-label') || '',
+          element.getAttribute?.('aria-label') || '',
+          element.getAttribute?.('data-testid') || '',
+          element.getAttribute?.('data-test') || '',
+          element.getAttribute?.('data-cy') || '',
         ].join(' ').toLowerCase();
-        if (type === 'password' || /password|passwd|passcode|contrase/.test(hint)) return 'password';
-        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid/.test(hint)) return 'username';
+        if (type === 'password' || /password|passwd|passcode|contrase|senha|motdepasse/.test(hint)) return 'password';
+        if (type === 'email' || /email|e-mail|user|usuario|login|account|identifier|identifierid|correo/.test(hint)) return 'username';
         return null;
       };
 
       const protectPasswordField = (element) => {
-        if (!(element instanceof HTMLInputElement)) return false;
+        if (!isInput(element)) return false;
         try {
           element.dataset.userflexCredentialProtected = '1';
           if (String(element.type || '').toLowerCase() !== 'password') {
@@ -605,7 +611,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
       const blockManagedPasswordClipboard = (event) => {
         const target = event?.target;
-        if (!(target instanceof HTMLInputElement)) return;
+        if (!isInput(target)) return;
         if (target.dataset.userflexCredentialProtected !== '1') return;
         event.preventDefault();
         event.stopPropagation();
@@ -630,10 +636,53 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         'input[id*="pass" i]',
       ].join(',');
 
+      const collectSearchRoots = () => {
+        const roots = [];
+        const seen = new Set();
+        const queue = [document];
+
+        while (queue.length && roots.length < 48) {
+          const root = queue.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          roots.push(root);
+
+          let elements = [];
+          try { elements = Array.from(root.querySelectorAll?.('*') || []).slice(0, 1200); } catch {}
+          for (const element of elements) {
+            try {
+              if (element.shadowRoot && !seen.has(element.shadowRoot)) queue.push(element.shadowRoot);
+            } catch {}
+            if (String(element.tagName || '').toLowerCase() === 'iframe') {
+              try {
+                const childDocument = element.contentDocument;
+                if (childDocument && !seen.has(childDocument)) queue.push(childDocument);
+              } catch {}
+            }
+          }
+        }
+        return roots;
+      };
+
+      const loginInputs = () => {
+        const found = [];
+        const seen = new Set();
+        for (const root of collectSearchRoots()) {
+          let matches = [];
+          try { matches = Array.from(root.querySelectorAll?.(LOGIN_INPUT_SELECTOR) || []); } catch {}
+          for (const element of matches) {
+            if (seen.has(element)) continue;
+            seen.add(element);
+            if (!visible(element) || element.disabled || element.readOnly) continue;
+            found.push(element);
+            if (found.length >= 80) return found;
+          }
+        }
+        return found;
+      };
+
       const candidates = () => {
-        const inputs = Array.from(document.querySelectorAll(LOGIN_INPUT_SELECTOR))
-          .slice(0, 40)
-          .filter((element) => visible(element) && !element.disabled && !element.readOnly);
+        const inputs = loginInputs();
         return {
           usernameInput: inputs.find((element) => fieldKind(element) === 'username') || null,
           passwordInput: inputs.find((element) => fieldKind(element) === 'password') || null,
@@ -648,21 +697,30 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           }
           const kind = fieldKind(element);
           if (kind === 'password') protectPasswordField(element);
-          const proto = HTMLInputElement.prototype;
+          const realm = element.ownerDocument?.defaultView || globalThis;
+          const proto = realm.HTMLInputElement?.prototype || HTMLInputElement.prototype;
           const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
           if (descriptor?.set) descriptor.set.call(element, value);
           else element.value = value;
+
+          // React/Vue/Svelte and native forms observe slightly different event
+          // sequences. Emit the native input/change sequence in the element's
+          // own realm so same-origin iframes behave like top-level forms.
           try {
-            element.dispatchEvent(new InputEvent('input', {
+            const InputEventCtor = realm.InputEvent || InputEvent;
+            element.dispatchEvent(new InputEventCtor('input', {
               bubbles: true,
+              composed: true,
               inputType: 'insertText',
               data: String(value),
             }));
           } catch {
-            element.dispatchEvent(new Event('input', { bubbles: true }));
+            const EventCtor = realm.Event || Event;
+            element.dispatchEvent(new EventCtor('input', { bubbles: true, composed: true }));
           }
-          element.dispatchEvent(new Event('change', { bubbles: true }));
-          element.dispatchEvent(new Event('blur', { bubbles: true }));
+          const EventCtor = realm.Event || Event;
+          element.dispatchEvent(new EventCtor('change', { bubbles: true, composed: true }));
+          element.dispatchEvent(new EventCtor('blur', { bubbles: true, composed: true }));
           try { element.blur(); } catch {}
           return true;
         } catch {
@@ -718,20 +776,24 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           <style>
             :host { all: initial; }
             .uf-wrap {
-              display:flex; align-items:center; gap:5px; padding:4px 6px;
-              border:1px solid rgba(99,102,241,.45); border-radius:9px;
-              background:rgba(20,18,38,.96); color:#fff;
-              box-shadow:0 8px 24px rgba(0,0,0,.28);
+              display:flex; align-items:center; gap:4px; padding:3px 5px;
+              border:1px solid rgba(59,130,246,.55); border-radius:9px;
+              background:rgba(15,23,42,.97); color:#fff;
+              box-shadow:0 8px 24px rgba(0,0,0,.32);
               font:600 11px/1.15 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
               white-space:nowrap; user-select:none;
             }
-            .uf-brand { color:#c4b5fd; font-size:10px; font-weight:800; letter-spacing:.04em; padding:0 2px; }
+            .uf-brand {
+              color:#60a5fa; font-size:9px; font-weight:900; letter-spacing:.045em;
+              padding:4px 3px; text-transform:uppercase;
+            }
             button {
               all:unset; box-sizing:border-box; cursor:pointer; border-radius:6px;
-              padding:4px 8px; background:#312e52; color:#ede9fe;
+              padding:4px 9px; background:#1e293b; color:#e2e8f0;
               font:700 10px/1 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+              border:1px solid rgba(148,163,184,.13);
             }
-            button:hover { background:#4338ca; color:white; }
+            button:hover { background:#1d4ed8; color:white; }
             button:focus-visible { outline:2px solid #a5b4fc; outline-offset:1px; }
             .uf-close { padding:4px 6px; background:transparent; color:#cbd5e1; font-size:13px; }
             .uf-msg { display:none; max-width:180px; overflow:hidden; text-overflow:ellipsis; color:#cbd5e1; font-weight:500; }
@@ -781,10 +843,33 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
         const host = ensureHelper();
         if (!host) return;
-        const rect = anchor.getBoundingClientRect();
-        const topAbove = rect.top - 36;
+        const pageRect = (element) => {
+          const rect = element.getBoundingClientRect();
+          let left = rect.left;
+          let top = rect.top;
+          let right = rect.right;
+          let bottom = rect.bottom;
+          let view = element.ownerDocument?.defaultView;
+          for (let depth = 0; view && view !== globalThis && depth < 6; depth += 1) {
+            try {
+              const frame = view.frameElement;
+              if (!frame) break;
+              const frameRect = frame.getBoundingClientRect();
+              left += frameRect.left;
+              right += frameRect.left;
+              top += frameRect.top;
+              bottom += frameRect.top;
+              view = frame.ownerDocument?.defaultView;
+            } catch {
+              break;
+            }
+          }
+          return { left, top, right, bottom, width: rect.width, height: rect.height };
+        };
+        const rect = pageRect(anchor);
+        const topAbove = rect.top - 34;
         const top = topAbove >= 6 ? topAbove : Math.min(window.innerHeight - 34, rect.bottom + 6);
-        const left = Math.max(6, Math.min(rect.left, window.innerWidth - 260));
+        const left = Math.max(6, Math.min(rect.left, window.innerWidth - 250));
         host.style.left = `${Math.round(left)}px`;
         host.style.top = `${Math.round(top)}px`;
         host.style.display = 'block';
@@ -809,11 +894,11 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
           const routeLooksLikeLogin = /(?:^|\/)(login|signin|sign-in|auth|account\/login)(?:\/|$)/i
             .test(location.pathname + location.search);
           let hasLoginSurface = false;
-          try { hasLoginSurface = Boolean(document.querySelector(LOGIN_INPUT_SELECTOR)); } catch {}
+          try { hasLoginSurface = loginInputs().length > 0; } catch {}
           if (!routeLooksLikeLogin && !hasLoginSurface) {
             const activateOnLoginFocus = (event) => {
               const target = event?.target;
-              if (!(target instanceof HTMLInputElement) || !fieldKind(target)) return;
+              if (!isInput(target) || !fieldKind(target)) return;
               removeEventListener('focusin', activateOnLoginFocus, true);
               start(true);
             };
@@ -838,38 +923,52 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
         };
 
         const addedLoginSurface = (node) => {
-          if (!(node instanceof Element)) return false;
+          if (!node || node.nodeType !== 1) return false;
           if (node.matches?.(LOGIN_INPUT_SELECTOR)) return true;
-          try { return Boolean(node.querySelector?.(LOGIN_INPUT_SELECTOR)); } catch { return false; }
+          try {
+            if (node.querySelector?.(LOGIN_INPUT_SELECTOR)) return true;
+            if (node.shadowRoot?.querySelector?.(LOGIN_INPUT_SELECTOR)) return true;
+          } catch {}
+          return String(node.tagName || '').toLowerCase() === 'iframe';
+        };
+
+        const observedRoots = new WeakSet();
+        const observers = [];
+        const observeCurrentRoots = () => {
+          for (const root of collectSearchRoots()) {
+            const observeTarget = root.nodeType === 9 ? root.documentElement : root;
+            if (!observeTarget || observedRoots.has(observeTarget)) continue;
+            observedRoots.add(observeTarget);
+            try {
+              const rootObserver = new MutationObserver((mutations) => {
+                if (mutations.some((mutation) =>
+                  Array.from(mutation.addedNodes || []).some((node) => addedLoginSurface(node)))) {
+                  scheduleFill(60);
+                }
+              });
+              rootObserver.observe(observeTarget, { childList: true, subtree: true });
+              observers.push(rootObserver);
+            } catch {}
+          }
         };
 
         scheduleFill(0);
+        observeCurrentRoots();
 
-        // Heavy editors such as Digen constantly mutate style/class attributes.
-        // Watching those attributes made the credential helper rescan the whole
-        // page many times per second and could trigger Chrome's "not responding"
-        // dialog. Only structural additions that can actually contain a login
-        // field are relevant.
-        const observer = new MutationObserver((mutations) => {
-          if (mutations.some((mutation) =>
-            Array.from(mutation.addedNodes || []).some((node) => addedLoginSurface(node)))) {
-            scheduleFill();
-          }
-        });
-        observer.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true,
-        });
-
-        // Small fallback window for frameworks that recycle nodes without
-        // inserting new elements. New document navigations install this helper
-        // again, so there is no need to poll a working editor for ten minutes.
-        const retryTimer = setInterval(() => scheduleFill(0), 15000);
+        // The old KAIZEN helper survived SPA/modal transitions. Keep a bounded
+        // fallback scan while a login surface is active, but never submit forms
+        // or interfere with CAPTCHA/human verification widgets.
+        const retryTimer = setInterval(() => {
+          observeCurrentRoots();
+          scheduleFill(0);
+        }, 2500);
         const stopBackgroundScanning = () => {
           if (stopped) return;
           stopped = true;
           try { clearInterval(retryTimer); } catch {}
-          try { observer.disconnect(); } catch {}
+          for (const observer of observers) {
+            try { observer.disconnect(); } catch {}
+          }
           if (scanTimer) clearTimeout(scanTimer);
           scanTimer = null;
         };
@@ -878,7 +977,7 @@ export async function installCredentialAutofill({ debugPort, profileUrl, credent
 
         addEventListener('focusin', (event) => {
           const target = event?.target;
-          if (target instanceof HTMLInputElement) {
+          if (isInput(target)) {
             scheduleFill(0);
             requestAnimationFrame(positionHelper);
           }

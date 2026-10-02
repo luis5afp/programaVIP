@@ -55,6 +55,32 @@ assert.match(
   'cookie-snapshot profiles must use delivered managed credentials as a login fallback instead of discarding them client-side',
 );
 
+assert.match(
+  sessionState,
+  /__userflexCredentialAutofillV4102/,
+  'credential helper version must advance when the KAIZEN-style integration changes',
+);
+assert.match(
+  sessionState,
+  /collectSearchRoots[\s\S]{0,1500}shadowRoot[\s\S]{0,900}contentDocument/,
+  'credential helper must discover login controls in open Shadow DOM and same-origin iframe documents',
+);
+assert.match(
+  sessionState,
+  /ownerDocument\?\.defaultView[\s\S]{0,700}HTMLInputElement\?\.prototype[\s\S]{0,1100}composed: true/,
+  'credential helper must use the target field realm native setter/events for React/Vue/iframe compatibility',
+);
+assert.match(
+  sessionState,
+  /<span class="uf-brand">userFLOW<\/span>[\s\S]{0,250}data-kind="username">Email[\s\S]{0,250}data-kind="password">Password/,
+  'credential helper must expose the compact KAIZEN-style Email/Password control bar',
+);
+assert.match(
+  sessionState,
+  /observeCurrentRoots[\s\S]{0,1500}setInterval\([\s\S]{0,350}2500/,
+  'credential helper must survive bounded SPA/modal transitions without high-frequency polling',
+);
+
 assert.doesNotMatch(
   engine,
   /--user-agent=/,
@@ -167,8 +193,8 @@ assert.match(
 
 assert.match(
   sessionState,
-  /new InputEvent\('input'/,
-  'autofill must emit a native input event for controlled login fields',
+  /new InputEventCtor\('input'[\s\S]{0,220}composed: true/,
+  'autofill must emit a native input event in the target field realm for controlled login fields',
 );
 
 assert.match(
@@ -185,8 +211,8 @@ assert.doesNotMatch(
 
 assert.match(
   sessionState,
-  /setInterval\(\(\) => scheduleFill\(0\), 15000\)/,
-  'credential helper fallback polling must stay low-frequency',
+  /const retryTimer = setInterval\(\(\) => \{[\s\S]{0,260}observeCurrentRoots\(\)[\s\S]{0,180}scheduleFill\(0\)[\s\S]{0,120}\}, 2500\)/,
+  'credential helper may poll every 2.5s only inside the bounded login window to follow SPA/modal and email-to-password transitions',
 );
 
 assert.match(
