@@ -1537,8 +1537,34 @@ export function ProfilesView() {
                 {validationJob.result && (
                   <div style={{ display: 'grid', gap: 5, fontSize: 12 }}>
                     <div><b>Resultado:</b> {String(validationJob.result.outcome || 'sin detalle')}</div>
-                    <div><b>Navegador:</b> {String(validationJob.result.browser || 'desconocido')}</div>
+                    <div><b>userFLOW:</b> {String(validationJob.result.clientVersion || 'versión no reportada')}</div>
+                    <div><b>Navegador:</b> {String(validationJob.result.browser || validationJob.result.launchDiagnostics?.browser || 'desconocido')}</div>
                     <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
+                    {validationJob.result.launchStage && <div><b>Etapa:</b> {String(validationJob.result.launchStage)}</div>}
+                    {validationJob.result.errorCode && <div><b>Código:</b> {String(validationJob.result.errorCode)}</div>}
+                    {validationJob.result.launchDiagnostics && (
+                      <>
+                        <div>
+                          <b>Proceso navegador:</b>{' '}
+                          {validationJob.result.launchDiagnostics.processAlive ? 'seguía activo' : 'terminó'}
+                          {validationJob.result.launchDiagnostics.exitCode != null
+                            ? ` · exit ${validationJob.result.launchDiagnostics.exitCode}`
+                            : ''}
+                          {validationJob.result.launchDiagnostics.signal
+                            ? ` · señal ${validationJob.result.launchDiagnostics.signal}`
+                            : ''}
+                        </div>
+                        {Array.isArray(validationJob.result.launchDiagnostics.stderr)
+                          && validationJob.result.launchDiagnostics.stderr.length > 0 && (
+                          <details>
+                            <summary>Diagnóstico del navegador</summary>
+                            <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, margin: '6px 0 0' }}>
+                              {validationJob.result.launchDiagnostics.stderr.join('\n')}
+                            </pre>
+                          </details>
+                        )}
+                      </>
+                    )}
                     {validationJob.result.publicIp && <div><b>IP detectada:</b> {String(validationJob.result.publicIp)}</div>}
                     {validationJob.result.testParity && (
                       <div>
