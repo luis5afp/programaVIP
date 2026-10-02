@@ -63,11 +63,15 @@ assert.match(
   /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,
   'challenge-safe captures must prefer an installed system Chrome or Edge over bundled Chromium',
 );
-assert.match(
-  engine,
-  /if \(challengeSafeCapture\)[\s\S]{0,600}no Puppeteer\/CDP attachment until the administrator explicitly saves/,
-  'Turnstile capture must remain detached from Puppeteer/CDP until explicit save',
+const safeAttachBranch = engine.indexOf('if (challengeSafeCapture) {', engine.indexOf('active = entry'));
+const normalAttachBranch = engine.indexOf('} else if (!openAiCapture || background) {', safeAttachBranch);
+assert.ok(
+  safeAttachBranch >= 0 && normalAttachBranch > safeAttachBranch,
+  'Turnstile capture must have a dedicated pre-save branch',
 );
+const safeAttachSource = engine.slice(safeAttachBranch, normalAttachBranch);
+assert.match(safeAttachSource, /no extension, Puppeteer, CDP attachment, or remote-debugging port/);
+assert.doesNotMatch(safeAttachSource, /connectCaptureBrowser|installCaptureAutomation|navigateCaptureHome/);
 assert.match(
   engine,
   /if \(!background && !challengeSafeCapture\)[\s\S]{0,120}autoSaveTimer/,
