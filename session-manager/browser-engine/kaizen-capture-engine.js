@@ -42,16 +42,23 @@ export function resolveCaptureBrowserExecutable(
   }
 
   const bundled = path.join(resourcesPath, 'chrome_native', 'chrome.exe');
-  const systemBrowsers = [
+  const chromeBrowsers = [
     programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     localApp && path.join(localApp, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ];
+  const edgeBrowsers = [
     programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    localApp && path.join(localApp, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
   ];
+
+  // Challenge-safe captures (ToolsPoint/Turnstile) should use the same browser
+  // family that userFLOW validates for managed profiles: installed Edge first.
+  // Chrome remains a fallback when Edge is genuinely unavailable.
   return existingFile(preferSystemBrowser
-    ? [...systemBrowsers, bundled]
-    : [bundled, ...systemBrowsers]);
+    ? [...edgeBrowsers, ...chromeBrowsers, bundled]
+    : [bundled, ...chromeBrowsers, ...edgeBrowsers]);
 }
 
 async function freePort() {
