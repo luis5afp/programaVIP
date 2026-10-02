@@ -1912,7 +1912,9 @@ async function handleClientTestProtocol(rawUrl) {
     );
 
     let outcome = 'browser-launched';
-    if (authStrategy === 'credential-autofill') {
+    if (inspection?.humanVerificationVisible === true) {
+      outcome = 'human-verification-required';
+    } else if (authStrategy === 'credential-autofill') {
       outcome = helperReady ? 'autofill-ready' : 'autofill-fields-not-detected';
     } else if (authStrategy === 'cookie-snapshot') {
       outcome = snapshotLooksAuthenticated
