@@ -100,14 +100,14 @@ assert.match(
 );
 assert.match(
   clientState,
-  /__userflexCredentialAutofillV395[\s\S]{0,220}existingAutomation\?\.refresh/,
+  /__userflexCredentialAutofillV4102[\s\S]{0,220}existingAutomation\?\.refresh/,
   'client autofill reinstrumentation must be idempotent when targetchanged fires repeatedly',
 );
 
 assert.match(
   clientState,
-  /setInterval\(\(\) => scheduleFill\(0\), 15000\)[\s\S]{0,500}120000/,
-  'client autofill must keep a bounded low-frequency fallback for delayed Google login steps',
+  /const retryTimer = setInterval\(\(\) => \{[\s\S]{0,300}scheduleFill\(0\)[\s\S]{0,120}\}, 2500\)[\s\S]{0,700}120000/,
+  'client autofill must keep a bounded login-window fallback for delayed Google login steps',
 );
 assert.match(
   captureEngine,
