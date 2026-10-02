@@ -262,7 +262,7 @@ function hasPersistentBrowserState(userDataDir) {
   return candidates.some((candidate) => fs.existsSync(candidate));
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [] }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], initialUrl = 'about:blank' }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -300,7 +300,7 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [] }) 
       '--disable-features=SignInProfileCreation,SigninConsistency,ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu',
     );
   }
-  args.push('about:blank');
+  args.push(initialUrl || 'about:blank');
   return args;
 }
 
@@ -785,7 +785,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     // Do not replay a captured User-Agent from another browser/device. That can
     // disagree with Client Hints and the actual TLS/browser engine identity,
     // which causes some sites to classify the session as suspicious.
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs });
+    const startupUrl = snapshotManaged
+      ? (sessionVersionMatches || hasPersistentBrowserState(userDataDir) ? snapshotNavigationUrl : 'about:blank')
+      : profile.url;
+    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, initialUrl: startupUrl });
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
@@ -834,6 +837,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     // like an unexplained crash. Security/control-plane failures remain fatal.
     let launchStage = 'browser-control';
     const recoverableLaunchStages = new Set([
+      'browser-control',
       'session-restore',
       'navigation',
       'credential-autofill',
@@ -857,7 +861,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     try {
       launchStage = 'browser-control';
-      const browser = await connectKaizenBrowser(debugPort);
+      const browser = await connectKaizenBrowser(debugPort, 60_000);
       await browser.disconnect().catch(() => null);
 
       // Microsoft Edge can accept --load-extension before its extension system
@@ -1010,12 +1014,24 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           stage: launchStage,
           code: String(error?.code || 'PROFILE_BOOTSTRAP_DEGRADED'),
           message: error instanceof Error ? error.message : String(error || 'Error de inicialización del perfil.'),
+          stderr: entry.stderr.slice(-4),
         };
         entry.degraded = true;
         entry.launchWarning = warning;
         log.warn?.(
           `userFLOW kept browser open after recoverable ${launchStage} failure for ${profile.name || profile.id}: ${warning.message}`,
         );
+
+        if (launchStage === 'browser-control') {
+          // If Chromium/Edge is visibly running but its local DevTools endpoint
+          // never became reachable, keep the browser alive. The startup URL is
+          // chosen before spawn so a profile with persistent local state still
+          // lands on its managed site instead of being killed because the
+          // control plane failed.
+          warning.fallbackNavigation = startupUrl === 'about:blank'
+            ? 'control-unavailable-no-local-state'
+            : 'browser-startup-url';
+        }
 
         // Session restoration can fail after a synthetic/blank bootstrap page.
         // Best-effort navigation leaves the user on the intended site for
