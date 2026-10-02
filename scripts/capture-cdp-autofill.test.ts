@@ -28,15 +28,24 @@ assert.match(
   /isTurnstileSensitiveProfileUrl[\s\S]{0,350}toolspoint\.net/,
   'ToolsPoint must use the security-challenge-safe capture path',
 );
-assert.match(
-  engine,
-  /function challengeSafeChromeArgs\([\s\S]{0,450}--no-first-run[\s\S]{0,500}return args/,
-  'Turnstile human phase must use a minimal native browser launch',
+const challengeSafeArgsStart = engine.indexOf('function challengeSafeChromeArgs');
+const challengeSafeArgsEnd = engine.indexOf('\nfunction challengeReadbackChromeArgs', challengeSafeArgsStart);
+assert.ok(
+  challengeSafeArgsStart >= 0 && challengeSafeArgsEnd > challengeSafeArgsStart,
+  'Turnstile human phase must expose a dedicated native browser launch',
 );
+const challengeSafeArgsSource = engine.slice(challengeSafeArgsStart, challengeSafeArgsEnd);
+assert.match(challengeSafeArgsSource, /--no-first-run/);
+assert.match(challengeSafeArgsSource, /return args/);
 assert.doesNotMatch(
-  engine.match(/function challengeSafeChromeArgs\([\s\S]*?\n\}/)?.[0] || '',
+  challengeSafeArgsSource,
   /remote-debugging-port|load-extension|disable-extensions-except/,
   'Turnstile human phase must not expose remote debugging or load the capture extension',
+);
+assert.match(
+  challengeSafeArgsSource,
+  /--force-renderer-accessibility/,
+  'Turnstile human phase must expose web form controls to native Windows UI Automation without enabling DevTools',
 );
 const nativeAutofillStart = engine.indexOf('async function nativeCredentialAutofill');
 const nativeAutofillEnd = engine.indexOf('\nasync function killStrayProfileProcesses', nativeAutofillStart);
@@ -47,7 +56,13 @@ assert.ok(
 const nativeAutofillSource = engine.slice(nativeAutofillStart, nativeAutofillEnd);
 assert.match(nativeAutofillSource, /UIAutomationClient/);
 assert.match(nativeAutofillSource, /ValuePattern/);
+assert.match(nativeAutofillSource, /LegacyIAccessiblePattern/);
 assert.match(nativeAutofillSource, /USERFLEX_AUTOFILL_PASSWORD/);
+assert.match(
+  nativeAutofillSource,
+  /USERFLEX_AUTOFILL_OK/,
+  'native credential helper must report confirmed field-fill success instead of assuming the attempt worked',
+);
 assert.match(
   engine,
   /runPowerShellWithEnv\(script,[\s\S]{0,220}USERFLEX_AUTOFILL_USERNAME[\s\S]{0,220}USERFLEX_AUTOFILL_PASSWORD/,
