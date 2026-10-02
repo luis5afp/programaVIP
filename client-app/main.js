@@ -1912,7 +1912,9 @@ async function handleClientTestProtocol(rawUrl) {
     );
 
     let outcome = 'browser-launched';
-    if (authStrategy === 'credential-autofill') {
+    if (inspection?.humanVerificationVisible === true) {
+      outcome = 'human-verification-required';
+    } else if (authStrategy === 'credential-autofill') {
       outcome = helperReady ? 'autofill-ready' : 'autofill-fields-not-detected';
     } else if (authStrategy === 'cookie-snapshot') {
       outcome = snapshotLooksAuthenticated
@@ -1930,6 +1932,7 @@ async function handleClientTestProtocol(rawUrl) {
       ...result,
       ok: true,
       outcome,
+      clientVersion: app.getVersion(),
       inspection,
       testParity: {
         payload: 'client-launch',
@@ -1957,6 +1960,12 @@ async function handleClientTestProtocol(rawUrl) {
             profileState: 'launch-failed',
             outcome: 'launch-failed',
             runtime: null,
+            clientVersion: app.getVersion(),
+            errorCode: typeof error?.code === 'string' ? error.code : null,
+            launchStage: typeof error?.launchStage === 'string' ? error.launchStage : null,
+            launchDiagnostics: error?.launchDiagnostics && typeof error.launchDiagnostics === 'object'
+              ? error.launchDiagnostics
+              : null,
           },
           error: error?.message || String(error || 'La prueba falló.'),
         },

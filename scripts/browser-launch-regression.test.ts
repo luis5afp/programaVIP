@@ -66,6 +66,22 @@ assert.match(
   /humanVerificationVisible[\s\S]{0,700}cloudflare-turnstile[\s\S]{0,260}google-recaptcha[\s\S]{0,260}hcaptcha/,
   'runtime inspection must report human-verification surfaces without attempting to bypass them',
 );
+assert.match(
+  main,
+  /inspection\?\.humanVerificationVisible === true[\s\S]{0,180}outcome = 'human-verification-required'/,
+  'client-test must report a human verification as a manual-required state instead of an autofill/session failure',
+);
+assert.match(
+  main,
+  /clientVersion: app\.getVersion\(\)[\s\S]{0,500}launchDiagnostics/,
+  'client-test failures must report the exact userFLOW version and browser startup diagnostics',
+);
+assert.match(
+  engine,
+  /error\.launchDiagnostics = \{[\s\S]{0,550}browser:[\s\S]{0,260}exitCode:[\s\S]{0,260}processAlive:[\s\S]{0,260}stderr:/,
+  'fatal launch errors must carry browser/exit/stderr diagnostics to the Admin test',
+);
+
 
 assert.match(
   sessionState,
@@ -270,8 +286,8 @@ assert.doesNotMatch(
 
 assert.match(
   engine,
-  /resolveManagedExtensionBrowserExecutable[\s\S]{0,1200}chrome_native[\s\S]{0,400}edgeCandidates\(\)[\s\S]{0,400}nativeChromeCandidates/,
-  'managed extensions must prefer bundled Chromium/Edge before branded Chrome',
+  /resolveManagedExtensionBrowserExecutable[\s\S]{0,1400}\.\.\.edgeCandidates\(\)[\s\S]{0,300}chrome_native[\s\S]{0,400}nativeChromeCandidates/,
+  'managed extensions must prefer installed Edge before stale bundled Chromium or branded Chrome',
 );
 
 assert.match(

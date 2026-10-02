@@ -78,14 +78,16 @@ export function resolveKaizenBrowserExecutable(resourcesPath = process.resources
 export function resolveManagedExtensionBrowserExecutable(resourcesPath = process.resourcesPath, browserEngine = 'chrome-native') {
   if (browserEngine === 'nstchrome') return resolveKaizenBrowserExecutable(resourcesPath, browserEngine);
 
-  // Chrome-branded builds removed command-line unpacked extension loading.
-  // Prefer userFLOW's bundled Chromium if present; otherwise use Edge, which
-  // still supports command-line extension loading unless an enterprise policy
-  // explicitly blocks it. Branded Chrome is kept only as a final diagnostic
-  // fallback so we can return a precise error instead of a false "0 extensions".
+  // Managed profiles must prefer the installed Edge runtime that is exercised
+  // by our Windows extension smoke tests. Older userFLOW installations may
+  // leave a stale resources/chrome_native/chrome.exe behind after upgrading;
+  // choosing that leftover binary first can make a single profile exit before
+  // its DevTools endpoint appears. Keep bundled Chromium only as a secondary
+  // fallback, then branded Chrome solely so we can emit the explicit unsupported
+  // error below rather than a misleading "runtime missing" message.
   return existingFile([
-    path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
     ...edgeCandidates(),
+    path.join(resourcesPath, 'chrome_native', 'chrome.exe'),
     ...nativeChromeCandidates(resourcesPath).slice(1),
   ]);
 }
@@ -1077,10 +1079,20 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         };
       }
 
+      if (error && typeof error === 'object') {
+        if (!error.launchStage) error.launchStage = launchStage;
+        error.launchDiagnostics = {
+          browser: entry.browserKind || null,
+          executable: entry.executable || null,
+          exitCode: entry.process?.exitCode ?? entry.exitCode ?? null,
+          signal: entry.signal || null,
+          processAlive: entry.process?.exitCode === null && !entry.spawnError,
+          stderr: entry.stderr.slice(-6),
+        };
+      }
       entry.closing = true;
       await killProcessTree(proc);
       await cleanup(entry, `launch_failed:${launchStage}`);
-      if (error && typeof error === 'object' && !error.launchStage) error.launchStage = launchStage;
       throw error;
     }
   }

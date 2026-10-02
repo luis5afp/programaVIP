@@ -272,6 +272,17 @@ export interface ProfileValidationJob {
     network?: string | null;
     publicIp?: string | null;
     sessionVersion?: number;
+    clientVersion?: string | null;
+    errorCode?: string | null;
+    launchStage?: string | null;
+    launchDiagnostics?: {
+      browser?: string | null;
+      executable?: string | null;
+      exitCode?: number | null;
+      signal?: string | null;
+      processAlive?: boolean;
+      stderr?: string[];
+    } | null;
     runtime?: Record<string, unknown> | null;
     restore?: Record<string, unknown> | null;
     autofill?: Record<string, unknown> | null;
