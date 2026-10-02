@@ -95,6 +95,17 @@ assert.match(
 );
 assert.match(
   main,
+  /inspection\.loginLikeUrl === true[\s\S]{0,220}inspection\.passwordFieldVisible === true[\s\S]{0,260}inspection\.usernameFieldVisible === true && inspection\.loginActionVisible === true/,
+  'login detection must require strong evidence and must not treat a generic Login button as session loss',
+);
+assert.match(
+  main,
+  /inspection\?\.humanVerificationVisible === true\) return false/,
+  'human-verification surfaces must not trigger session-loss recovery',
+);
+
+assert.match(
+  main,
   /inspection\?\.netflixHouseholdRestriction === true \|\| inspection\?\.streamingAccessRestriction === true\) return false/,
   'STREAMING device/household restrictions must not be reported as expired authentication sessions',
 );
@@ -273,10 +284,15 @@ assert.match(
   /!preserveDeviceLocalState && markerPolicy !== desiredPolicy/,
   'legacy portable markers must be accepted when a saved profile becomes STREAMING',
 );
+assert.doesNotMatch(
+  main,
+  /engine\.close\(clientId, profile\.id, 'session_health_restore'\)|engine\.close\(clientId, profile\.id, 'session_fallback_restore'\)/,
+  'session-health heuristics must never close a visible profile automatically',
+);
 assert.match(
   main,
-  /result\?\.profileState === 'persistent-reuse'[\s\S]{0,900}forceRestore: true/,
-  'a stale persisted profile must retry once from the server snapshot',
+  /Session health checks are deliberately non-destructive once a visible[\s\S]{0,700}keeping the visible profile open/,
+  'visible profile lifecycle must document and enforce non-destructive health inspection',
 );
 assert.match(
   main,
