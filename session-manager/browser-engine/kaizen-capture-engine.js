@@ -75,6 +75,111 @@ function runPowerShell(script, timeout = 8_000) {
   });
 }
 
+function runPowerShellWithEnv(script, environment = {}, timeout = 12_000) {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      timeout,
+      env: { ...process.env, ...environment },
+    }, () => resolve());
+  });
+}
+
+async function nativeCredentialAutofill({ userDataDir, username, password, log = console }) {
+  if (process.platform !== 'win32' || (!username && !password)) return false;
+
+  const escapedProfile = String(userDataDir || '').replace(/'/g, "''");
+  const script = `
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    $username = $env:USERFLEX_AUTOFILL_USERNAME
+    $password = $env:USERFLEX_AUTOFILL_PASSWORD
+    $profileNeedle = '${escapedProfile}'
+
+    function Set-ElementValue($element, $value) {
+      if (-not $element -or [string]::IsNullOrEmpty($value)) { return $false }
+      try {
+        $pattern = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+          $pattern.SetValue($value)
+          return $true
+        }
+      } catch {}
+      return $false
+    }
+
+    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+      $candidatePids = @(
+        Get-CimInstance Win32_Process |
+          Where-Object {
+            ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and
+            $_.CommandLine -and $_.CommandLine.Contains($profileNeedle)
+          } |
+          Select-Object -ExpandProperty ProcessId
+      )
+
+      foreach ($pid in $candidatePids) {
+        try {
+          $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+          if (-not $proc -or $proc.MainWindowHandle -eq 0) { continue }
+          $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+          if (-not $root) { continue }
+
+          $edits = $root.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Edit
+            ))
+          )
+
+          $usernameDone = [string]::IsNullOrEmpty($username)
+          $passwordDone = [string]::IsNullOrEmpty($password)
+
+          foreach ($edit in $edits) {
+            $name = ''
+            $automationId = ''
+            $isPassword = $false
+            try { $name = [string]$edit.Current.Name } catch {}
+            try { $automationId = [string]$edit.Current.AutomationId } catch {}
+            try {
+              $isPassword = [bool]$edit.GetCurrentPropertyValue(
+                [System.Windows.Automation.AutomationElement]::IsPasswordProperty
+              )
+            } catch {}
+
+            $label = ($name + ' ' + $automationId).ToLowerInvariant()
+            if (-not $passwordDone -and ($isPassword -or $label -match 'password|passwd|contrase')) {
+              if (Set-ElementValue $edit $password) { $passwordDone = $true }
+              continue
+            }
+
+            if (-not $usernameDone -and -not $isPassword -and
+                ($label -match 'username|email|user|correo|usuario|login')) {
+              if (Set-ElementValue $edit $username) { $usernameDone = $true }
+            }
+          }
+
+          if ($usernameDone -and $passwordDone) { exit 0 }
+        } catch {}
+      }
+
+      Start-Sleep -Milliseconds 500
+    }
+
+    exit 1
+  `;
+
+  await runPowerShellWithEnv(script, {
+    USERFLEX_AUTOFILL_USERNAME: String(username || ''),
+    USERFLEX_AUTOFILL_PASSWORD: String(password || ''),
+  }, 15_000);
+
+  log.log?.('Session Manager native credential assist attempted through Windows UI Automation.');
+  return true;
+}
+
 async function killStrayProfileProcesses(userDataDir) {
   if (process.platform !== 'win32') return;
   const escaped = userDataDir.replace(/'/g, "''");
@@ -410,6 +515,23 @@ async function closeBrowserGracefully(entry) {
   return exited || entry.process?.exitCode !== null;
 }
 
+async function closeNativeBrowserWindow(proc, timeoutMs = 5000) {
+  if (!proc?.pid || proc.exitCode !== null) return true;
+  if (process.platform === 'win32') {
+    const pid = Number(proc.pid);
+    await runPowerShell(`
+      $p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue
+      if ($p) { [void]$p.CloseMainWindow() }
+    `, 3000);
+    if (await waitForProcessExit(proc, timeoutMs)) return true;
+  } else {
+    try { proc.kill('SIGTERM'); } catch {}
+    if (await waitForProcessExit(proc, timeoutMs)) return true;
+  }
+  await killProcessTree(proc);
+  return waitForProcessExit(proc, 2500);
+}
+
 async function devtoolsPageStates(debugPort) {
   try {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, {
@@ -602,14 +724,34 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDir, backgrou
   return args;
 }
 
-function challengeSafeChromeArgs({ userDataDir, debugPort, proxyRules, initialUrl }) {
+function challengeSafeChromeArgs({ userDataDir, proxyRules, initialUrl }) {
+  const args = [
+    `--user-data-dir=${userDataDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--start-maximized',
+    '--lang=es-ES',
+  ];
+  if (proxyRules) {
+    args.push(
+      `--proxy-server=${proxyRules}`,
+      '--proxy-bypass-list=localhost;127.0.0.1;[::1]',
+      '--disable-quic',
+    );
+  }
+  args.push(initialUrl || 'about:blank');
+  return args;
+}
+
+function challengeReadbackChromeArgs({ userDataDir, debugPort, proxyRules, initialUrl }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
     '--no-first-run',
     '--no-default-browser-check',
-    '--start-maximized',
+    '--window-position=-32000,-32000',
+    '--window-size=1200,900',
     '--lang=es-ES',
   ];
   if (proxyRules) {
@@ -691,6 +833,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     if (!entry) return;
     active = null;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    if (entry.nativeAutofillTimer) clearTimeout(entry.nativeAutofillTimer);
     if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
     if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
     entry.closed = true;
@@ -918,16 +1061,83 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       };
     }
 
-    const debugPort = await freePort();
+    let debugPort = challengeSafeCapture ? null : await freePort();
     const secret = crypto.randomBytes(32).toString('base64url');
     let entry = null;
 
     const confirmAuthenticatedSession = async () => {
-      const first = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      const activeDebugPort = Number(entry?.debugPort || 0);
+      if (!activeDebugPort) return false;
+      const first = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
       if (first?.authenticated !== true) return false;
       await new Promise((resolve) => setTimeout(resolve, 700));
-      const second = await inspectCaptureSession(debugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+      const second = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
       return second?.authenticated === true;
+    };
+
+    const prepareChallengeSafeReadback = async () => {
+      if (!entry?.challengeSafeCapture || entry.captureReadbackReady) return;
+      if (entry.captureReadbackPromise) return entry.captureReadbackPromise;
+
+      entry.captureReadbackPromise = (async () => {
+        entry.restartingForCapture = true;
+        log.log?.(
+          'Session Manager Turnstile safe-auth mode: human phase complete; '
+          + 'closing clean browser before readback capture.',
+        );
+
+        await closeNativeBrowserWindow(entry.process, 5000);
+        await markProfileExitedCleanly(userDataDir).catch(() => null);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        const nextDebugPort = await freePort();
+        const readbackProcess = spawn(executable, challengeReadbackChromeArgs({
+          userDataDir,
+          debugPort: nextDebugPort,
+          proxyRules,
+          initialUrl: profile.url,
+        }), {
+          detached: false,
+          windowsHide: false,
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+
+        entry.process = readbackProcess;
+        entry.debugPort = nextDebugPort;
+        debugPort = nextDebugPort;
+        entry.captureReadbackReady = true;
+        entry.restartingForCapture = false;
+
+        readbackProcess.stderr?.on('data', (chunk) => {
+          const text = String(chunk || '').trim();
+          if (text && /ERROR|FATAL|proxy/i.test(text)) {
+            log.warn?.('Session Manager readback Chrome:', text.slice(0, 800));
+          }
+        });
+        readbackProcess.once('error', (error) => {
+          log.error?.('Session Manager readback Chrome spawn failed:', error?.message || error);
+          if (active === entry) void close('readback_spawn_error');
+        });
+        readbackProcess.once('exit', () => {
+          if (active === entry && !entry.restartingForCapture) {
+            active = null;
+            entry.closed = true;
+            void entry.control?.close().catch(() => null);
+            void entry.relay?.close().catch(() => null);
+          }
+        });
+
+        if (!await waitForDevtools(nextDebugPort, 20_000)) {
+          throw new Error('No se pudo abrir el modo de lectura de sesión después de completar la verificación humana.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      })();
+
+      try {
+        return await entry.captureReadbackPromise;
+      } finally {
+        entry.captureReadbackPromise = null;
+      }
     };
 
     const saveCapture = async ({ authenticated: preverifiedAuthenticated = false } = {}) => {
@@ -936,11 +1146,14 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (entry.savePromise) return entry.savePromise;
 
       entry.savePromise = (async () => {
+        if (entry.challengeSafeCapture && !entry.captureReadbackReady) {
+          await prepareChallengeSafeReadback();
+        }
         const authenticated = preverifiedAuthenticated === true
           ? true
           : await confirmAuthenticatedSession();
         const captured = await capturePortableSession({
-          debugPort,
+          debugPort: entry.debugPort,
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
@@ -1002,7 +1215,6 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const launchArgs = challengeSafeCapture
       ? challengeSafeChromeArgs({
           userDataDir,
-          debugPort,
           proxyRules,
           initialUrl: profile.url,
         })
@@ -1051,12 +1263,31 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       openAiAutomationPromise: null,
       openAiRouteRecoveryAttempts: 0,
       challengeSafeCapture,
+      captureReadbackReady: false,
+      captureReadbackPromise: null,
+      restartingForCapture: false,
+      nativeAutofillTimer: null,
       devtoolsTimer: null,
       temporaryProfile: false,
       guest: false,
       closed: false,
     };
     active = entry;
+
+    if (challengeSafeCapture && (credentials?.username || credentials?.password)) {
+      entry.nativeAutofillTimer = setTimeout(() => {
+        if (active !== entry || entry.closed || entry.restartingForCapture) return;
+        void nativeCredentialAutofill({
+          userDataDir,
+          username: credentials?.username || '',
+          password: credentials?.password || '',
+          log,
+        }).catch((error) => {
+          log.warn?.('Session Manager native credential assist failed:', error?.message || error);
+        });
+      }, 900);
+      entry.nativeAutofillTimer.unref?.();
+    }
 
     proc.stderr?.on('data', (chunk) => {
       const text = String(chunk || '').trim();
@@ -1067,9 +1298,10 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (active === entry) void close('spawn_error');
     });
     proc.once('exit', () => {
-      if (active === entry) {
+      if (active === entry && !entry.restartingForCapture) {
         active = null;
         if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+        if (entry.nativeAutofillTimer) clearTimeout(entry.nativeAutofillTimer);
         if (entry.autoSaveTimer) clearInterval(entry.autoSaveTimer);
         if (entry.autoSaveCloseTimer) clearTimeout(entry.autoSaveCloseTimer);
         entry.closed = true;
@@ -1087,7 +1319,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       if (challengeSafeCapture) {
         log.log?.(
           'Session Manager Turnstile safe-auth mode: browser left fully manual; '
-          + 'no Puppeteer/CDP attachment until the administrator explicitly saves the authenticated session.',
+          + 'no extension, Puppeteer, CDP attachment, or remote-debugging port until the administrator explicitly saves the authenticated session.',
         );
       } else if (!openAiCapture || background) {
         const browser = await connectCaptureBrowser(debugPort);

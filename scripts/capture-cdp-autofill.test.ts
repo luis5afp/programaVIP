@@ -30,14 +30,48 @@ assert.match(
 );
 assert.match(
   engine,
-  /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,
-  'challenge-safe captures must prefer an installed system Chrome or Edge over bundled Chromium',
+  /function challengeSafeChromeArgs\([\s\S]{0,450}--no-first-run[\s\S]{0,500}return args/,
+  'Turnstile human phase must use a minimal native browser launch',
+);
+assert.doesNotMatch(
+  engine.match(/function challengeSafeChromeArgs\([\s\S]*?\n\}/)?.[0] || '',
+  /remote-debugging-port|load-extension|disable-extensions-except/,
+  'Turnstile human phase must not expose remote debugging or load the capture extension',
+);
+const nativeAutofillStart = engine.indexOf('async function nativeCredentialAutofill');
+const nativeAutofillEnd = engine.indexOf('\nasync function killStrayProfileProcesses', nativeAutofillStart);
+assert.ok(
+  nativeAutofillStart >= 0 && nativeAutofillEnd > nativeAutofillStart,
+  'native credential autofill helper must be present',
+);
+const nativeAutofillSource = engine.slice(nativeAutofillStart, nativeAutofillEnd);
+assert.match(nativeAutofillSource, /UIAutomationClient/);
+assert.match(nativeAutofillSource, /ValuePattern/);
+assert.match(nativeAutofillSource, /USERFLEX_AUTOFILL_PASSWORD/);
+assert.match(
+  engine,
+  /runPowerShellWithEnv\(script,[\s\S]{0,220}USERFLEX_AUTOFILL_USERNAME[\s\S]{0,220}USERFLEX_AUTOFILL_PASSWORD/,
+  'managed credentials must be passed to the native helper via environment variables rather than command-line interpolation',
 );
 assert.match(
   engine,
-  /if \(challengeSafeCapture\)[\s\S]{0,600}no Puppeteer\/CDP attachment until the administrator explicitly saves/,
-  'Turnstile capture must remain detached from Puppeteer/CDP until explicit save',
+  /challengeSafeCapture && \(credentials\?\.username \|\| credentials\?\.password\)[\s\S]{0,650}nativeCredentialAutofill/,
+  'challenge-safe ToolsPoint capture must schedule native credential fill when managed credentials are available',
 );
+assert.match(
+  engine,
+  /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,
+  'challenge-safe captures must prefer an installed system Chrome or Edge over bundled Chromium',
+);
+const safeAttachBranch = engine.indexOf('if (challengeSafeCapture) {', engine.indexOf('active = entry'));
+const normalAttachBranch = engine.indexOf('} else if (!openAiCapture || background) {', safeAttachBranch);
+assert.ok(
+  safeAttachBranch >= 0 && normalAttachBranch > safeAttachBranch,
+  'Turnstile capture must have a dedicated pre-save branch',
+);
+const safeAttachSource = engine.slice(safeAttachBranch, normalAttachBranch);
+assert.match(safeAttachSource, /no extension, Puppeteer, CDP attachment, or remote-debugging port/);
+assert.doesNotMatch(safeAttachSource, /connectCaptureBrowser|installCaptureAutomation|navigateCaptureHome/);
 assert.match(
   engine,
   /if \(!background && !challengeSafeCapture\)[\s\S]{0,120}autoSaveTimer/,
