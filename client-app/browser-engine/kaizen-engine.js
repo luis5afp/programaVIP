@@ -320,6 +320,27 @@ async function killStrayProfileProcesses(userDataDir) {
   const escaped = userDataDir.replace(/'/g, "''");
   const script = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'chrome.exe' -or $_.Name -eq 'msedge.exe') -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
   await runPowerShell(script);
+  // Stop-Process returns before every browser child has necessarily released
+  // its User Data handles. A short settle prevents the next launch from racing
+  // stale Singleton/DevTools artifacts left by a forced close.
+  await new Promise((resolve) => setTimeout(resolve, 350));
+}
+
+async function clearStaleBrowserProcessArtifacts(userDataDir) {
+  // These files are Chromium process-coordination metadata only. Removing them
+  // after all profile-owned browser processes are stopped is safe and must not
+  // touch cookies, Local Storage, IndexedDB, Service Workers or other session
+  // state. A stale SingletonLock/DevToolsActivePort can otherwise make Chrome
+  // open no control endpoint for just one persistent profile.
+  const transient = [
+    'SingletonLock',
+    'SingletonCookie',
+    'SingletonSocket',
+    'DevToolsActivePort',
+    'lockfile',
+  ];
+  await Promise.all(transient.map((name) =>
+    fsp.rm(path.join(userDataDir, name), { recursive: true, force: true }).catch(() => null)));
 }
 
 async function clearStartupSessionArtifacts(userDataDir) {
@@ -645,6 +666,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     const userDataDir = profileDir(clientId, profile.id);
     await killStrayProfileProcesses(userDataDir);
+    await clearStaleBrowserProcessArtifacts(userDataDir);
 
     const netflixTarget = target.hostname === 'netflix.com' || target.hostname.endsWith('.netflix.com');
     const deviceLocalMigrationNeeded = false;
