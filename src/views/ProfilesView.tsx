@@ -1540,6 +1540,12 @@ export function ProfilesView() {
                     <div><b>userFLOW:</b> {String(validationJob.result.clientVersion || 'versión no reportada')}</div>
                     <div><b>Navegador:</b> {String(validationJob.result.browser || validationJob.result.launchDiagnostics?.browser || 'desconocido')}</div>
                     <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
+                    {validationJob.result.outcome === 'human-verification-required' && (
+                      <div style={{ padding: 10, border: '1px solid #f59e0b', background: '#fffbeb', borderRadius: 8 }}>
+                        <b>Verificación humana requerida.</b>{' '}
+                        Completa Turnstile/CAPTCHA manualmente en la ventana del navegador. userFLOW no la resuelve ni la omite automáticamente.
+                      </div>
+                    )}
                     {validationJob.result.launchStage && <div><b>Etapa:</b> {String(validationJob.result.launchStage)}</div>}
                     {validationJob.result.errorCode && <div><b>Código:</b> {String(validationJob.result.errorCode)}</div>}
                     {validationJob.result.launchDiagnostics && (
