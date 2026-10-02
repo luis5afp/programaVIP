@@ -38,6 +38,11 @@ assert.doesNotMatch(
   /remote-debugging-port|load-extension|disable-extensions-except/,
   'Turnstile human phase must not expose remote debugging or load the capture extension',
 );
+assert.match(
+  engine.match(/function challengeSafeChromeArgs\([\s\S]*?\n\}/)?.[0] || '',
+  /--force-renderer-accessibility/,
+  'Turnstile human phase must expose web form controls to native Windows UI Automation without enabling DevTools',
+);
 const nativeAutofillStart = engine.indexOf('async function nativeCredentialAutofill');
 const nativeAutofillEnd = engine.indexOf('\nasync function killStrayProfileProcesses', nativeAutofillStart);
 assert.ok(
@@ -47,7 +52,13 @@ assert.ok(
 const nativeAutofillSource = engine.slice(nativeAutofillStart, nativeAutofillEnd);
 assert.match(nativeAutofillSource, /UIAutomationClient/);
 assert.match(nativeAutofillSource, /ValuePattern/);
+assert.match(nativeAutofillSource, /LegacyIAccessiblePattern/);
 assert.match(nativeAutofillSource, /USERFLEX_AUTOFILL_PASSWORD/);
+assert.match(
+  nativeAutofillSource,
+  /USERFLEX_AUTOFILL_OK/,
+  'native credential helper must report confirmed field-fill success instead of assuming the attempt worked',
+);
 assert.match(
   engine,
   /runPowerShellWithEnv\(script,[\s\S]{0,220}USERFLEX_AUTOFILL_USERNAME[\s\S]{0,220}USERFLEX_AUTOFILL_PASSWORD/,
