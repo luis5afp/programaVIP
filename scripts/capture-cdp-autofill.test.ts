@@ -73,6 +73,18 @@ assert.match(
   /challengeSafeCapture && \(credentials\?\.username \|\| credentials\?\.password\)[\s\S]{0,650}nativeCredentialAutofill/,
   'challenge-safe ToolsPoint capture must schedule native credential fill when managed credentials are available',
 );
+assert.doesNotMatch(
+  engine,
+  /waitForDevtools\(/,
+  'Session Manager readback must not call an undefined local waitForDevtools helper',
+);
+assert.match(
+  engine,
+  /readbackBrowser = await connectCaptureBrowser\(nextDebugPort\)[\s\S]{0,500}readbackBrowser\?\.disconnect/,
+  'readback readiness must reuse connectCaptureBrowser, which already owns DevTools endpoint waiting',
+);
+
+
 assert.match(
   engine,
   /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,

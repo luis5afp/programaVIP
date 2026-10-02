@@ -1162,8 +1162,18 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           }
         });
 
-        if (!await waitForDevtools(nextDebugPort, 20_000)) {
-          throw new Error('No se pudo abrir el modo de lectura de sesión después de completar la verificación humana.');
+        let readbackBrowser = null;
+        try {
+          // connectCaptureBrowser already waits for the DevTools endpoint to
+          // become available. Use that single source of truth instead of calling
+          // a non-existent local waitForDevtools helper.
+          readbackBrowser = await connectCaptureBrowser(nextDebugPort);
+        } catch (error) {
+          throw new Error(
+            `No se pudo abrir el modo de lectura de sesión después de completar la verificación humana: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        } finally {
+          await readbackBrowser?.disconnect?.().catch(() => null);
         }
         await new Promise((resolve) => setTimeout(resolve, 1200));
       })();
