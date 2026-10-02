@@ -21,6 +21,18 @@ assert.match(
 
 assert.match(
   engine,
+  /clearStaleBrowserProcessArtifacts[\s\S]{0,700}SingletonLock[\s\S]{0,300}SingletonCookie[\s\S]{0,300}SingletonSocket[\s\S]{0,300}DevToolsActivePort/,
+  'managed launch must remove stale Chromium process-control artifacts without clearing persistent session state',
+);
+
+assert.match(
+  engine,
+  /await killStrayProfileProcesses\(userDataDir\)[\s\S]{0,180}await clearStaleBrowserProcessArtifacts\(userDataDir\)/,
+  'stale process locks must be removed only after profile-owned browser processes are stopped',
+);
+
+assert.match(
+  engine,
   /navigateBrowserHome\(debugPort, profile\.url, \{ closeExtraPages: true \}\)/,
   'a fresh managed launch must normalize to one visible profile tab',
 );
