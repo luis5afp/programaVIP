@@ -99,7 +99,12 @@ assert.match(
 assert.match(
   engine,
   /challengeSafeCapture[\s\S]{0,900}preferSystemBrowser: challengeSafeCapture/,
-  'challenge-safe captures must prefer an installed system Chrome or Edge over bundled Chromium',
+  'challenge-safe captures must use a system browser before bundled Chromium',
+);
+assert.match(
+  engine,
+  /const edgeBrowsers = \[[\s\S]{0,700}Microsoft[\s\S]{0,500}return existingFile\(preferSystemBrowser[\s\S]{0,220}\? \[\.\.\.edgeBrowsers, \.\.\.chromeBrowsers, bundled\]/,
+  'challenge-safe Session Manager captures must prefer Microsoft Edge before Google Chrome',
 );
 const safeAttachBranch = engine.indexOf('if (challengeSafeCapture) {', engine.indexOf('active = entry'));
 const normalAttachBranch = engine.indexOf('} else if (!openAiCapture || background) {', safeAttachBranch);
