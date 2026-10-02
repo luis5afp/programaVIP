@@ -174,6 +174,25 @@ function effectiveStoragePolicy(target, requested) {
   return requested || 'portable-first-party';
 }
 
+function managedSnapshotNavigationUrl(profileUrl) {
+  const target = new URL(profileUrl);
+  const host = String(target.hostname || '').replace(/^www\./i, '').toLowerCase();
+
+  // ToolsPoint signs in on /login, but the stable authenticated member surface
+  // is /profile. A valid snapshot must reopen the authenticated surface instead
+  // of deliberately navigating back to the public login page on every launch.
+  if (host === 'member.toolspoint.net') {
+    const pathname = String(target.pathname || '/').toLowerCase();
+    if (pathname === '/' || /^\/(?:login|signin|sign-in|auth)(?:\/|$)/.test(pathname)) {
+      target.pathname = '/profile';
+      target.search = '';
+      target.hash = '';
+    }
+  }
+
+  return target.toString();
+}
+
 function sessionMarkerPath(userDataDir) {
   return path.join(userDataDir, '.userflex-session.json');
 }
@@ -489,6 +508,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
 
     const runtime = runtimeFor(profile);
     const snapshotManaged = snapshotAuthentication(runtime);
+    const snapshotNavigationUrl = snapshotManaged
+      ? managedSnapshotNavigationUrl(profile.url)
+      : profile.url;
     const credentialManaged = credentialAuthentication(runtime);
     const credentialsAvailable = Boolean(credentials?.username && credentials?.password);
     // The Worker can intentionally deliver stored credentials to cookie-snapshot
@@ -577,11 +599,11 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         const cookieRepair = snapshotManaged && delivery?.material
           ? await ensureManagedSnapshotCookies({
               debugPort: existing.debugPort,
-              profileUrl: profile.url,
+              profileUrl: snapshotNavigationUrl,
               material: delivery.material,
             }).catch(() => null)
           : null;
-        await navigateBrowserHome(existing.debugPort, profile.url, { closeExtraPages: true }).catch(() => null);
+        await navigateBrowserHome(existing.debugPort, snapshotNavigationUrl, { closeExtraPages: true }).catch(() => null);
         return {
           ok: true,
           reused: true,
@@ -884,10 +906,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           // completely missing; never overwrite provider-rotated cookie values.
           const cookieRepair = await ensureManagedSnapshotCookies({
             debugPort,
-            profileUrl: profile.url,
+            profileUrl: snapshotNavigationUrl,
             material: delivery.material,
           }).catch(() => null);
-          await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
+          await navigateBrowserHome(debugPort, snapshotNavigationUrl, { closeExtraPages: true });
           restore = {
             reusedProfile: true,
             version: Number(sessionMarker?.version || desiredSessionVersion),
@@ -899,7 +921,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         } else {
           restore = await restorePortableSession({
             debugPort,
-            profileUrl: profile.url,
+            profileUrl: snapshotNavigationUrl,
             profileId: profile.id,
             material: delivery.material,
             storageStrategy: runtime.storageStrategy,
@@ -919,7 +941,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         launchStage = 'credential-autofill';
         autofill = await installCredentialAutofill({
           debugPort,
-          profileUrl: profile.url,
+          profileUrl: snapshotManaged ? snapshotNavigationUrl : profile.url,
           credentials,
           extensionStrategy: runtime.extensionStrategy,
         });
@@ -978,8 +1000,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         // diagnosis/manual sign-in without weakening proxy or extension guards.
         if (launchStage === 'session-restore') {
           try {
-            await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
-            warning.fallbackNavigation = 'profile-home';
+            await navigateBrowserHome(
+              debugPort,
+              snapshotManaged ? snapshotNavigationUrl : profile.url,
+              { closeExtraPages: true },
+            );
+            warning.fallbackNavigation = snapshotManaged ? 'snapshot-authenticated-home' : 'profile-home';
           } catch (fallbackError) {
             warning.fallbackNavigation = 'failed';
             warning.fallbackError = fallbackError instanceof Error

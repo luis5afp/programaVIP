@@ -65,6 +65,32 @@ assert.match(
   /capturedGenerationMatches[\s\S]{0,700}sessionMarker\?\.capturedAt[\s\S]{0,700}delivery\.capturedAt/,
   'managed snapshot reuse must compare capturedAt so a new v1 generation cannot be mistaken for an old v1 snapshot',
 );
+assert.match(
+  engine,
+  /function managedSnapshotNavigationUrl[\s\S]{0,700}member\.toolspoint\.net[\s\S]{0,500}target\.pathname = '\/profile'/,
+  'ToolsPoint snapshots must normalize public/login URLs to the authenticated /profile surface',
+);
+assert.match(
+  engine,
+  /snapshotNavigationUrl = snapshotManaged[\s\S]{0,180}managedSnapshotNavigationUrl\(profile\.url\)/,
+  'managed snapshots must compute an authenticated navigation target before launch',
+);
+assert.match(
+  engine,
+  /ensureManagedSnapshotCookies\([\s\S]{0,220}profileUrl: snapshotNavigationUrl[\s\S]{0,500}navigateBrowserHome\([^\n]*snapshotNavigationUrl/,
+  'snapshot reuse must repair cookies and navigate on the authenticated snapshot target',
+);
+assert.match(
+  engine,
+  /restorePortableSession\([\s\S]{0,220}profileUrl: snapshotNavigationUrl/,
+  'fresh snapshot restore must load the authenticated snapshot target',
+);
+assert.match(
+  engine,
+  /fallbackNavigation = snapshotManaged \? 'snapshot-authenticated-home'/,
+  'degraded snapshot fallback must not send ToolsPoint back to its public login URL',
+);
+
 
 assert.doesNotMatch(
   engine,
@@ -193,8 +219,8 @@ assert.ok(
 
 assert.match(
   engine,
-  /launchStage === 'session-restore'[\s\S]{0,800}navigateBrowserHome\(debugPort, profile\.url, \{ closeExtraPages: true \}\)/,
-  'failed session restore must make a best-effort navigation to the profile home without killing the browser',
+  /launchStage === 'session-restore'[\s\S]{0,1200}snapshotManaged \? snapshotNavigationUrl : profile\.url[\s\S]{0,300}closeExtraPages: true/,
+  'failed session restore must make a best-effort navigation to the authenticated snapshot target without killing the browser',
 );
 
 const fatalKill = engine.indexOf('await killProcessTree(proc);', recoverableCatchEnd);
