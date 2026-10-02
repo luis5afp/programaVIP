@@ -614,7 +614,6 @@ function getKaizenBrowserEngine() {
   kaizenBrowserEngine = createKaizenBrowserEngine({
     app,
     onClosed: async (entry, reason) => {
-      if (reason === 'session_health_restore' || reason === 'session_fallback_restore') return;
       if (!entry?.usageId) return;
       const usage = {
         usageId: entry.usageId,
