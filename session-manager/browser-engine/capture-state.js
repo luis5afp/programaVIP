@@ -35,6 +35,11 @@ function isGoogleFlowHost(hostname) {
   return String(hostname || '').toLowerCase() === 'flow.google.com';
 }
 
+function isToolsPointHost(hostname) {
+  const host = String(hostname || '').replace(/^www\./i, '').toLowerCase();
+  return host === 'member.toolspoint.net';
+}
+
 function isGoogleAccountsHost(hostname) {
   const host = String(hostname || '').replace(/^\./, '').toLowerCase();
   return host === 'accounts.google.com' || /^accounts\.google\.[a-z.]+$/i.test(host);
@@ -78,6 +83,19 @@ export function captureNavigationTarget(profileUrl) {
     target.pathname = '/';
     target.search = '';
     target.hash = '';
+  }
+
+  // ToolsPoint authentication starts on /login, but /profile is the stable
+  // authenticated member surface. Keep the human phase on the configured login
+  // URL, then validate/read back the session against /profile so reopening the
+  // capture does not fall back to a public login page.
+  if (isToolsPointHost(target.hostname)) {
+    const path = target.pathname.toLowerCase();
+    if (path === '/' || /^\/(?:login|signin|sign-in|auth)(?:\/|$)/.test(path)) {
+      target.pathname = '/profile';
+      target.search = '';
+      target.hash = '';
+    }
   }
   return target;
 }

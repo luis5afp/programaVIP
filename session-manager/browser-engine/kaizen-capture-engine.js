@@ -8,6 +8,7 @@ import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import { credentialAutofillOrigins } from './credential-policy.js';
 import {
+  captureNavigationTarget,
   capturePortableSession,
   closeDevtoolsTargets,
   connectCaptureBrowser,
@@ -1126,11 +1127,12 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         await new Promise((resolve) => setTimeout(resolve, 350));
 
         const nextDebugPort = await freePort();
+        const readbackTarget = captureNavigationTarget(profile.url).toString();
         const readbackProcess = spawn(executable, challengeReadbackChromeArgs({
           userDataDir,
           debugPort: nextDebugPort,
           proxyRules,
-          initialUrl: profile.url,
+          initialUrl: readbackTarget,
         }), {
           detached: false,
           windowsHide: false,

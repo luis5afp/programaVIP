@@ -28,6 +28,17 @@ assert.match(
   /isTurnstileSensitiveProfileUrl[\s\S]{0,350}toolspoint\.net/,
   'ToolsPoint must use the security-challenge-safe capture path',
 );
+assert.match(
+  captureState,
+  /isToolsPointHost[\s\S]{0,900}target\.pathname = '\/profile'/,
+  'ToolsPoint login/root URLs must validate against the authenticated /profile surface',
+);
+assert.match(
+  engine,
+  /const readbackTarget = captureNavigationTarget\(profile\.url\)\.toString\(\)[\s\S]{0,260}initialUrl: readbackTarget/,
+  'challenge-safe readback must reopen the authenticated validation target instead of the public login URL',
+);
+
 const challengeSafeArgsStart = engine.indexOf('function challengeSafeChromeArgs');
 const challengeSafeArgsEnd = engine.indexOf('\nfunction challengeReadbackChromeArgs', challengeSafeArgsStart);
 assert.ok(
