@@ -218,8 +218,28 @@ assert.match(
 
 assert.match(
   engine,
-  /recoverableLaunchStages = new Set\(\[[\s\S]{0,300}'session-restore'[\s\S]{0,300}'navigation'[\s\S]{0,300}'credential-autofill'/,
-  'recoverable profile bootstrap stages must be explicitly allowlisted',
+  /recoverableLaunchStages = new Set\(\[[\s\S]{0,220}'browser-control'[\s\S]{0,300}'session-restore'[\s\S]{0,300}'navigation'[\s\S]{0,300}'credential-autofill'/,
+  'browser control and page/session bootstrap failures must be explicitly recoverable once the browser process is running',
+);
+assert.match(
+  engine,
+  /connectKaizenBrowser\(debugPort, 60_000\)/,
+  'initial managed-browser control handshake must allow slow persistent profiles up to sixty seconds',
+);
+assert.match(
+  sessionState,
+  /export async function connectKaizenBrowser\(debugPort, timeoutMs = 25_000\)[\s\S]{0,180}waitForDevtools\(debugPort, timeoutMs\)/,
+  'browser connection helper must accept an explicit startup timeout',
+);
+assert.match(
+  engine,
+  /startupUrl = snapshotManaged[\s\S]{0,260}sessionVersionMatches \|\| hasPersistentBrowserState\(userDataDir\)[\s\S]{0,260}snapshotNavigationUrl/,
+  'snapshot profiles with persistent local state must start on their managed authenticated URL before CDP is required',
+);
+assert.match(
+  engine,
+  /launchStage === 'browser-control'[\s\S]{0,900}browser-startup-url/,
+  'a running browser with unavailable CDP control must remain open in degraded mode instead of being killed',
 );
 
 const recoverableCatchStart = engine.indexOf('if (browserStillRunning && recoverableLaunchStages.has(launchStage))');
