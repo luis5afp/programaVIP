@@ -219,8 +219,8 @@ assert.ok(
 
 assert.match(
   engine,
-  /launchStage === 'session-restore'[\s\S]{0,800}navigateBrowserHome\(debugPort, profile\.url, \{ closeExtraPages: true \}\)/,
-  'failed session restore must make a best-effort navigation to the profile home without killing the browser',
+  /launchStage === 'session-restore'[\s\S]{0,1200}snapshotManaged \? snapshotNavigationUrl : profile\.url[\s\S]{0,300}closeExtraPages: true/,
+  'failed session restore must make a best-effort navigation to the authenticated snapshot target without killing the browser',
 );
 
 const fatalKill = engine.indexOf('await killProcessTree(proc);', recoverableCatchEnd);
