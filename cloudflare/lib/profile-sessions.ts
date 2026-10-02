@@ -724,6 +724,10 @@ function safeValidationResult(value: any) {
     usernameFilled: value.inspection.usernameFilled === true,
     passwordFilled: value.inspection.passwordFilled === true,
     helperVisible: value.inspection.helperVisible === true,
+    humanVerificationVisible: value.inspection.humanVerificationVisible === true,
+    humanVerificationProvider: typeof value.inspection.humanVerificationProvider === 'string'
+      ? value.inspection.humanVerificationProvider.slice(0, 80)
+      : null,
   } : null;
   return {
     ok: value?.ok === true,
