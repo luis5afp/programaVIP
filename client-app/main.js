@@ -614,7 +614,6 @@ function getKaizenBrowserEngine() {
   kaizenBrowserEngine = createKaizenBrowserEngine({
     app,
     onClosed: async (entry, reason) => {
-      if (reason === 'session_health_restore' || reason === 'session_fallback_restore') return;
       if (!entry?.usageId) return;
       const usage = {
         usageId: entry.usageId,
@@ -1686,15 +1685,18 @@ function snapshotManagedProfile(profile) {
 }
 
 function inspectionNeedsLogin(inspection) {
+  if (!inspection) return false;
   if (inspection?.netflixHouseholdRestriction === true || inspection?.streamingAccessRestriction === true) return false;
+  if (inspection?.humanVerificationVisible === true) return false;
+
+  // A generic "Login" button may legitimately exist inside an authenticated
+  // application shell. Treat the session as signed out only when we have a
+  // login-like route, a visible password field, or the stronger combination of
+  // username field + login action.
   return Boolean(
-    inspection
-    && (
-      inspection.loginLikeUrl === true
-      || inspection.usernameFieldVisible === true
-      || inspection.passwordFieldVisible === true
-      || inspection.loginActionVisible === true
-    )
+    inspection.loginLikeUrl === true
+    || inspection.passwordFieldVisible === true
+    || (inspection.usernameFieldVisible === true && inspection.loginActionVisible === true)
   );
 }
 
@@ -1765,8 +1767,8 @@ async function openProfile(profileId) {
     });
 
     let inspection = null;
-    let sessionRecovered = false;
-    let fallbackRecovered = false;
+    const sessionRecovered = false;
+    const fallbackRecovered = false;
     let activeDelivery = delivery;
 
     // STREAMING keeps device-bound browser storage local, while managed cookies
@@ -1784,54 +1786,17 @@ async function openProfile(profileId) {
     if (snapshotManagedProfile(profile)) {
       const centralSessionVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
       inspection = await engine.inspect(clientId, profile.id).catch(() => null);
-      if (inspectionNeedsLogin(inspection) && result?.profileState === 'persistent-reuse') {
-        await engine.close(clientId, profile.id, 'session_health_restore').catch(() => null);
-        result = await engine.launch({
-          clientId,
-          profile,
-          connection,
-          delivery: activeDelivery,
-          credentials,
-          managedExtensions,
-          usageId: usage.usageId,
-          forceRestore: true,
+      // Session health checks are deliberately non-destructive once a visible
+      // browser has launched. Earlier builds could close/relaunch a healthy
+      // profile seconds after opening because a transient redirect or generic
+      // "Login" control was misclassified as an expired session. Keep the
+      // browser alive and only report a warning after repeated confirmation.
+      if (inspectionNeedsLogin(inspection)) {
+        console.warn('userFLOW session inspection suggests login is required; keeping the visible profile open.', {
+          profileId: profile.id,
+          profileState: result?.profileState || null,
+          currentUrl: inspection?.currentUrl || inspection?.pageUrl || null,
         });
-        sessionRecovered = true;
-        inspection = await engine.inspect(clientId, profile.id).catch(() => null);
-      }
-
-      if (inspectionNeedsLogin(inspection) && result?.profileState === 'server-session-restored') {
-        // Try older encrypted snapshots before deciding that access is really
-        // lost. A failed intermediate inspection never revokes the session.
-        let beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
-        for (let attempt = 0; attempt < 2 && beforeVersion > 1; attempt += 1) {
-          const fallback = await apiRequest(`/api/client/profiles/${profile.id}/session-fallback`, {
-            method: 'POST',
-            body: { beforeVersion },
-            timeout: 20_000,
-          }).catch(() => null);
-          if (!fallback?.available || !fallback?.sessionDelivery?.materialIncluded) break;
-
-          activeDelivery = fallback.sessionDelivery;
-          await engine.close(clientId, profile.id, 'session_fallback_restore').catch(() => null);
-          result = await engine.launch({
-            clientId,
-            profile,
-            connection,
-            delivery: activeDelivery,
-            credentials,
-            managedExtensions,
-            usageId: usage.usageId,
-            forceRestore: true,
-          });
-          sessionRecovered = true;
-          inspection = await engine.inspect(clientId, profile.id).catch(() => null);
-          beforeVersion = Number(result?.sessionVersion || activeDelivery?.version || 0);
-          if (!inspectionNeedsLogin(inspection)) {
-            fallbackRecovered = true;
-            break;
-          }
-        }
       }
 
       // A login-looking page can be transient while a service redirects or

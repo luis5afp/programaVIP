@@ -82,8 +82,12 @@ assert.match(
   /reason !== 'explicit_admin_reset'/,
   'destructive local profile cleanup must require an explicit administrator reset',
 );
-assert.match(clientMain, /session-fallback/);
-assert.match(clientMain, /fallbackRecovered/);
+assert.doesNotMatch(
+  clientMain,
+  /\/session-fallback|session_fallback_restore/,
+  'visible client profiles must not be closed/relaunched to try archived snapshots automatically',
+);
+assert.match(clientMain, /const fallbackRecovered = false/);
 assert.match(clientMain, /sessionVersion: Number\(result\?\.sessionVersion/);
 
 assert.match(profilesView, /Sesión: activa/);

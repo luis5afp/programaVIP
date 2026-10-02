@@ -114,15 +114,11 @@ chrome.management.onUninstalled.addListener((extensionId) => {
   void closeManagedProfile();
 });
 
-if (chrome.permissions?.onAdded) {
-  chrome.permissions.onAdded.addListener(() => void closeManagedProfile());
-}
-if (chrome.permissions?.onRemoved) {
-  chrome.permissions.onRemoved.addListener(() => void closeManagedProfile());
-}
-if (chrome.storage?.onChanged) {
-  chrome.storage.onChanged.addListener(() => void closeManagedProfile());
-}
+// Do not close a visible profile because the guard's own permission/storage
+// bookkeeping changed. These events do not identify tampering with a protected
+// managed extension and can occur during normal browser/extension lifecycle.
+// Direct disable/uninstall of protected extensions remains enforced above, and
+// the periodic repair still re-enables anything unexpectedly disabled.
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create('userflex-guard', { periodInMinutes: 1 });

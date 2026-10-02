@@ -366,16 +366,16 @@ assert.match(
   'removing a protected extension must close the managed browser profile',
 );
 
-assert.match(
+assert.doesNotMatch(
   guardBackground,
-  /chrome\.permissions\?\.onAdded[\s\S]{0,500}closeManagedProfile\(\)[\s\S]{0,500}chrome\.permissions\?\.onRemoved/,
-  'permission changes inside Browser Guard must close the managed profile',
+  /chrome\.permissions\?\.onAdded[\s\S]{0,500}closeManagedProfile\(\)|chrome\.permissions\?\.onRemoved[\s\S]{0,500}closeManagedProfile\(\)/,
+  'Browser Guard must not close a visible profile for its own permission bookkeeping events',
 );
 
-assert.match(
+assert.doesNotMatch(
   guardBackground,
   /chrome\.storage\?\.onChanged[\s\S]{0,300}closeManagedProfile\(\)/,
-  'extension-local configuration storage changes must close the managed profile',
+  'Browser Guard must not close a visible profile for benign extension-local storage churn',
 );
 
 assert.match(
