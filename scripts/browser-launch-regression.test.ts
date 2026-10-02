@@ -211,8 +211,8 @@ assert.doesNotMatch(
 
 assert.match(
   sessionState,
-  /setInterval\(\(\) => scheduleFill\(0\), 15000\)/,
-  'credential helper fallback polling must stay low-frequency',
+  /const retryTimer = setInterval\(\(\) => \{[\s\S]{0,260}observeCurrentRoots\(\)[\s\S]{0,180}scheduleFill\(0\)[\s\S]{0,120}\}, 2500\)/,
+  'credential helper may poll every 2.5s only inside the bounded login window to follow SPA/modal and email-to-password transitions',
 );
 
 assert.match(
