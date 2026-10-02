@@ -1000,8 +1000,12 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         // diagnosis/manual sign-in without weakening proxy or extension guards.
         if (launchStage === 'session-restore') {
           try {
-            await navigateBrowserHome(debugPort, profile.url, { closeExtraPages: true });
-            warning.fallbackNavigation = 'profile-home';
+            await navigateBrowserHome(
+              debugPort,
+              snapshotManaged ? snapshotNavigationUrl : profile.url,
+              { closeExtraPages: true },
+            );
+            warning.fallbackNavigation = snapshotManaged ? 'snapshot-authenticated-home' : 'profile-home';
           } catch (fallbackError) {
             warning.fallbackNavigation = 'failed';
             warning.fallbackError = fallbackError instanceof Error
