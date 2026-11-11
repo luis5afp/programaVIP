@@ -1,0 +1,19 @@
+name: UserFlex bridge staging tests
+on:
+  pull_request:
+    paths:
+      - 'server/bridge/**'
+      - '.github/workflows/bridge-staging-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Test isolated bridge (fictional data only)
+        run: node --test server/bridge/*.test.mjs
