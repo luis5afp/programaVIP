@@ -12,6 +12,9 @@ const COMMON_BLOCKED_PREFIXES = [
   'chrome://settings',
   'edge://extensions',
   'edge://settings',
+  'chrome://password-manager',
+  'edge://wallet',
+  'edge://password-manager',
   'https://chromewebstore.google.com/',
   'https://developer.chrome.com/',
 ];
@@ -29,6 +32,19 @@ const COMMON_SENSITIVE_URLS = [
 const backgroundScript = String.raw`
 const BLOCKED_PREFIXES = ${JSON.stringify(COMMON_BLOCKED_PREFIXES)};
 const SENSITIVE_URLS = ${JSON.stringify(COMMON_SENSITIVE_URLS)};
+
+// Disable new native browser password saves where the Chrome privacy API
+// permits it. This runs inside userFLOW's isolated browser user-data-dir.
+// It does not erase stored passwords and cannot hide browser toolbar popups.
+async function disableNativePasswordSaving() {
+  try {
+    const setting = chrome.privacy?.services?.passwordSavingEnabled;
+    if (!setting) return;
+    const state = await setting.get({});
+    if (state?.levelOfControl === 'not_controllable' || state?.levelOfControl === 'controlled_by_other_extensions') return;
+    await setting.set({ value: false, scope: 'regular' });
+  } catch {}
+}
 
 function shouldBlock(rawUrl) {
   const url = String(rawUrl || '');
@@ -103,15 +119,18 @@ if (chrome.storage?.onChanged) {
 chrome.runtime.onInstalled.addListener(() => {
   try { chrome.alarms.create('userflow-extension-keepalive', { periodInMinutes: 1 }); } catch {}
   void snapshotProtectedExtensions();
+  void disableNativePasswordSaving();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name !== 'userflow-extension-keepalive') return;
   try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); } catch {}
   void snapshotProtectedExtensions();
+  void disableNativePasswordSaving();
 });
 
 void snapshotProtectedExtensions();
+void disableNativePasswordSaving();
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0 || !shouldBlock(details.url)) return;
@@ -277,8 +296,8 @@ function packageZip(manifestValue: object, contentScript: string) {
 }
 
 export function bundledExtensions(): BundledExtensionDefinition[] {
-  const ex1Version = '1.7';
-  const ex2Version = '1.6';
+  const ex1Version = '1.8';
+  const ex2Version = '1.7';
   const ex1Description = 'Protección de sesión y privacidad integrada para userFLOW, sin dependencias externas.';
   const ex2Description = 'Protección ligera del navegador integrada para userFLOW, sin dependencias externas.';
 
@@ -288,7 +307,7 @@ export function bundledExtensions(): BundledExtensionDefinition[] {
       description: ex1Description,
       version: ex1Version,
       packageBytes: packageZip(
-        manifest('ex1', ex1Version, ex1Description, ['storage']),
+        manifest('ex1', ex1Version, ex1Description, ['storage', 'privacy']),
         ex1ContentScript,
       ),
     },
@@ -297,7 +316,7 @@ export function bundledExtensions(): BundledExtensionDefinition[] {
       description: ex2Description,
       version: ex2Version,
       packageBytes: packageZip(
-        manifest('ex2', ex2Version, ex2Description),
+        manifest('ex2', ex2Version, ex2Description, ['privacy']),
         ex2ContentScript,
       ),
     },
