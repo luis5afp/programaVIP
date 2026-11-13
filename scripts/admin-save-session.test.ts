@@ -80,11 +80,13 @@ assert.match(clientApi, /imageVersion: profile\.updated_at \|\| null/, 'userFLOW
 assert.match(admin, /url\.searchParams\.set\('ufv', profile\.updated_at \|\| '1'\)/, 'Admin must cache-bust managed image edits');
 assert.match(admin, /La imagen fue subida, pero el perfil no confirmó el nuevo image_url/, 'Admin must verify that an edited image was persisted');
 const submitStart = admin.indexOf('async function submit');
-const submitClose = admin.indexOf('closeEditor();', submitStart);
-const submitSave = admin.indexOf('const savedProfile =', submitStart);
-const submitRefresh = admin.indexOf('void load();', submitStart);
-assert.ok(submitClose > submitStart && submitClose < submitSave, 'Admin must close before the primary network save');
-assert.ok(submitRefresh > submitSave, 'Admin must refresh profile data after saving');
+const submitEnd = admin.indexOf('async function startCapture', submitStart);
+const profileSubmit = admin.slice(submitStart, submitEnd);
+const submitClose = profileSubmit.indexOf('closeEditor();');
+const submitSave = profileSubmit.indexOf('const savedProfile =');
+const submitRefresh = profileSubmit.indexOf('await load({ throwOnError: true });');
+assert.ok(submitSave >= 0 && submitRefresh > submitSave, 'Admin must refresh confirmed profile data after saving');
+assert.ok(submitClose > submitRefresh, 'Admin must not close until profile and secondary settings are saved');
 assert.match(clientMain, /async function profileImageDataUrl/, 'userFLOW main process must download profile images itself');
 assert.match(clientMain, /data:\$\{mime\};base64/, 'userFLOW must inline downloaded profile images as local data URLs');
 assert.match(clientMain, /cache: 'no-store'/, 'userFLOW image refresh must bypass stale HTTP cache');
