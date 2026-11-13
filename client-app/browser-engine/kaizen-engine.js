@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
+import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
@@ -712,6 +713,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       await fsp.mkdir(userDataDir, { recursive: true });
     }
     await clearStartupSessionArtifacts(userDataDir);
+    // Native password-manager prompts belong to the browser chrome, not the
+    // EX1/EX2 web content scripts. Apply only profile-local save preferences
+    // before launch without touching the persisted Login Data or sessions.
+    await disableNativePasswordSavingForManagedProfile(userDataDir);
     if (hasManagedExtensions && browserKind(executable) === 'edge') {
       await suppressEdgeDeveloperModeExtensionWarning(userDataDir);
     }
