@@ -357,6 +357,10 @@ function launchCustomProtocol(launchUrl: string) {
 
 export function ProfilesView() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profileLoadStatus, setProfileLoadStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
+  const [auxiliaryLoadError, setAuxiliaryLoadError] = useState<string | null>(null);
+  const profileLoadSequence = useRef(0);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [profilePlanMemberships, setProfilePlanMemberships] = useState<ProfilePlanMembership[]>([]);
   const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
@@ -402,33 +406,60 @@ export function ProfilesView() {
   const [cookieInspecting, setCookieInspecting] = useState(false);
 
   async function load(options: { silent?: boolean } = {}) {
-    try {
-      const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows, extensionRows, extensionMembershipRows] = await Promise.all([
-        api.profiles.list(),
-        api.proxies.list(),
-        api.profileProxyDefaults.list(),
-        api.profileSessions.list(),
-        api.plans.list(),
-        api.profilePlans.list(),
-        api.clients.list(),
-        api.assignments.list(),
-        api.extensions.list(),
-        api.profileExtensions.list(),
-      ]);
-      setProfiles(profileRows);
-      setProxies(proxyRows);
-      setProxyDefaults(defaultRows);
-      setSessionStates(stateRows);
-      setPlans(planRows);
-      setProfilePlanMemberships(membershipRows);
-      setClients(clientRows);
-      setAssignments(assignmentRows);
-      setExtensions(extensionRows);
-      setProfileExtensionMemberships(extensionMembershipRows);
-      setError(null);
-    } catch (loadError: any) {
-      if (!options.silent) setError(loadError.message);
+    const sequence = ++profileLoadSequence.current;
+    if (!options.silent) setProfileLoadStatus('loading');
+    // Fetch the actual profiles independently. A failure in an optional
+    // endpoint (extensions, sessions, plans, etc.) must never turn a valid
+    // profile list into a misleading "No hay perfiles".
+    const profilesRequest = api.profiles.list()
+      .then((rows) => {
+        if (!Array.isArray(rows)) throw new Error('El servidor devolvió una lista de perfiles inválida.');
+        if (sequence !== profileLoadSequence.current) return;
+        setProfiles(rows);
+        setProfileLoadStatus('ready');
+        setProfileLoadError(null);
+      })
+      .catch((loadError: any) => {
+        if (sequence !== profileLoadSequence.current) return;
+        setProfileLoadStatus('error');
+        setProfileLoadError(`No se pudo consultar /api/profiles: ${String(loadError?.message || loadError)}`);
+        // Do not discard profiles already visible, even after a transient
+        // network error; allow the administrator to retry the request.
+      });
+
+    const additionalResults = await Promise.allSettled([
+      api.proxies.list(),
+      api.profileProxyDefaults.list(),
+      api.profileSessions.list(),
+      api.plans.list(),
+      api.profilePlans.list(),
+      api.clients.list(),
+      api.assignments.list(),
+      api.extensions.list(),
+      api.profileExtensions.list(),
+    ]);
+    if (sequence === profileLoadSequence.current) {
+      const [proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows, extensionRows, extensionMembershipRows] = additionalResults;
+      if (proxyRows.status === 'fulfilled') setProxies(proxyRows.value);
+      if (defaultRows.status === 'fulfilled') setProxyDefaults(defaultRows.value);
+      if (stateRows.status === 'fulfilled') setSessionStates(stateRows.value);
+      if (planRows.status === 'fulfilled') setPlans(planRows.value);
+      if (membershipRows.status === 'fulfilled') setProfilePlanMemberships(membershipRows.value);
+      if (clientRows.status === 'fulfilled') setClients(clientRows.value);
+      if (assignmentRows.status === 'fulfilled') setAssignments(assignmentRows.value);
+      if (extensionRows.status === 'fulfilled') setExtensions(extensionRows.value);
+      if (extensionMembershipRows.status === 'fulfilled') setProfileExtensionMemberships(extensionMembershipRows.value);
+
+      const failedSections = additionalResults
+        .map((result, index) => result.status === 'rejected'
+          ? ['proxies', 'proxies del perfil', 'sesiones', 'planes', 'planes del perfil', 'clientes', 'asignaciones', 'extensiones', 'extensiones del perfil'][index]
+          : null)
+        .filter(Boolean);
+      setAuxiliaryLoadError(failedSections.length
+        ? `Los perfiles se cargan por separado, pero no se pudieron consultar: ${failedSections.join(', ')}. Pulsa Actualizar para reintentar.`
+        : null);
     }
+    await profilesRequest;
   }
 
   useEffect(() => {
@@ -1157,6 +1188,10 @@ export function ProfilesView() {
                 style={{ width: 270, paddingLeft: 34 }}
               />
             </label>
+            <button className="button secondary" type="button" onClick={() => void load()} disabled={profileLoadStatus === 'loading'}>
+              <RefreshCw size={14} />
+              Actualizar
+            </button>
             <button className="button primary" onClick={() => openEditor('new')}>
               <Plus size={14} />
               Nuevo perfil
@@ -1165,11 +1200,24 @@ export function ProfilesView() {
         }
       />
       <ErrorBanner message={error} />
+      <ErrorBanner message={profileLoadError} />
+      <ErrorBanner message={auxiliaryLoadError} />
       <SuccessBanner message={success} />
 
-      {profiles.length === 0 ? (
+      {profiles.length === 0 && profileLoadStatus === 'loading' ? (
         <Card>
-          <Empty title="No hay perfiles" description="Agrega la primera web o perfil que quieras administrar." />
+          <Empty title="Cargando perfiles…" description="Consultando la lista de perfiles del servidor." />
+        </Card>
+      ) : profiles.length === 0 && profileLoadStatus === 'error' ? (
+        <Card>
+          <Empty title="No se pudo cargar la lista" description="No significa que los perfiles se hayan eliminado. Reintenta la conexión con el servidor." />
+          <button className="button secondary" type="button" onClick={() => void load()}>
+            <RefreshCw size={14} /> Reintentar carga
+          </button>
+        </Card>
+      ) : profiles.length === 0 ? (
+        <Card>
+          <Empty title="No hay perfiles" description="El servidor devolvió una lista vacía. Agrega un perfil si todavía no existe ninguno." />
         </Card>
       ) : filteredProfiles.length === 0 ? (
         <Card>
