@@ -523,6 +523,13 @@ export function ProfilesView() {
       .map((item) => item.extension_id);
   }
 
+  // EX1/EX2 remain globally available, but each profile can opt out.
+  // For these two extensions, membership rows represent opt-outs rather than
+  // assignments. The Browser Guard is separate and always mandatory.
+  function isOptionalGlobalExtension(item: ManagedExtension) {
+    return item.scope === 'global' && ['ex1', 'ex2'].includes(item.name.toLowerCase());
+  }
+
   function toggleExtension(extensionId: string) {
     setSelectedExtensionIds((current) => current.includes(extensionId)
       ? current.filter((id) => id !== extensionId)
@@ -562,7 +569,14 @@ export function ProfilesView() {
     setNetworkStrategy(current?.network_strategy || 'auto');
     setExtensionStrategy(current?.extension_strategy || (initialAuth === 'manual' ? 'guard-only' : 'custom'));
     setSelectedPlanIds(current ? planIdsFor(current.id) : []);
-    setSelectedExtensionIds(current ? extensionIdsFor(current.id) : []);
+    const memberships = new Set(current ? extensionIdsFor(current.id) : []);
+    for (const item of extensions.filter(isOptionalGlobalExtension)) {
+      // Existing and new profiles default to enabled. A stored membership
+      // for a globally available EX1/EX2 means this profile opted out.
+      if (memberships.has(item.id)) memberships.delete(item.id);
+      else memberships.add(item.id);
+    }
+    setSelectedExtensionIds([...memberships]);
     setShowLoginUsername(false);
     setShowLoginPassword(false);
     setEditor(value);
@@ -1804,10 +1818,15 @@ export function ProfilesView() {
             </Field>
 
             <Field
-              label={`Extensiones del perfil (${extensions.filter((item) => item.scope === 'global' && item.enabled && item.validation_status === 'runtime_valid').length + selectedExtensionIds.length})`}
+              label={`Extensiones del perfil (${extensions.filter((item) =>
+                item.enabled && item.validation_status === 'runtime_valid'
+                  && (item.scope === 'global'
+                    ? (!isOptionalGlobalExtension(item) || selectedExtensionIds.includes(item.id))
+                    : selectedExtensionIds.includes(item.id))
+              ).length})`}
               className="span-2"
-              tooltip="Browser Guard siempre se carga aparte. Las extensiones globales vienen del panel Extensiones; aquí eliges las extensiones verificadas que solo deben aplicarse a este perfil."
-              help="Solo aparecen seleccionables las extensiones que ya pasaron la prueba real en userFLOW. Las globales están marcadas y no se pueden quitar desde este perfil."
+              tooltip="Browser Guard siempre está activo. EX1 y EX2 se pueden habilitar o deshabilitar para este perfil; las demás extensiones globales continúan siendo obligatorias."
+              help="EX1 y EX2 se pueden seleccionar por perfil y se guardan con sus cambios. Browser Guard y las demás extensiones globales siguen activos. Solo las extensiones verificadas están disponibles."
             >
               <div className="managed-extension-picker">
                 <div className="managed-extension-system-row">
@@ -1820,17 +1839,24 @@ export function ProfilesView() {
 
                 {extensions.filter((item) => item.scope === 'global').map((item) => {
                   const ready = item.enabled && item.validation_status === 'runtime_valid';
+                  const optional = isOptionalGlobalExtension(item);
+                  const checked = ready && (!optional || selectedExtensionIds.includes(item.id));
                   return (
-                    <label className={`managed-extension-option global ${ready ? '' : 'disabled'}`} key={item.id}>
-                      <input type="checkbox" checked={ready} disabled />
+                    <label className={`managed-extension-option ${optional ? '' : 'global '}${ready ? '' : 'disabled'}`} key={item.id}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!optional || !ready || saving}
+                        onChange={() => toggleExtension(item.id)}
+                      />
                       <span className="managed-extension-option-body">
                         <span className="table-primary"><Puzzle size={13} /> {item.name} <small>v{item.version}</small></span>
                         <span className="table-secondary">
-                          Global · {item.validation_status === 'runtime_valid' ? (item.enabled ? 'activa' : 'desactivada') : item.validation_status}
+                          {optional ? 'Global · configurable para este perfil' : 'Global · obligatoria'} · {item.validation_status === 'runtime_valid' ? (item.enabled ? 'activa' : 'desactivada') : item.validation_status}
                         </span>
                       </span>
                       <Badge tone={ready ? 'ok' : item.validation_status === 'error' || item.validation_status === 'incompatible' ? 'bad' : 'warn'}>
-                        {ready ? 'Global' : 'No disponible'}
+                        {ready ? (optional ? 'Por perfil' : 'Global') : 'No disponible'}
                       </Badge>
                     </label>
                   );
