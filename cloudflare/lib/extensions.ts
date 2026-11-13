@@ -780,7 +780,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const profileId = uuid(profileSetMatch[1], 'profileId');
     const body = await bodyJson(request, 64 * 1024);
     const values = Array.isArray(body.extensionIds) ? body.extensionIds : [];
-    const extensionIds = [...new Set(values.map((value: unknown) => uuid(value, 'extensionId')))].slice(0, 500);
+    const extensionIds: string[] = [...new Set<string>(values.map((value: unknown) => uuid(value, 'extensionId')))].slice(0, 500);
     // Old browser tabs know only about selective extensions. Without this
     // explicit flag, they must preserve any EX1/EX2 opt-outs already saved.
     const manageOptionalGlobals = body.manageOptionalGlobals === true;
@@ -791,7 +791,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
       db(env, 'userflex_extensions?select=id,name,scope,enabled,validation_status&scope=eq.global&name=in.(ex1,ex2)'),
       db(env, `userflex_profile_extensions?select=extension_id&profile_id=eq.${profileId}`),
     ]);
-    const optionalGlobalIds = new Set((optionalGlobalRows || [])
+    const optionalGlobalIds = new Set<string>((optionalGlobalRows || [])
       .filter((row: any) => isProfileOptionalGlobalExtension(row))
       .map((row: any) => String(row.id)));
     const eligible = new Set((requestedRows || [])
