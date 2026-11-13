@@ -28,9 +28,25 @@ for (const [originsFor, allows] of [
   assert.equal(allows('https://evil.example/login', flowOrigins), false);
   assert.equal(allows('https://accounts.google.com.evil.example/login', flowOrigins), false);
 
+  // ChatGPT uses two separate HTTPS origins for the identifier and password
+  // steps. A profile created for ChatGPT must support both, but no other site.
+  const chatgptOrigins = originsFor('https://chatgpt.com/', 'custom');
+  assert.deepEqual(chatgptOrigins, [
+    'https://chatgpt.com',
+    'https://auth.openai.com',
+  ]);
+  assert.equal(allows('https://chatgpt.com/auth/login', chatgptOrigins), true);
+  assert.equal(allows('https://auth.openai.com/log-in/password', chatgptOrigins), true);
+  assert.equal(allows('https://auth.openai.com/log-in/identifier', chatgptOrigins), true);
+  assert.equal(allows('https://auth.openai.com.evil.example/log-in/password', chatgptOrigins), false);
+  assert.equal(allows('http://auth.openai.com/log-in/password', chatgptOrigins), false);
+  assert.equal(allows('https://auth.openai.com.attacker.test/', chatgptOrigins), false);
+  assert.equal(allows('https://evil.example/', chatgptOrigins), false);
+
   const regularOrigins = originsFor('https://example.com/app', 'custom');
   assert.deepEqual(regularOrigins, ['https://example.com']);
   assert.equal(allows('https://login.example.net/', regularOrigins), false);
+  assert.equal(allows('https://auth.openai.com/log-in/password', regularOrigins), false);
 
   const explicitGoogleProvider = originsFor('https://example.com/app', 'google');
   assert.deepEqual(explicitGoogleProvider, [
