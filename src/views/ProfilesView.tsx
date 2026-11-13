@@ -401,7 +401,7 @@ export function ProfilesView() {
   const [cookieInspection, setCookieInspection] = useState<CookieImportInspection | null>(null);
   const [cookieInspecting, setCookieInspecting] = useState(false);
 
-  async function load() {
+  async function load(options: { throwOnError?: boolean } = {}) {
     try {
       const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows, extensionRows, extensionMembershipRows] = await Promise.all([
         api.profiles.list(),
@@ -428,6 +428,7 @@ export function ProfilesView() {
       setError(null);
     } catch (loadError: any) {
       setError(loadError.message);
+      if (options.throwOnError) throw loadError;
     }
   }
 
@@ -735,10 +736,8 @@ export function ProfilesView() {
         throw new Error('Para importar cookies JSON usa autenticación Snapshot de sesión o Híbrido.');
       }
 
-      // "Guardar y cerrar" cierra el editor apenas termina la validación
-      // local. A partir de aquí los mensajes siguen una secuencia única y
-      // reflejan exactamente la fase que se está ejecutando.
-      closeEditor();
+      // Mantener el editor abierto hasta que el servidor confirme todos los cambios.
+      // Si falla una petición, el usuario puede corregirla o volver a intentar.
       setSuccess(wasEditing ? 'Guardando cambios del perfil…' : 'Guardando nuevo perfil…');
 
       const profileUrlValue = String(form.get('url') || '').trim();
@@ -799,8 +798,10 @@ export function ProfilesView() {
       // error pertenece a la configuración secundaria y no debe dar a entender
       // que el perfil completo se perdió.
       profileSaved = true;
+      // Si falla un guardado secundario tras crear el perfil, reintentar debe
+      // actualizar el mismo registro en lugar de crear perfiles duplicados.
+      if (editor === 'new') setEditor(savedProfile);
       setSuccess('Perfil guardado. Aplicando planes, extensiones, proxy y credenciales…');
-      void load();
 
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
       const shouldSaveCredentials = authStrategy === 'credential-autofill'
@@ -854,7 +855,10 @@ export function ProfilesView() {
           ? `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} correctamente · credenciales reemplazadas · snapshot anterior invalidado. Renueva la sesión para generar cookies de la cuenta nueva.`
           : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
 
-      await load();
+      // La lista también debe actualizarse antes de cerrar: no afirmar que se
+      // completó si no se pudo recuperar el estado persistido del servidor.
+      await load({ throwOnError: true });
+      closeEditor();
       setError(null);
       setSuccess(confirmation);
     } catch (submitError: any) {
