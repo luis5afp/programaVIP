@@ -401,7 +401,7 @@ export function ProfilesView() {
   const [cookieInspection, setCookieInspection] = useState<CookieImportInspection | null>(null);
   const [cookieInspecting, setCookieInspecting] = useState(false);
 
-  async function load(options: { throwOnError?: boolean } = {}) {
+  async function load(options: { silent?: boolean } = {}) {
     try {
       const [profileRows, proxyRows, defaultRows, stateRows, planRows, membershipRows, clientRows, assignmentRows, extensionRows, extensionMembershipRows] = await Promise.all([
         api.profiles.list(),
@@ -427,8 +427,7 @@ export function ProfilesView() {
       setProfileExtensionMemberships(extensionMembershipRows);
       setError(null);
     } catch (loadError: any) {
-      setError(loadError.message);
-      if (options.throwOnError) throw loadError;
+      if (!options.silent) setError(loadError.message);
     }
   }
 
@@ -739,9 +738,9 @@ export function ProfilesView() {
       if (credentialsRequired) {
         if (!loginUsername) throw new Error('Ingresa el correo o usuario para el autocompletado.');
         if (!currentState?.has_credentials && !loginPassword) throw new Error('Ingresa la contraseña del perfil.');
-        if (usernameChanged && !loginPassword) {
-          throw new Error('Cambiaste el correo/usuario. Ingresa también la contraseña de la nueva cuenta para reemplazar las credenciales anteriores.');
-        }
+      }
+      if (usernameChanged && !loginPassword && currentState?.has_credentials) {
+        throw new Error('Cambiaste el correo/usuario. Ingresa también la contraseña de la nueva cuenta para reemplazar las credenciales anteriores.');
       }
       if (networkStrategy === 'profile-proxy' && !proxyId) {
         throw new Error('La estrategia Proxy fijo del perfil requiere seleccionar un proxy.');
@@ -818,9 +817,16 @@ export function ProfilesView() {
       setSuccess('Perfil guardado. Aplicando planes, extensiones, proxy y credenciales…');
 
       const profileProxyId = networkStrategy === 'profile-proxy' || networkStrategy === 'auto' ? proxyId : null;
-      const shouldSaveCredentials = authStrategy === 'credential-autofill'
-        || authStrategy === 'hybrid'
-        || (authStrategy === 'cookie-snapshot' && Boolean(loginUsername));
+      // Editing EX1/EX2, proxy or plans must not rewrite unchanged encrypted
+      // credentials and start unnecessary Keeper/session checks on every save.
+      // Snapshot credentials are optional: an email alone is not a password.
+      const credentialsChangedInForm = Boolean(loginPassword)
+        || usernameChanged
+        || !currentState?.has_credentials;
+      const shouldSaveCredentials = (
+        (authStrategy === 'credential-autofill' || authStrategy === 'hybrid')
+        || (authStrategy === 'cookie-snapshot' && Boolean(loginUsername && loginPassword))
+      ) && credentialsChangedInForm;
 
       let credentialsResult: {
         login_username: string;
@@ -869,12 +875,17 @@ export function ProfilesView() {
           ? `${wasEditing ? 'Perfil actualizado' : 'Perfil creado'} correctamente · credenciales reemplazadas · snapshot anterior invalidado. Renueva la sesión para generar cookies de la cuenta nueva.`
           : (wasEditing ? 'Perfil actualizado correctamente.' : 'Perfil creado correctamente.');
 
-      // La lista también debe actualizarse antes de cerrar: no afirmar que se
-      // completó si no se pudo recuperar el estado persistido del servidor.
-      await load({ throwOnError: true });
+      // Every mutation above has returned successfully. A full Admin reload
+      // performs ten independent GET requests, including extension package
+      // repair/DDL, and must not turn an already-persisted save into an error
+      // or prevent "Guardar y cerrar" from closing.
+      setProfiles((rows) => wasEditing
+        ? rows.map((row) => row.id === savedProfile.id ? savedProfile : row)
+        : [savedProfile, ...rows]);
       closeEditor();
       setError(null);
       setSuccess(confirmation);
+      void load({ silent: true });
     } catch (submitError: any) {
       setSuccess(null);
       setError(
@@ -1636,6 +1647,7 @@ export function ProfilesView() {
           }}
           actions={
             <>
+              {error && <div role="alert" style={{ flex: '1 1 100%', color: '#b91c1c', fontSize: 12, marginBottom: 8, whiteSpace: 'normal' }}>{error}</div>}
               <button className="button secondary" onClick={closeEditor} disabled={saving}>Cancelar</button>
               <button className="button primary" form="profile-form" type="submit" disabled={saving}>
                 {saving ? 'Guardando...' : 'Guardar y cerrar'}
