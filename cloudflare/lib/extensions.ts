@@ -4,6 +4,12 @@ import type { ClientIdentity } from './auth';
 import { Env, HttpError, audit, bodyJson, json, optional, db, sha, text, token, uuid } from './core';
 import { bundledExtensions } from './builtin-extensions';
 import { touchProfileClients } from './client-revalidation';
+import {
+  filterGlobalExtensionsForProfile,
+  isProfileOptionalGlobalExtension,
+  optionalGlobalAvailableToAnyProfile,
+  persistedProfileExtensionIds,
+} from './profile-extension-selection';
 
 const BUCKET = 'userflex-extension-packages';
 const MAX_PACKAGE_BYTES = 20 * 1024 * 1024;
@@ -13,15 +19,6 @@ const WARNING_PERMISSIONS = new Set(['management', 'proxy']);
 const BLOCKED_PERMISSIONS = new Set(['debugger', 'nativeMessaging']);
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 
-// EX1/EX2 stay globally available, but an existing membership row is an
-// explicit opt-out for one profile. All other global extensions remain global.
-// This reuses the existing join table and avoids DDL on the client hot path.
-const PROFILE_OPTIONAL_GLOBAL_EXTENSION_NAMES = new Set(['ex1', 'ex2']);
-
-function isProfileOptionalGlobalExtension(row: { scope: string; name: string }) {
-  return row.scope === 'global'
-    && PROFILE_OPTIONAL_GLOBAL_EXTENSION_NAMES.has(String(row.name || '').toLowerCase());
-}
 
 let extensionSchemaReadyFor = '';
 let extensionSchemaReadyPromise: Promise<void> | null = null;
@@ -806,13 +803,13 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     if (invalid.length) throw new HttpError(409, 'EXTENSION_NOT_SELECTABLE', 'Una o más extensiones todavía no están verificadas en userFLOW.');
 
     // Selective rows mean "assigned"; global EX1/EX2 rows mean "opted out".
-    const selectiveIds = extensionIds.filter((id) => !optionalGlobalIds.has(id));
-    const optedOutIds = manageOptionalGlobals
-      ? [...optionalGlobalIds].filter((id) => !extensionIds.includes(id))
-      : (existingMemberships || [])
-        .map((row: any) => String(row.extension_id))
-        .filter((id: string) => optionalGlobalIds.has(id));
-    const persistedIds = [...new Set([...selectiveIds, ...optedOutIds])];
+    const persistedIds = persistedProfileExtensionIds({
+      selectedIds: extensionIds,
+      optionalGlobalIds: [...optionalGlobalIds],
+      previousMembershipIds: (existingMemberships || []).map((row: any) => String(row.extension_id)),
+      manageOptionalGlobals,
+    });
+    const optedOutIds = persistedIds.filter((id) => optionalGlobalIds.has(id));
     await db(env, `userflex_profile_extensions?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
@@ -1048,10 +1045,9 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
   for (const profileId of ids) {
     const profileMemberships = (memberships || [])
       .filter((row: any) => row.profile_id === profileId);
-    const optedOut = new Set(profileMemberships.map((row: any) => row.extension_id));
     const list = [
-      ...(globalRows || []).filter((row: any) =>
-        !isProfileOptionalGlobalExtension(row) || !optedOut.has(row.id)),
+      ...filterGlobalExtensionsForProfile(globalRows || [],
+        profileMemberships.map((row: any) => row.extension_id)),
       ...profileMemberships
         .map((row: any) => selectiveMap.get(row.extension_id))
         .filter(Boolean),
@@ -1091,8 +1087,8 @@ export async function clientExtensionPackage(request: Request, env: Env, identit
       env,
       `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}&profile_id=in.(${profileIds.join(',')})`,
     );
-    const optedOutProfileIds = new Set((optedOutRows || []).map((row: any) => row.profile_id));
-    authorized = profileIds.some((profileId: string) => !optedOutProfileIds.has(profileId));
+    authorized = optionalGlobalAvailableToAnyProfile(profileIds,
+      (optedOutRows || []).map((row: any) => row.profile_id));
   } else if (!authorized) {
     const rows = await db(
       env,
