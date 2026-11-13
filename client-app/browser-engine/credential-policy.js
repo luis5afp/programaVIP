@@ -1,4 +1,5 @@
 const GOOGLE_AUTH_ORIGIN = 'https://accounts.google.com';
+const OPENAI_AUTH_ORIGIN = 'https://auth.openai.com';
 
 function normalizeHost(value) {
   return String(value || '').trim().toLowerCase().replace(/^www\./, '');
@@ -15,6 +16,17 @@ function isGoogleServiceHost(host) {
   return normalized === 'google.com' || normalized.endsWith('.google.com');
 }
 
+// ChatGPT moves from chatgpt.com to auth.openai.com between the email and
+// password screens. Only OpenAI's own profiles may send managed credentials
+// to that exact HTTPS authentication origin.
+function isOpenAiServiceHost(host) {
+  const normalized = normalizeHost(host);
+  return normalized === 'chatgpt.com'
+    || normalized.endsWith('.chatgpt.com')
+    || normalized === 'openai.com'
+    || normalized.endsWith('.openai.com');
+}
+
 export function credentialAutofillOrigins(profileUrl, extensionStrategy = 'custom') {
   const target = new URL(String(profileUrl || ''));
   if (!['https:', 'http:'].includes(target.protocol)) {
@@ -24,6 +36,9 @@ export function credentialAutofillOrigins(profileUrl, extensionStrategy = 'custo
   const origins = new Set([target.origin]);
   if (String(extensionStrategy || '').toLowerCase() === 'google' || isGoogleServiceHost(target.hostname)) {
     origins.add(GOOGLE_AUTH_ORIGIN);
+  }
+  if (target.protocol === 'https:' && isOpenAiServiceHost(target.hostname)) {
+    origins.add(OPENAI_AUTH_ORIGIN);
   }
   return [...origins];
 }
