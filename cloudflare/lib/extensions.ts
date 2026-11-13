@@ -648,7 +648,13 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     || /^\/api\/extension-tests\//i.test(path)
     || /^\/api\/profiles\/[0-9a-f-]{36}\/extensions$/i.test(path);
   if (!relevant) return null;
-  await ensureExtensionSchema(env);
+  // The profile editor already bootstraps extensions on load. Its save route
+  // must not run serial DDL on a cold Cloudflare worker: that turns a small
+  // membership change into a long request and can make "Guardar y cerrar"
+  // time out while other settings were already persisted.
+  const profileSelectionWrite = method === 'POST'
+    && /^\/api\/profiles\/[0-9a-f-]{36}\/extensions$/i.test(path);
+  if (!profileSelectionWrite) await ensureExtensionSchema(env);
 
   if (path === '/api/extensions' && method === 'GET') {
     await ensureBundledExtensionsInstalled(request, env, admin);
@@ -810,18 +816,27 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
       manageOptionalGlobals,
     });
     const optedOutIds = persistedIds.filter((id) => optionalGlobalIds.has(id));
-    await db(env, `userflex_profile_extensions?profile_id=eq.${profileId}`, {
-      method: 'DELETE',
-      headers: { Prefer: 'return=minimal' },
-    });
-    if (persistedIds.length) {
-      await db(env, 'userflex_profile_extensions', {
+    // Update only changed rows. Previously each save deleted every membership
+    // and reinserted them, even if EX1/EX2 and all selective assignments were
+    // unchanged. Besides being slower, a failed insert could lose assignments.
+    const previousIds = new Set<string>((existingMemberships || []).map((row: any) => String(row.extension_id)));
+    const desiredIds = new Set<string>(persistedIds);
+    const toAdd = persistedIds.filter((id) => !previousIds.has(id));
+    const toRemove = [...previousIds].filter((id) => !desiredIds.has(id));
+    if (toAdd.length) {
+      await db(env, 'userflex_profile_extensions?on_conflict=profile_id,extension_id', {
         method: 'POST',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify(persistedIds.map((extensionId) => ({ profile_id: profileId, extension_id: extensionId }))),
+        headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
+        body: JSON.stringify(toAdd.map((extensionId) => ({ profile_id: profileId, extension_id: extensionId }))),
       });
     }
-    await touchProfileClients(env, profileId);
+    if (toRemove.length) {
+      await db(env, `userflex_profile_extensions?profile_id=eq.${profileId}&extension_id=in.(${toRemove.join(',')})`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+    }
+    if (toAdd.length || toRemove.length) await touchProfileClients(env, profileId);
     await audit(env, request, 'admin', admin.userId, 'profile.extensions.set', 'profile', profileId, {
       extensionIds,
       manageOptionalGlobals,
