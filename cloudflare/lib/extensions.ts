@@ -13,6 +13,16 @@ const WARNING_PERMISSIONS = new Set(['management', 'proxy']);
 const BLOCKED_PERMISSIONS = new Set(['debugger', 'nativeMessaging']);
 const VALIDATION_TTL_MS = 10 * 60 * 1000;
 
+// EX1/EX2 stay globally available, but an existing membership row is an
+// explicit opt-out for one profile. All other global extensions remain global.
+// This reuses the existing join table and avoids DDL on the client hot path.
+const PROFILE_OPTIONAL_GLOBAL_EXTENSION_NAMES = new Set(['ex1', 'ex2']);
+
+function isProfileOptionalGlobalExtension(row: { scope: string; name: string }) {
+  return row.scope === 'global'
+    && PROFILE_OPTIONAL_GLOBAL_EXTENSION_NAMES.has(String(row.name || '').toLowerCase());
+}
+
 let extensionSchemaReadyFor = '';
 let extensionSchemaReadyPromise: Promise<void> | null = null;
 
@@ -510,10 +520,14 @@ async function ensureBundledExtensionsInstalled(
         }),
       });
       if (!rows?.[0]) throw new HttpError(502, 'BUILTIN_EXTENSION_ACTIVATION_FAILED');
-      await db(env, `userflex_profile_extensions?extension_id=eq.${current.id}`, {
-        method: 'DELETE',
-        headers: { Prefer: 'return=minimal' },
-      });
+      // EX1/EX2 membership rows record per-profile opt-outs. Activation
+      // must not erase choices already made in the profile editor.
+      if (!isProfileOptionalGlobalExtension({ scope: 'global', name: bundled.name })) {
+        await db(env, `userflex_profile_extensions?extension_id=eq.${current.id}`, {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' },
+        });
+      }
       await touchAllProfiles(env);
       await audit(env, request, 'admin', admin.userId, 'extension.builtin.activate', 'extension', current.id, {
         name: bundled.name,
@@ -554,10 +568,12 @@ async function ensureBundledExtensionsInstalled(
           await removePackage(env, current.package_path);
         }
         if (nextScope === 'global') {
-          await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
-            method: 'DELETE',
-            headers: { Prefer: 'return=minimal' },
-          });
+          if (!isProfileOptionalGlobalExtension({ scope: nextScope, name: bundled.name })) {
+            await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
+              method: 'DELETE',
+              headers: { Prefer: 'return=minimal' },
+            });
+          }
           await touchAllProfiles(env);
         } else {
           await touchExtensionProfiles(env, extensionId);
@@ -739,10 +755,14 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const profileIds = [...new Set(values.map((value: unknown) => uuid(value, 'profileId')))].slice(0, 500);
     const previousMemberships = await db(env, `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}`);
     const previousProfileIds = (previousMemberships || []).map((row: any) => row.profile_id);
-    await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
-      method: 'DELETE',
-      headers: { Prefer: 'return=minimal' },
-    });
+    // A global EX1/EX2 has independent per-profile opt-outs; editing it in
+    // the Extensions admin must not accidentally reset those preferences.
+    if (!isProfileOptionalGlobalExtension(extension)) {
+      await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+    }
     if (extension.scope === 'selective' && profileIds.length) {
       await db(env, 'userflex_profile_extensions', {
         method: 'POST',
@@ -764,27 +784,52 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
     const body = await bodyJson(request, 64 * 1024);
     const values = Array.isArray(body.extensionIds) ? body.extensionIds : [];
     const extensionIds = [...new Set(values.map((value: unknown) => uuid(value, 'extensionId')))].slice(0, 500);
-    if (extensionIds.length) {
-      const rows = await db(env, `userflex_extensions?select=id,scope,enabled,validation_status&id=in.(${extensionIds.join(',')})`);
-      const eligible = new Set((rows || [])
-        .filter((row: any) => row.scope === 'selective' && row.validation_status === 'runtime_valid')
-        .map((row: any) => row.id));
-      const invalid = extensionIds.filter((id) => !eligible.has(id));
-      if (invalid.length) throw new HttpError(409, 'EXTENSION_NOT_SELECTABLE', 'Una o más extensiones todavía no están verificadas en userFLOW.');
-    }
+    // Old browser tabs know only about selective extensions. Without this
+    // explicit flag, they must preserve any EX1/EX2 opt-outs already saved.
+    const manageOptionalGlobals = body.manageOptionalGlobals === true;
+    const [requestedRows, optionalGlobalRows, existingMemberships] = await Promise.all([
+      extensionIds.length
+        ? db(env, `userflex_extensions?select=id,name,scope,enabled,validation_status&id=in.(${extensionIds.join(',')})`)
+        : Promise.resolve([]),
+      db(env, 'userflex_extensions?select=id,name,scope,enabled,validation_status&scope=eq.global&name=in.(ex1,ex2)'),
+      db(env, `userflex_profile_extensions?select=extension_id&profile_id=eq.${profileId}`),
+    ]);
+    const optionalGlobalIds = new Set((optionalGlobalRows || [])
+      .filter((row: any) => isProfileOptionalGlobalExtension(row))
+      .map((row: any) => String(row.id)));
+    const eligible = new Set((requestedRows || [])
+      .filter((row: any) => row.validation_status === 'runtime_valid'
+        && (row.scope === 'selective'
+          || (manageOptionalGlobals && isProfileOptionalGlobalExtension(row))))
+      .map((row: any) => row.id));
+    const invalid = extensionIds.filter((id) => !eligible.has(id));
+    if (invalid.length) throw new HttpError(409, 'EXTENSION_NOT_SELECTABLE', 'Una o más extensiones todavía no están verificadas en userFLOW.');
+
+    // Selective rows mean "assigned"; global EX1/EX2 rows mean "opted out".
+    const selectiveIds = extensionIds.filter((id) => !optionalGlobalIds.has(id));
+    const optedOutIds = manageOptionalGlobals
+      ? [...optionalGlobalIds].filter((id) => !extensionIds.includes(id))
+      : (existingMemberships || [])
+        .map((row: any) => String(row.extension_id))
+        .filter((id: string) => optionalGlobalIds.has(id));
+    const persistedIds = [...new Set([...selectiveIds, ...optedOutIds])];
     await db(env, `userflex_profile_extensions?profile_id=eq.${profileId}`, {
       method: 'DELETE',
       headers: { Prefer: 'return=minimal' },
     });
-    if (extensionIds.length) {
+    if (persistedIds.length) {
       await db(env, 'userflex_profile_extensions', {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify(extensionIds.map((extensionId) => ({ profile_id: profileId, extension_id: extensionId }))),
+        body: JSON.stringify(persistedIds.map((extensionId) => ({ profile_id: profileId, extension_id: extensionId }))),
       });
     }
     await touchProfileClients(env, profileId);
-    await audit(env, request, 'admin', admin.userId, 'profile.extensions.set', 'profile', profileId, { extensionIds });
+    await audit(env, request, 'admin', admin.userId, 'profile.extensions.set', 'profile', profileId, {
+      extensionIds,
+      manageOptionalGlobals,
+      optedOutGlobalExtensionIds: optedOutIds,
+    });
     return json({ ok: true, profile_id: profileId, extension_ids: extensionIds });
   }
 
@@ -848,7 +893,7 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify(patch),
     });
-    if (patch.scope === 'global') {
+    if (patch.scope === 'global' && !isProfileOptionalGlobalExtension({ scope: 'global', name: rows[0].name })) {
       await db(env, `userflex_profile_extensions?extension_id=eq.${extensionId}`, {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
@@ -991,20 +1036,23 @@ export async function managedExtensionsForProfiles(env: Env, profileIds: string[
   if (!ids.length) return result;
 
   const [globalRows, memberships] = await Promise.all([
-    db(env, "userflex_extensions?select=id,name,version,package_sha256,package_size&scope=eq.global&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc"),
+    db(env, "userflex_extensions?select=id,name,scope,version,package_sha256,package_size&scope=eq.global&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc"),
     db(env, `userflex_profile_extensions?select=profile_id,extension_id&profile_id=in.(${ids.join(',')})`),
   ]);
   const selectiveIds = [...new Set((memberships || []).map((row: any) => row.extension_id))];
   const selectiveRows = selectiveIds.length
-    ? await db(env, `userflex_extensions?select=id,name,version,package_sha256,package_size&id=in.(${selectiveIds.join(',')})&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc`)
+    ? await db(env, `userflex_extensions?select=id,name,version,package_sha256,package_size&id=in.(${selectiveIds.join(',')})&scope=eq.selective&enabled=eq.true&validation_status=eq.runtime_valid&order=name.asc`)
     : [];
   const selectiveMap = new Map((selectiveRows || []).map((row: any) => [row.id, row]));
 
   for (const profileId of ids) {
+    const profileMemberships = (memberships || [])
+      .filter((row: any) => row.profile_id === profileId);
+    const optedOut = new Set(profileMemberships.map((row: any) => row.extension_id));
     const list = [
-      ...(globalRows || []),
-      ...(memberships || [])
-        .filter((row: any) => row.profile_id === profileId)
+      ...(globalRows || []).filter((row: any) =>
+        !isProfileOptionalGlobalExtension(row) || !optedOut.has(row.id)),
+      ...profileMemberships
         .map((row: any) => selectiveMap.get(row.extension_id))
         .filter(Boolean),
     ];
@@ -1038,7 +1086,14 @@ export async function clientExtensionPackage(request: Request, env: Env, identit
   if (!profileIds.length) throw new HttpError(403, 'EXTENSION_NOT_AUTHORIZED');
 
   let authorized = extension.scope === 'global';
-  if (!authorized) {
+  if (isProfileOptionalGlobalExtension(extension)) {
+    const optedOutRows = await db(
+      env,
+      `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}&profile_id=in.(${profileIds.join(',')})`,
+    );
+    const optedOutProfileIds = new Set((optedOutRows || []).map((row: any) => row.profile_id));
+    authorized = profileIds.some((profileId: string) => !optedOutProfileIds.has(profileId));
+  } else if (!authorized) {
     const rows = await db(
       env,
       `userflex_profile_extensions?select=profile_id&extension_id=eq.${extensionId}&profile_id=in.(${profileIds.join(',')})&limit=1`,
