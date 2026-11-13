@@ -232,7 +232,8 @@ export const api = {
     set: (profileId: string, extensionIds: string[]) =>
       request<{ ok: true; profile_id: string; extension_ids: string[] }>(`/api/profiles/${profileId}/extensions`, {
         method: 'POST',
-        body: JSON.stringify({ extensionIds }),
+        // Explicit opt-in: cached older Admin tabs must not reset EX1/EX2 selections.
+        body: JSON.stringify({ extensionIds, manageOptionalGlobals: true }),
       }),
   },
 
