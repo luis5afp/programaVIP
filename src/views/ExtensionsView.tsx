@@ -262,7 +262,9 @@ export function ExtensionsView() {
                   <div className="extension-admin-meta">
                     <span>v{item.version}</span>
                     <span>{formatBytes(item.package_size)}</span>
-                    <span>{item.scope === 'global' ? 'Todos los perfiles' : assignedNames.length ? `${assignedNames.length} perfiles` : 'Sin perfiles'}</span>
+                    <span>{item.scope === 'global'
+                      ? (['ex1', 'ex2'].includes(item.name.toLowerCase()) ? 'Global · seleccionable por perfil' : 'Todos los perfiles')
+                      : assignedNames.length ? `${assignedNames.length} perfiles` : 'Sin perfiles'}</span>
                     <span>SHA {item.package_sha256.slice(0, 10)}…</span>
                   </div>
                   {item.description && <div className="extension-admin-description">{item.description}</div>}
