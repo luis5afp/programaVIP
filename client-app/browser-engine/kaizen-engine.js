@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
+import { normalizeBrowserExtensionsAccess, browserStartupArgument } from './extension-ui-mode.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
@@ -265,7 +266,7 @@ function hasPersistentBrowserState(userDataDir) {
   return candidates.some((candidate) => fs.existsSync(candidate));
 }
 
-function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], initialUrl = 'about:blank' }) {
+function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], initialUrl = 'about:blank', browserExtensionsAccess = 'full' }) {
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -303,7 +304,10 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], in
       '--disable-features=SignInProfileCreation,SigninConsistency,ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu',
     );
   }
-  args.push(initialUrl || 'about:blank');
+  // Restricted customers use an Edge application window without browser chrome
+  // or the extensions toolbar. Full-access customers retain a normal window.
+  // This is a UX restriction, not an OS security boundary.
+  args.push(browserStartupArgument(initialUrl, browserExtensionsAccess));
   return args;
 }
 
@@ -522,6 +526,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     delivery = null,
     credentials = null,
     managedExtensions = [],
+    browserExtensionsAccess = 'full',
     usageId = null,
     ephemeral = false,
     forceRestore = false,
@@ -531,6 +536,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (!['https:', 'http:'].includes(target.protocol)) throw new Error('La URL del perfil no es compatible.');
 
     const runtime = runtimeFor(profile);
+    const extensionsUiAccess = normalizeBrowserExtensionsAccess(browserExtensionsAccess);
     const snapshotManaged = snapshotAuthentication(runtime);
     const snapshotNavigationUrl = snapshotManaged
       ? managedSnapshotNavigationUrl(profile.url)
@@ -605,6 +611,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       desiredManagedExtensionKey,
       `guard:${guardRevision}`,
       `streaming-dom:${streamingDomEnabled ? '1' : '0'}`,
+      `extensions-ui:${extensionsUiAccess}`,
     ].join('|');
     // Browser-profile persistence is global, but STREAMING additionally keeps
     // using a still-working local session across central snapshot generations.
@@ -795,7 +802,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const startupUrl = snapshotManaged
       ? (sessionVersionMatches || hasPersistentBrowserState(userDataDir) ? snapshotNavigationUrl : 'about:blank')
       : profile.url;
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, initialUrl: startupUrl });
+    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, initialUrl: startupUrl, browserExtensionsAccess: extensionsUiAccess });
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
@@ -835,6 +842,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         : desiredSessionVersion,
       sessionMarker,
       managedExtensions: Array.isArray(managedExtensions) ? managedExtensions : [],
+      browserExtensionsAccess: extensionsUiAccess,
       extensionDirs: extensionDirs.map((dir) => path.resolve(dir)),
     };
     processes.set(key, entry);
@@ -887,8 +895,10 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       // rewrite extension Preferences while registering unpacked extensions and
       // applying first-run state; fingerprinting too early can misclassify that
       // startup churn as user tampering and close the profile.
-      entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
-      entry.devtoolsTimer.unref?.();
+      if (extensionsUiAccess === 'restricted') {
+        entry.devtoolsTimer = setInterval(() => void closeDevtoolsTargets(debugPort), 5000);
+        entry.devtoolsTimer.unref?.();
+      }
 
       let deviceLocalAuthMigration = null;
       if (runtime.deviceLocalAuth === true && netflixTarget) {
@@ -1284,7 +1294,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return { removed: [], preserved };
   }
 
-  async function reconcileCatalogProfiles(clientId, profiles = []) {
+  async function reconcileCatalogProfiles(clientId, profiles = [], browserExtensionsAccess = null) {
     const catalogProfiles = Array.isArray(profiles) ? profiles.filter((profile) => profile?.id) : [];
     const catalogById = new Map(catalogProfiles.map((profile) => [String(profile.id), profile]));
     const authorizedProfileIds = catalogProfiles.map((profile) => String(profile.id));
@@ -1308,6 +1318,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const preserveDeviceLocalState = wantsSnapshot && desiredPolicy === 'netflix-local-device';
 
       const runtimeChanged = runningEntry && String(runningEntry.runtimeKey || '') !== desiredRuntimeKey;
+      const extensionsUiChanged = Boolean(runningEntry && browserExtensionsAccess
+        && runningEntry.browserExtensionsAccess !== normalizeBrowserExtensionsAccess(browserExtensionsAccess));
       // Catalog reconciliation must compare only the server-managed extension
       // assignment/content-rule fingerprint. entry.extensionKey is a launch-only
       // fingerprint that also contains Browser Guard and streaming DOM state.
@@ -1317,7 +1329,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       const credentialsChanged = runningEntry
         && String(runningEntry.credentialRevision || '') !== desiredCredentialRevision;
 
-      if (runningEntry && (runtimeChanged || extensionsChanged || snapshotChanged || credentialsChanged)) {
+      if (runningEntry && (runtimeChanged || extensionsChanged || snapshotChanged || credentialsChanged || extensionsUiChanged)) {
         const previousVersion = Number(runningEntry.sessionVersion || marker?.version || 0);
         const reason = runtimeChanged
           ? 'profile_runtime_changed'
@@ -1325,7 +1337,9 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
             ? 'profile_extensions_changed'
             : snapshotChanged
               ? (snapshotReady ? 'session_version_changed' : 'session_revoked')
-              : 'credentials_changed';
+              : extensionsUiChanged
+                ? 'browser_extensions_access_changed'
+                : 'credentials_changed';
         log.warn?.('userFLOW catalog reconciliation closing active profile', {
           profileId: profile.id,
           reason,
@@ -1333,6 +1347,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           extensionsChanged: Boolean(extensionsChanged),
           snapshotChanged: Boolean(snapshotChanged),
           credentialsChanged: Boolean(credentialsChanged),
+          extensionsUiChanged,
         });
         await close(clientId, profile.id, reason).catch(() => null);
 
