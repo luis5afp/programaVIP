@@ -1,4 +1,5 @@
 import { AdminIdentity } from './auth';
+import { ensureClientBrowserAccessSchema, browserExtensionsAccess } from './client-browser-access';
 import { clientIdsForPlans, clientIdsForProfile, clientIdsForProxy, touchClientConfig, touchClientsConfig, touchPlanClients, touchProfileClients, touchProxyClients } from './client-revalidation';
 import { requestKeeperChecks } from './keeper-revalidation';
 import { closeOpenProfileUsageForClient, closeOpenProfileUsageForDevice } from './profile-usage';
@@ -70,7 +71,7 @@ function proxyHost(value: unknown): string {
 }
 
 async function clientDetails(env: Env, rows?: any[]) {
-  const clients = rows || (await db(env, 'userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&order=created_at.desc'));
+  const clients = rows || (await db(env, 'userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,browser_extensions_access,created_at,updated_at&order=created_at.desc'));
   if (!clients?.length) return [];
 
   const ids = clients.map((client: any) => client.id).join(',');
@@ -121,6 +122,10 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
   const path = url.pathname;
   const method = request.method.toUpperCase();
 
+  if (path === '/api/clients' || path.startsWith('/api/clients/')) {
+    await ensureClientBrowserAccessSchema(env);
+  }
+
   if (path === '/api/dashboard' && method === 'GET') {
     const [clients, plans, profiles, proxies, devices, assignments] = await Promise.all([
       db(env, 'userflex_clients?select=id,status'),
@@ -150,6 +155,7 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     const email = text(body.email, 'email', 200).toLowerCase();
     const phone = optional(body.phone, 40);
     const maxDevices = integer(body.maxDevices ?? 1, 1, 50, 'maxDevices');
+    const browserAccess = browserExtensionsAccess(body.browserExtensionsAccess);
     const planId = uuid(body.planId, 'planId');
     const username = text(body.username, 'username', 80).toLowerCase();
     const startsAt = iso(body.startsAt, 'startsAt');
@@ -175,10 +181,10 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     await db(env, `userflex_clients?id=eq.${id}`, {
       method: 'PATCH',
       headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ max_devices: maxDevices, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ max_devices: maxDevices, browser_extensions_access: browserAccess, updated_at: new Date().toISOString() }),
     });
-    await audit(env, request, 'admin', admin.userId, 'client.create', 'client', String(id), { maxDevices });
-    const rows = await db(env, `userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,created_at,updated_at&id=eq.${id}&limit=1`);
+    await audit(env, request, 'admin', admin.userId, 'client.create', 'client', String(id), { maxDevices, browserExtensionsAccess: browserAccess });
+    const rows = await db(env, `userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,browser_extensions_access,created_at,updated_at&id=eq.${id}&limit=1`);
     return json((await clientDetails(env, rows))[0], 201);
   }
 
@@ -245,6 +251,10 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
     if (body.phone !== undefined) patch.phone = optional(body.phone, 40);
     if (body.max_devices !== undefined) patch.max_devices = integer(body.max_devices, 1, 50, 'max_devices');
     if (body.allow_external_browsing !== undefined) patch.allow_external_browsing = Boolean(body.allow_external_browsing);
+    if (body.browser_extensions_access !== undefined) {
+      if (!['restricted', 'full'].includes(body.browser_extensions_access)) throw new HttpError(400, 'INVALID_BROWSER_EXTENSIONS_ACCESS');
+      patch.browser_extensions_access = body.browser_extensions_access;
+    }
     if (body.status !== undefined) {
       if (!['active', 'suspended'].includes(body.status)) throw new HttpError(400, 'INVALID_STATUS');
       patch.status = body.status;
