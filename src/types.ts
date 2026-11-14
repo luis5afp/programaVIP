@@ -53,6 +53,7 @@ export interface Client {
   status: ClientStatus;
   max_devices: number;
   allow_external_browsing: boolean;
+  browser_extensions_access: 'restricted' | 'full';
   created_at: string;
   updated_at: string;
   credential?: {
