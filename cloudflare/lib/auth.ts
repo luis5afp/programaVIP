@@ -21,6 +21,7 @@ import {
   token,
 } from './core';
 import { clientVersionFrom } from './release-compat';
+import { ensureClientBrowserAccessSchema, browserExtensionsAccess } from './client-browser-access';
 
 export type AdminRole = 'owner' | 'admin';
 export type AdminIdentity = {
@@ -335,9 +336,10 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
   );
   const session = sessions?.[0];
   if (!session) throw new HttpError(401, 'CLIENT_UNAUTHENTICATED');
+  await ensureClientBrowserAccessSchema(env);
   const clients = await db(
     env,
-    `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,updated_at&id=eq.${session.client_id}&status=eq.active&limit=1`,
+    `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,browser_extensions_access,updated_at&id=eq.${session.client_id}&status=eq.active&limit=1`,
   );
   if (!clients?.[0]) throw new HttpError(403, 'CLIENT_SUSPENDED');
   const devices = await db(
@@ -401,9 +403,10 @@ export async function clientLogin(request: Request, env: Env) {
     throw new HttpError(401, 'INVALID_CLIENT_CREDENTIALS');
   }
   await resetGuard(env, guard);
+  await ensureClientBrowserAccessSchema(env);
   const clients = await db(
     env,
-    `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,updated_at&id=eq.${cred.client_id}&limit=1`,
+    `userflex_clients?select=id,name,email,status,max_devices,allow_external_browsing,browser_extensions_access,updated_at&id=eq.${cred.client_id}&limit=1`,
   );
   const client = clients?.[0];
   if (!client || client.status !== 'active') throw new HttpError(403, 'CLIENT_SUSPENDED');
@@ -462,6 +465,7 @@ export async function clientLogin(request: Request, env: Env) {
       email: client.email,
       configRevision: client.updated_at,
       allowExternalBrowsing: client.allow_external_browsing === true,
+      browserExtensionsAccess: browserExtensionsAccess(client.browser_extensions_access),
     },
     plan: { id: plan.id, name: plan.name },
     subscription: {

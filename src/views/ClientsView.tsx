@@ -57,6 +57,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
         email: String(form.get('email') || '').trim(),
         phone: String(form.get('phone') || '').trim(),
         maxDevices: Number(form.get('maxDevices') || 1),
+        browserExtensionsAccess: String(form.get('browserExtensionsAccess') || 'restricted') as 'restricted' | 'full',
         planId: String(form.get('planId') || ''),
         startsAt: new Date(`${String(form.get('startsAt'))}T00:00:00Z`).toISOString(),
         expiresAt: new Date(`${String(form.get('expiresAt'))}T23:59:59Z`).toISOString(),
@@ -85,6 +86,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
         status: String(form.get('status')) as Client['status'],
         max_devices: Number(form.get('maxDevices') || 1),
         allow_external_browsing: form.get('allowExternalBrowsing') === 'on',
+        browser_extensions_access: String(form.get('browserExtensionsAccess') || 'restricted') as Client['browser_extensions_access'],
       });
       setEditClient(null);
       setSuccess('Cliente actualizado correctamente.');
@@ -264,6 +266,7 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
                       <td>
                         <div className="table-primary">Máx. {client.max_devices || 1}</div>
                         <div className="table-secondary">por cliente</div>
+                        <div className="table-secondary">Extensiones: {client.browser_extensions_access === 'full' ? 'acceso completo' : 'restringido'}</div>
                       </td>
                       <td>
                         <Badge tone={client.status === 'active' && !expired ? 'ok' : 'bad'}>
@@ -322,6 +325,12 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
             <Field label="Correo"><input className="input" name="email" type="email" required /></Field>
             <Field label="Teléfono"><input className="input" name="phone" maxLength={40} /></Field>
             <Field label="Máximo de dispositivos" help="Límite exclusivo para este cliente."><input className="input" name="maxDevices" type="number" min="1" max="50" defaultValue="1" required /></Field>
+            <Field label="Acceso a las extensiones del navegador" help="Restringido oculta los controles del navegador mediante una ventana tipo aplicación. Completo permite ver el menú de Edge. No es una barrera frente al acceso al sistema Windows.">
+              <select className="select" name="browserExtensionsAccess" defaultValue="restricted">
+                <option value="restricted">Restringido · sin barra de extensiones</option>
+                <option value="full">Completo · navegador normal</option>
+              </select>
+            </Field>
             <Field label="Plan">
               <select className="select" name="planId" required>
                 {plans.filter((plan) => plan.enabled).map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
@@ -358,6 +367,12 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
               <select className="select" name="status" defaultValue={editClient.status}>
                 <option value="active">Activo</option>
                 <option value="suspended">Suspendido</option>
+              </select>
+            </Field>
+            <Field label="Acceso a extensiones" className="span-2" help="Restringido abre las webs en una ventana Edge tipo aplicación que oculta el menú de extensiones. Completo conserva Edge normal. Requiere una versión actualizada de userFLOW y volver a abrir el perfil.">
+              <select className="select" name="browserExtensionsAccess" defaultValue={editClient.browser_extensions_access || 'restricted'}>
+                <option value="restricted">Restringido · ocultar controles de extensiones</option>
+                <option value="full">Completo · mostrar menú de extensiones</option>
               </select>
             </Field>
             <Field label="Navegación adicional" className="span-2" help="Habilita la opción “Abrir Google” al mantener el cursor sobre + dentro de un perfil. La pestaña seguirá aislada dentro de ese mismo perfil.">

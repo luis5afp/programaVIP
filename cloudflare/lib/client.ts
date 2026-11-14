@@ -1,4 +1,5 @@
 import { ClientIdentity } from './auth';
+import { browserExtensionsAccess } from './client-browser-access';
 import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, json, db } from './core';
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
@@ -42,7 +43,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     return json({
       ok: true,
       profiles: [],
-      client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
+      client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true, browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access) },
       configRevision: id.client.updated_at,
       plan: { id: id.plan.id, name: id.plan.name },
       expiresAt: id.subscription.expires_at,
@@ -205,7 +206,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
   return json({
     ok: true,
     profiles: result,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true, browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access) },
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
@@ -411,7 +412,7 @@ export async function clientLaunch(
 
   return json({
     ok: true,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true, browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access) },
     configRevision: id.client.updated_at,
     lease: {
       expiresAt: id.subscription.expires_at,
@@ -552,7 +553,7 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     ok: true,
     active: true,
     revoke: false,
-    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true },
+    client: { id: id.clientId, name: id.client.name, email: id.client.email, configRevision: id.client.updated_at, allowExternalBrowsing: id.client.allow_external_browsing === true, browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access) },
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,

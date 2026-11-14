@@ -166,13 +166,14 @@ export const api = {
       email: string;
       phone?: string;
       maxDevices: number;
+      browserExtensionsAccess?: 'restricted' | 'full';
       planId: string;
       startsAt: string;
       expiresAt: string;
       username: string;
       password: string;
     }) => request<Client>('/api/clients', { method: 'POST', body: JSON.stringify(input) }),
-    update: (id: string, input: Partial<Pick<Client, 'name' | 'email' | 'phone' | 'status' | 'max_devices' | 'allow_external_browsing'>>) =>
+    update: (id: string, input: Partial<Pick<Client, 'name' | 'email' | 'phone' | 'status' | 'max_devices' | 'allow_external_browsing' | 'browser_extensions_access'>>) =>
       request<Client>(`/api/clients/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     remove: (id: string) => request<{ ok: true }>(`/api/clients/${id}`, { method: 'DELETE' }),
     credentials: (id: string, username: string, password: string) =>
