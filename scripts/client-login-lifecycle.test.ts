@@ -46,7 +46,7 @@ assert.ok(syncStart >= 0 && syncEnd > syncStart, 'client configuration sync must
 const syncSource = main.slice(syncStart, syncEnd);
 const clientIdPos = syncSource.indexOf('const clientId = String(');
 const authClientPos = syncSource.indexOf('authMeta?.client?.id', clientIdPos);
-const reconcilePos = syncSource.indexOf('reconcileCatalogProfiles(clientId, catalogProfiles)', authClientPos);
+const reconcilePos = syncSource.indexOf('reconcileCatalogProfiles(clientId, catalogProfiles,', authClientPos);
 assert.ok(
   clientIdPos >= 0 && authClientPos > clientIdPos && reconcilePos > authClientPos,
   'client configuration sync must resolve clientId locally before profile reconciliation',
