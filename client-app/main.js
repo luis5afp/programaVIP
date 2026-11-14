@@ -730,7 +730,7 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
     const shouldReconcile = reason !== 'catalog' || configChanged;
     if (clientId && shouldReconcile) {
       await getKaizenBrowserEngine()
-        .reconcileCatalogProfiles(clientId, catalogProfiles)
+        .reconcileCatalogProfiles(clientId, catalogProfiles, authMeta?.client?.browserExtensionsAccess || 'restricted')
         .catch((error) => console.warn('KAIZEN profile reconciliation failed:', error?.message || error));
     }
   }
@@ -1763,6 +1763,7 @@ async function openProfile(profileId) {
       delivery,
       credentials,
       managedExtensions,
+      browserExtensionsAccess: launch?.client?.browserExtensionsAccess || authMeta?.client?.browserExtensionsAccess || 'restricted',
       usageId: usage.usageId,
     });
 
