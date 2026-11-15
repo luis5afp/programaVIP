@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
-import { saveEncryptedAuthSession, readEncryptedAuthSession } from './auth-session-cache.js';
+import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
 import { canonicalAuthFile, previousAuthFiles } from './auth-session-locations.js';
 
 const execFileAsync = promisify(execFile);
@@ -727,6 +727,10 @@ function mergeValidationMeta(payload) {
   }
   if (payload.sessionCreatedAt) authMeta.createdAt = payload.sessionCreatedAt;
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
+  // Server responses are authoritative. The per-login offset compensates for
+  // a Windows clock that is ahead/behind without changing token duration.
+  const serverTime = Date.parse(String(payload.serverTime || ''));
+  if (Number.isFinite(serverTime)) authMeta.serverClockOffsetMs = serverTime - Date.now();
   scheduleSubscriptionExpiry();
   scheduleAuthSessionExpiry();
 }
@@ -789,7 +793,7 @@ function scheduleAuthSessionExpiry() {
   authSessionExpiryTimer = null;
   if (!accessToken) return;
   const expiresAt = Date.parse(String(authMeta?.expiresAt || ''));
-  const remaining = expiresAt - Date.now();
+  const remaining = expiresAt - estimatedServerNow(authMeta);
   if (!Number.isFinite(expiresAt) || remaining <= 0) {
     queueMicrotask(() => {
       if (accessToken && !authTransitionInFlight) {
@@ -814,7 +818,7 @@ function scheduleSubscriptionExpiry() {
   subscriptionExpiryTimer = null;
   const expiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
   if (!Number.isFinite(expiresAt)) return;
-  const remaining = expiresAt - Date.now();
+  const remaining = expiresAt - estimatedServerNow(authMeta);
   if (remaining <= 0) {
     queueMicrotask(() => {
       if (accessToken) void returnToLogin();
@@ -835,7 +839,7 @@ async function runHeartbeat(reason = 'scheduled') {
   clearHeartbeatTimer();
 
   const authExpiresAt = Date.parse(String(authMeta?.expiresAt || ''));
-  if (!Number.isFinite(authExpiresAt) || authExpiresAt <= Date.now()) {
+  if (!Number.isFinite(authExpiresAt) || authExpiresAt <= estimatedServerNow(authMeta)) {
     heartbeatInFlight = false;
     await returnToLogin(
       'Tu sesión de 24 horas finalizó. Inicia sesión nuevamente.',
@@ -844,7 +848,7 @@ async function runHeartbeat(reason = 'scheduled') {
     return;
   }
   const subscriptionExpiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
-  if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= Date.now()) {
+  if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= estimatedServerNow(authMeta)) {
     heartbeatInFlight = false;
     await returnToLogin();
     return;
@@ -2225,6 +2229,10 @@ ipcMain.handle('userflex:login', async (event, input) => {
       subscription: result.subscription,
       createdAt: result.createdAt,
       expiresAt: result.expiresAt,
+      serverClockOffsetMs: (() => {
+        const serverTime = Date.parse(String(result.serverTime || result.createdAt || ''));
+        return Number.isFinite(serverTime) ? serverTime - Date.now() : 0;
+      })(),
     };
     await removeLegacyLoginCredentials();
     await saveAuth(result.accessToken, meta);
