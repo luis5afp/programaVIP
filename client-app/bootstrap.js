@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, net } from 'electron';
+import { PUBLIC_RELEASES_API, MANUAL_DOWNLOAD_PAGE, selectVerifiedGithubRelease, updaterErrorReason } from './updater-release-fallback.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -217,11 +218,47 @@ function validateManifest(value) {
   return { version, sha256, size, chunks: normalizedChunks };
 }
 
+async function fetchUpdaterResource(url, options = {}) {
+  // Node undici may fail on Windows networks whose proxy/TLS configuration
+  // works normally in Chromium. Try Chromium's native net.fetch on transport
+  // errors, without weakening TLS validation or bypassing certificates.
+  const agent = 'userFLOW/' + app.getVersion() + ' (official auto-updater; https://github.com/luis5afp/programaVIP)';
+  try {
+    return await fetch(url, {
+      ...options,
+      headers: { ...options.headers, 'User-Agent': agent },
+    });
+  } catch (error) {
+    await updaterLog('updater network Node: ' + updaterErrorReason(error));
+    if (options.signal?.aborted) throw error;
+    return net.fetch(url, options);
+  }
+}
+
+async function fetchVerifiedGithubRelease() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    const response = await fetchUpdaterResource(PUBLIC_RELEASES_API, {
+      signal: controller.signal,
+      headers: { Accept: 'application/vnd.github+json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('UPDATE_GITHUB_HTTP_' + response.status);
+    const release = selectVerifiedGithubRelease(await response.json());
+    if (!release) throw new Error('UPDATE_GITHUB_RELEASE_UNVERIFIED');
+    await updaterLog('release verificada en GitHub v' + release.version);
+    return release;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchManifestOnce() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('UPDATE_MANIFEST_TIMEOUT')), UPDATE_CHECK_TIMEOUT_MS);
   try {
-    const response = await fetch(`${UPDATE_MANIFEST_URL}?ts=${Date.now()}`, {
+    const response = await fetchUpdaterResource(`${UPDATE_MANIFEST_URL}?ts=${Date.now()}`, {
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
       cache: 'no-store',
       signal: controller.signal,
@@ -248,6 +285,15 @@ async function fetchManifest() {
       await updaterLog(`manifest intento ${attempt} falló: ${updateErrorCode(error)}`);
       if (attempt < UPDATE_MANIFEST_ATTEMPTS) await wait(300 * attempt);
     }
+  }
+  // If the primary Cloudflare worker is unreachable, use official GitHub
+  // Releases metadata. Only assets with a matching SHA-256 digest are accepted.
+  try {
+    const verified = await fetchVerifiedGithubRelease();
+    await updaterLog('servidor primario no disponible; actualización desde GitHub');
+    return verified;
+  } catch (fallbackError) {
+    await updaterLog('mirror GitHub no disponible: ' + updaterErrorReason(fallbackError));
   }
   throw lastError || new Error('UPDATE_MANIFEST_FAILED');
 }
@@ -287,7 +333,7 @@ async function fetchChunkBuffer(chunk, manifest, index) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error('UPDATE_CHUNK_TIMEOUT')), UPDATE_CHUNK_TIMEOUT_MS);
     try {
-      const response = await fetch(updateChunkUrl(chunk.name, manifest.version), {
+      const response = await fetchUpdaterResource(updateChunkUrl(chunk.name, manifest.version), {
         cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache' },
         signal: controller.signal,
@@ -308,7 +354,57 @@ async function fetchChunkBuffer(chunk, manifest, index) {
   throw lastError || new Error(`UPDATE_CHUNK_FAILED_${index}`);
 }
 
+async function downloadGithubInstaller(manifest) {
+  const updateDir = await prepareUpdateDirectory();
+  const installerPath = path.join(updateDir, 'userFLOW-' + manifest.version + '-Setup.exe');
+  const tempPath = installerPath + '.part';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240_000);
+  let file = null;
+  let received = 0;
+  const hash = crypto.createHash('sha256');
+  try {
+    // The download URL has been validated to match the repository, release tag
+    // and asset name. GitHub's asset digest must match the complete EXE.
+    const response = await fetchUpdaterResource(manifest.githubDownloadUrl, {
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/octet-stream' },
+    });
+    if (!response.ok || !response.body) throw new Error('UPDATE_GITHUB_DOWNLOAD_HTTP_' + response.status);
+    file = await fs.open(tempPath, 'w');
+    for await (const chunk of response.body) {
+      const data = Buffer.from(chunk);
+      received += data.length;
+      if (received > manifest.size) throw new Error('UPDATE_GITHUB_SIZE_EXCEEDED');
+      hash.update(data);
+      await file.write(data);
+      pushStatus({
+        phase: 'downloading',
+        message: 'Descargando v' + manifest.version + ' desde GitHub…',
+        percent: Math.min(99, (received / manifest.size) * 100),
+      });
+    }
+    await file.sync();
+    await file.close();
+    file = null;
+    if (received !== manifest.size) throw new Error('UPDATE_GITHUB_SIZE_MISMATCH');
+    if (hash.digest('hex') !== manifest.sha256) throw new Error('UPDATE_GITHUB_HASH_MISMATCH');
+    await fs.rename(tempPath, installerPath);
+    await updaterLog('instalador GitHub v' + manifest.version + ' SHA-256 verificado');
+    return installerPath;
+  } catch (error) {
+    await updaterLog('descarga GitHub falló: ' + updaterErrorReason(error));
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    await file?.close().catch(() => null);
+    await fs.rm(tempPath, { force: true }).catch(() => null);
+  }
+}
+
 async function downloadInstaller(manifest) {
+  if (manifest.githubDownloadUrl) return downloadGithubInstaller(manifest);
   const updateDir = await prepareUpdateDirectory();
   const installerPath = path.join(updateDir, `userFLOW-${manifest.version}-Setup.exe`);
   const file = await fs.open(installerPath, 'w');
