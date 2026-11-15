@@ -53,7 +53,11 @@ export class HttpError extends Error {
 export const ADMIN_COOKIE = 'uf_admin_session';
 export const ADMIN_MAX_AGE = 8 * 60 * 60;
 export const CLIENT_SESSION_SECONDS = 24 * 60 * 60;
-export const PBKDF2_ITERATIONS = 310_000;
+// Cloudflare Workers Web Crypto rejects PBKDF2 iteration counts above 100,000.
+// The per-hash iteration count remains encoded so older records can still be
+// identified and checked where their original algorithm is supported.
+export const PBKDF2_ITERATIONS = 100_000;
+const LEGACY_PBKDF2_ITERATIONS = 310_000;
 export const DEFAULT_AUTH_ORIGIN = 'https://creatortools-reconstruction-lab.luis5afp.workers.dev';
 
 export function securityHeaders(): Headers {
@@ -272,7 +276,9 @@ export async function passwordHash(password: string) {
 export async function passwordVerify(password: string, encoded: string) {
   try {
     const [kind, iterations, saltValue, expectedValue] = encoded.split('$');
-    if (kind !== 'pbkdf2-sha256' || Number(iterations) !== PBKDF2_ITERATIONS) return false;
+    const rounds = Number(iterations);
+    if (kind !== 'pbkdf2-sha256' || !Number.isInteger(rounds)
+      || ![PBKDF2_ITERATIONS, LEGACY_PBKDF2_ITERATIONS].includes(rounds)) return false;
     const salt = unb64(saltValue);
     const expected = unb64(expectedValue);
     if (salt.length !== 16 || expected.length !== 32) return false;
@@ -285,7 +291,7 @@ export async function passwordVerify(password: string, encoded: string) {
     );
     const actual = new Uint8Array(
       await crypto.subtle.deriveBits(
-        { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS },
+        { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: rounds },
         material,
         256,
       ),
