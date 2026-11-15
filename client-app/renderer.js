@@ -383,6 +383,7 @@ function makeProfileCard(profile) {
   availability.textContent = unavailable ? unavailableLabels.availability : networkLabel(profile);
   const state = document.createElement('span');
   state.className = 'card-state';
+  state.setAttribute('aria-live', 'polite');
   state.textContent = unavailable ? unavailableLabels.action : 'Abrir';
   footer.append(availability, state);
 
