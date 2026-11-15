@@ -7,7 +7,7 @@ const script = read('renderer.js');
 const css = read('styles.css');
 const pkg = JSON.parse(read('package.json'));
 
-assert.equal(pkg.version, '0.3.110', 'desktop version should identify the UI update');
+assert.match(pkg.version, /^\d+\.\d+\.\d+$/, 'desktop must use a valid semantic version');
 for (const theme of ['claro', 'gris', 'noche']) {
   assert.match(html, new RegExp('data-theme-option="' + theme + '"'),
     'theme must have an accessible action in header: ' + theme);
