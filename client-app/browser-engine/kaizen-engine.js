@@ -1019,6 +1019,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           connectBrowser: connectKaizenBrowser,
           debugPort,
           logger: log,
+          onIntegrityLost: async () => {
+            // Local fail-closed watchdog: no server polling or database writes.
+            if (!entry.cleaned && !entry.closing && proc.exitCode === null) {
+              entry.closeReason = 'browser_guard_disconnected';
+              await close(clientId, profile.id, 'browser_guard_disconnected');
+            }
+          },
         });
       }
 
