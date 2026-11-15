@@ -59,6 +59,8 @@ jobs:
         run: node --experimental-strip-types scripts/captured-session-validation.test.ts
       - name: Test JSON cookie import
         run: node --experimental-strip-types scripts/cookie-import.test.ts
+      - name: Test actionable Admin error explanations
+        run: node --experimental-strip-types scripts/actionable-admin-errors.test.ts
       - name: Test client creation server regression
         run: node --experimental-strip-types scripts/client-create-server-regression.test.ts
       - name: Test client login lifecycle
