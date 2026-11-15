@@ -68,9 +68,9 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       setSuccess('Cliente creado correctamente.');
       await load();
     } catch (createError: any) {
-      const code = typeof createError?.code === 'string' ? createError.code : '';
-      const requestId = typeof createError?.requestId === 'string' ? createError.requestId : '';
-      setError([createError?.message || 'No se pudo crear el cliente.', code && `Código: ${code}`, requestId && `Solicitud: ${requestId}`].filter(Boolean).join(' · '));
+      // src/api.ts now supplies a clear explanation, next step and, only when
+      // necessary, a support reference. Do not append opaque error codes here.
+      setError(createError?.message || 'No se pudo crear el cliente. Revisa si ya existe antes de intentarlo otra vez.');
     }
   }
 

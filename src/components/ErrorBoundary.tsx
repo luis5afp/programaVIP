@@ -27,9 +27,10 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <main className="login-screen">
         <div className="login-card" style={{ maxWidth: 620 }}>
-          <h2>userFLEX se recuperó de un error de interfaz</h2>
-          <p>La página no continuará en un estado incompleto. Recarga el panel para volver a sincronizar los datos.</p>
-          <p className="help">Código de diagnóstico: {this.state.incidentId}</p>
+          <h2>No se pudo mostrar esta pantalla</h2>
+          <p><strong>Motivo:</strong> Una parte del panel dejó de funcionar correctamente. Para evitar mostrar datos incompletos, se detuvo la pantalla. La causa técnica exacta requiere revisar el registro del error.</p>
+          <p><strong>Qué hacer:</strong> Recarga el panel. Si el problema continúa, comunica la referencia a soporte.</p>
+          <p className="help">Referencia para soporte: {this.state.incidentId}</p>
           <button className="button primary" onClick={() => window.location.reload()}>Recargar panel</button>
         </div>
       </main>
