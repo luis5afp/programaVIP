@@ -41,8 +41,8 @@ assert.match(startup, /selectPersistentUserData\(app\.getPath\('appData'\), app\
 const server = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
 const catalog = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 assert.match(source, /canonicalAuthFile\(app\.getPath\('appData'\)\)/);
-assert.match(source, /if \(!restored\.ok && restored\.reason === 'MISSING'\)/,
-  'migration only runs when the stable cache is missing, not when invalidated');
+assert.match(source, /if \(!restored\.ok && \['MISSING', 'DECRYPT_OR_FILE_INVALID'\]\.includes\(restored\.reason\)\)/,
+  'migration handles missing or unreadable historical cache without resurrecting expired tokens');
 assert.match(source, /await saveAuth\(old\.token, old\.meta\)/,
   'migration must verify the encrypted token in its canonical location');
 assert.match(source, /for \(const file of \[authPath\(\), \.\.\.previousAuthPaths\(\)\]\)/,
