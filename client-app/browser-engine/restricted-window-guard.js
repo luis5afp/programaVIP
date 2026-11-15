@@ -169,7 +169,8 @@ export async function startRestrictedWindowGuard({
         // Edge window remaining in place by routing it to the app home page.
         // An app window launched by us can be momentarily blank too; wait
         // briefly for its actual target URL before making that decision.
-        if (expectedAppPages.length) {
+        const rawUrl = String(target.url?.() || '').trim().toLowerCase();
+        if (expectedAppPages.length && (rawUrl === '' || rawUrl === 'about:blank')) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           if (stopped) return;
           const arrived = restrictedPopupUrl(target.url?.());
