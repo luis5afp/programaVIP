@@ -95,12 +95,12 @@ try {
   });
   const worker = await until(() => browser.targets().find((t) =>
     t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
-  session = await worker.createCDPSession();
-  await session.send('Runtime.enable');
   nativeGuard = await startRestrictedTabbedGuard({
     connectBrowser: connectKaizenBrowser, debugPort: port,
     onIntegrityLost: async () => { guardLost = true; },
   });
+  session = await worker.createCDPSession();
+  await session.send('Runtime.enable');
   const inspect = async () => {
     const response = await session.send('Runtime.evaluate', {
       expression: 'chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
