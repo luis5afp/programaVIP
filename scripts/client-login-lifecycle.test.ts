@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
+const authCache = readFileSync(new URL('../client-app/auth-session-cache.js', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
 const renderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
 const preload = readFileSync(new URL('../client-app/preload.cjs', import.meta.url), 'utf8');
@@ -46,8 +47,10 @@ assert.match(auth, /Date\.now\(\) \+ CLIENT_SESSION_SECONDS \* 1000/,
   'client login creates a fixed 24-hour server expiration');
 assert.match(auth, /revoked_at=is\.null&expires_at=gt/,
   'every validated token must be neither revoked nor expired');
-assert.match(main, /safeStorage\.encryptString\(token\)/,
+assert.match(authCache, /encryption\.encryptString\(token\)/,
   'the issued token is encrypted locally with Electron safeStorage');
+assert.match(main, /saveEncryptedAuthSession\(authPath\(\), token, meta, safeStorage\)/,
+  'the main process must save a verified encrypted auth cache');
 assert.match(main, /async function loadAuth\(\)/,
   'valid encrypted token resumes login after restarting the app');
 assert.match(main, /if \(!Number\.isFinite\(expiresAt\) \|\| expiresAt <= Date\.now\(\)\)/,
