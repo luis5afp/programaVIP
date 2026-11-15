@@ -10,6 +10,5 @@ export function browserStartupArgument(initialUrl, access) {
   const url = String(initialUrl || 'about:blank');
   // Standard Edge with a tab strip is necessary: --app opens every new tab
   // in a *separate normal* window (confirmed in real Windows smoke tests).
-  normalizeBrowserExtensionsAccess(access);
   return url;
 }
