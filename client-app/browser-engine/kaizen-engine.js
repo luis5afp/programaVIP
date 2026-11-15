@@ -898,7 +898,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     try {
       launchStage = 'browser-control';
       const browser = await connectKaizenBrowser(debugPort, 60_000);
-      await browser.disconnect().catch(() => null);
 
       // Microsoft Edge can accept --load-extension before its extension system
       // has finished registering content scripts. A navigation that happens
@@ -908,6 +907,26 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       // managed extensions pay this delay.
       if (hasManagedExtensions) {
         await new Promise((resolve) => setTimeout(resolve, 1600));
+      }
+
+      // Attach to the Browser Guard worker while Edge is still starting.
+      // Keeping the connection open avoids MV3 idle suspension and detects
+      // direct disable/removal even when the Edge toolbar is visible.
+      if (extensionsUiAccess === 'restricted' && !ephemeral) {
+        launchStage = 'restricted-window-guard';
+        entry.windowGuard = await startRestrictedTabbedGuard({
+          browser,
+          debugPort,
+          logger: log,
+          onIntegrityLost: async () => {
+            if (!entry.cleaned && !entry.closing && proc.exitCode === null) {
+              entry.closeReason = 'browser_guard_disconnected';
+              await close(clientId, profile.id, 'browser_guard_disconnected');
+            }
+          },
+        });
+      } else {
+        await browser.disconnect().catch(() => null);
       }
 
       // DevTools protection can start immediately, but the Preferences watcher
@@ -1008,24 +1027,6 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           profileUrl: snapshotManaged ? snapshotNavigationUrl : profile.url,
           credentials,
           extensionStrategy: runtime.extensionStrategy,
-        });
-      }
-
-      // Retain the original targets and opener relationships for native tabs.
-      // Browser Guard consolidates secondary Edge windows and CDP blocks WebUI.
-      if (extensionsUiAccess === 'restricted' && !ephemeral) {
-        launchStage = 'restricted-window-guard';
-        entry.windowGuard = await startRestrictedTabbedGuard({
-          connectBrowser: connectKaizenBrowser,
-          debugPort,
-          logger: log,
-          onIntegrityLost: async () => {
-            // Local fail-closed watchdog: no server polling or database writes.
-            if (!entry.cleaned && !entry.closing && proc.exitCode === null) {
-              entry.closeReason = 'browser_guard_disconnected';
-              await close(clientId, profile.id, 'browser_guard_disconnected');
-            }
-          },
         });
       }
 
