@@ -8,7 +8,7 @@ import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps
 import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
 import { normalizeBrowserExtensionsAccess, browserStartupArgument } from './extension-ui-mode.js';
 import { prepareRestrictedManagedExtensions } from './restricted-extension-actions.js';
-import { startRestrictedWindowGuard, restrictedAppWindowArgs } from './restricted-window-guard.js';
+import { startRestrictedTabbedGuard } from './restricted-window-guard.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
@@ -306,9 +306,9 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], in
       '--disable-features=SignInProfileCreation,SigninConsistency,ExtensionsMenuAccessControl,ExtensionsToolbarZeroState,ExtensionsToolbarMenu',
     );
   }
-  // Restricted customers use an Edge application window without browser chrome
-  // or the extensions toolbar. Full-access customers retain a normal window.
-  // This is a UX restriction, not an OS security boundary.
+  // Native Edge tabs share a per-profile user-data-dir. Browser Guard
+  // consolidates secondary windows into this initial window.
+  if (normalizeBrowserExtensionsAccess(browserExtensionsAccess) === 'restricted') args.push('--new-window');
   args.push(browserStartupArgument(initialUrl, browserExtensionsAccess));
   return args;
 }
@@ -492,6 +492,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         `globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = ${JSON.stringify(managedExtensionNames)};`,
         `globalThis.USERFLEX_CONTENT_RULES = ${JSON.stringify(contentRules)};`,
         `globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = ${JSON.stringify(browserExtensionsAccess)};`,
+         `globalThis.USERFLEX_RESTRICTED_TABBED_BROWSER = ${JSON.stringify(browserExtensionsAccess === 'restricted')};`,
         `globalThis.USERFLEX_PROFILE_HOME_URL = ${JSON.stringify(profileHomeUrl)};`,
         '',
       ].join('\n'),
@@ -1010,37 +1011,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
-      // Edge's --app mode only applies to the first window. A web page can
-      // otherwise open target=_blank or window.open in full Edge with visible
-      // extensions controls. The restricted watchdog closes those extra tabs
-      // and reopens their URLs as app windows in the SAME browser data directory
-      // (cookies, proxy and managed extension registration remain shared).
-      // Full-access clients and ephemeral extension tests are unchanged.
+      // Retain the original targets and opener relationships for native tabs.
+      // Browser Guard consolidates secondary Edge windows and CDP blocks WebUI.
       if (extensionsUiAccess === 'restricted' && !ephemeral) {
         launchStage = 'restricted-window-guard';
-        entry.windowGuard = await startRestrictedWindowGuard({
+        entry.windowGuard = await startRestrictedTabbedGuard({
           connectBrowser: connectKaizenBrowser,
           debugPort,
-          initialUrl: profile.url,
           logger: log,
-          launchAppWindow: async (url) => {
-            if (entry.cleaned || entry.closing || proc.exitCode !== null) {
-              throw new Error('El perfil ya se cerró.');
-            }
-            const args = restrictedAppWindowArgs({ userDataDir, url, proxyRules });
-            await new Promise((resolve, reject) => {
-              const child = spawn(executable, args, {
-                windowsHide: false,
-                detached: false,
-                stdio: 'ignore',
-              });
-              child.once('error', reject);
-              child.once('spawn', () => {
-                child.unref();
-                resolve();
-              });
-            });
-          },
         });
       }
 
