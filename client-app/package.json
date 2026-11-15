@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.3.108",
+  "version": "0.3.109",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -59,6 +59,10 @@
       {
         "from": "browser-engine/extension",
         "to": "browser-engine/extension"
+      },
+      {
+        "from": "browser-engine/backup-guard",
+        "to": "browser-engine/backup-guard"
       }
     ],
     "win": {

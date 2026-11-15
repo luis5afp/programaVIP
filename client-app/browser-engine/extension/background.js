@@ -55,6 +55,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 // same profile, cookies and managed extensions but have no browser toolbar.
 // This is a best-effort UI guard, not a replacement for Windows policies.
 const RESTRICTED_WINDOWS = globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS === 'restricted';
+const TABBED_RESTRICTED = RESTRICTED_WINDOWS && globalThis.USERFLEX_RESTRICTED_TABBED_BROWSER === true;
 const RESTRICTED_HOME = (() => {
   try {
     const url = new URL(String(globalThis.USERFLEX_PROFILE_HOME_URL || ''));
@@ -111,7 +112,7 @@ async function convertNormalWindow(windowId) {
   }
 }
 
-if (RESTRICTED_WINDOWS && RESTRICTED_HOME) {
+if (RESTRICTED_WINDOWS && RESTRICTED_HOME && !TABBED_RESTRICTED) {
   chrome.windows.onCreated.addListener((windowInfo) => {
     if (windowInfo?.type !== 'normal') return;
     void convertNormalWindow(Number(windowInfo.id));
@@ -139,6 +140,90 @@ if (RESTRICTED_WINDOWS && RESTRICTED_HOME) {
   void inspectWindowsAtStartup();
 }
 
+// Edge with a native tab strip: keep the first normal window and fold
+// secondary windows back into it via tabs.move. Same Chrome tab, same cookies,
+// same proxy, same extension state, and window.opener remains intact.
+const MAX_RESTRICTED_PAGES = 12;
+let primaryWindowId = null;
+const foldingWindows = new Set();
+let discoveringWindows = false;
+
+async function foldNormalWindow(windowId) {
+  if (!TABBED_RESTRICTED || !Number.isInteger(windowId)
+    || windowId < 0 || foldingWindows.has(windowId)) return;
+  foldingWindows.add(windowId);
+  try {
+    // New window may still be about:blank when Edge delivers onCreated.
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    const windows = await chrome.windows.getAll({ populate: true });
+    const normal = (Array.isArray(windows) ? windows : [])
+      .filter((win) => ['normal', 'popup'].includes(win?.type) && Number.isInteger(win.id))
+      .sort((a, b) => a.id - b.id);
+    if (!normal.some((win) => win.type === 'normal')) return;
+    if (!normal.some((win) => win.id === primaryWindowId)) {
+      const withHome = normal.find((win) => (win.tabs || []).some((tab) =>
+        allowedWindowUrl(tab.pendingUrl || tab.url) === RESTRICTED_HOME));
+      primaryWindowId = (withHome?.type === 'normal' ? withHome : normal.find((win) => win.type === 'normal')).id;
+    }
+    if (windowId === primaryWindowId) return;
+    const extra = normal.find((win) => win.id === windowId);
+    if (!extra) return;
+    for (const tab of extra.tabs || []) {
+      if (!Number.isInteger(tab.id)) continue;
+      // Never move privileged Edge UI or extension-management pages.
+      const url = allowedWindowUrl(tab.pendingUrl || tab.url);
+      if (!url) continue;
+      try {
+        const existingTabs = await chrome.tabs.query({ windowId: primaryWindowId });
+        if ((Array.isArray(existingTabs) ? existingTabs : []).length >= MAX_RESTRICTED_PAGES) break;
+        await chrome.tabs.move(tab.id, { windowId: primaryWindowId, index: -1 });
+      } catch (error) {
+        console.warn('userFLOW could not consolidate an additional tab:', String(error?.message || error));
+      }
+    }
+    // Fail closed: do not leave a second window with management controls.
+    await chrome.windows.remove(windowId).catch(() => null);
+  } catch {
+    // The source window may already be closed.
+  } finally {
+    foldingWindows.delete(windowId);
+  }
+}
+
+async function discoverTabbedWindows() {
+  if (!TABBED_RESTRICTED || discoveringWindows) return;
+  discoveringWindows = true;
+  try {
+    const all = await chrome.windows.getAll({ populate: true });
+    const normal = (Array.isArray(all) ? all : [])
+      .filter((win) => ['normal', 'popup'].includes(win?.type) && Number.isInteger(win.id))
+      .sort((a, b) => a.id - b.id);
+    if (!normal.some((win) => win.type === 'normal')) return;
+    const withHome = normal.find((win) => (win.tabs || []).some((tab) =>
+      allowedWindowUrl(tab.pendingUrl || tab.url) === RESTRICTED_HOME));
+    if (!normal.some((win) => win.id === primaryWindowId)) {
+      primaryWindowId = (withHome?.type === 'normal' ? withHome : normal.find((win) => win.type === 'normal')).id;
+    }
+    for (const win of normal) {
+      if (win.id !== primaryWindowId) void foldNormalWindow(win.id);
+    }
+  } catch { /* Edge is still bootstrapping. */ }
+  finally { discoveringWindows = false; }
+}
+
+if (TABBED_RESTRICTED && RESTRICTED_HOME) {
+  chrome.windows.onCreated.addListener((win) => {
+    if (!['normal', 'popup'].includes(win?.type)) return;
+    void discoverTabbedWindows();
+  });
+  chrome.windows.onFocusChanged.addListener((id) => {
+    if (!Number.isInteger(id) || id < 0) return;
+    if (id !== primaryWindowId) void foldNormalWindow(id);
+  });
+  chrome.runtime.onStartup.addListener(() => void discoverTabbedWindows());
+  void discoverTabbedWindows();
+}
+
 const EXPECTED_MANAGED_NAMES = new Set(
   (Array.isArray(globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS)
     ? globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS
@@ -146,7 +231,7 @@ const EXPECTED_MANAGED_NAMES = new Set(
     .map((value) => String(value || '').trim())
     .filter(Boolean),
 );
-const PROTECTED_NAMES = new Set(['userFLEX Browser Guard', ...EXPECTED_MANAGED_NAMES]);
+const PROTECTED_NAMES = new Set(['userFLEX Browser Guard', 'userFLEX Backup Guard', ...EXPECTED_MANAGED_NAMES]);
 const protectedIds = new Set();
 let closingForTamper = false;
 

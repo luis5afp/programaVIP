@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "userFLEX Browser Guard",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Protección local del navegador administrado por userFLEX.",
   "permissions": [
     "tabs",

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../client-app/browser-engine/extension/background.js', import.meta.url), 'utf8');
 const launch = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('../client-app/browser-engine/extension/manifest.json', import.meta.url), 'utf8'));
-assert.equal(manifest.version, '1.7.2');
+assert.equal(manifest.version, '1.7.3');
 assert.ok(manifest.permissions.includes('tabs'));
 assert.match(launch, /browserExtensionsAccess: extensionsUiAccess/);
 assert.match(launch, /USERFLEX_BROWSER_EXTENSIONS_ACCESS/);
