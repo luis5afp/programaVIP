@@ -16,6 +16,7 @@ const heartbeatTime = document.getElementById('heartbeat-time');
 const serverState = document.getElementById('server-state');
 const subscriptionStatus = document.getElementById('subscription-status');
 const categoryFilters = document.getElementById('category-filters');
+const themeChoices = [...document.querySelectorAll('[data-theme-option]')];
 
 const identifierInput = document.getElementById('identifier');
 const passwordInput = document.getElementById('password');
@@ -33,6 +34,35 @@ let catalog = null;
 let query = '';
 let category = 'all';
 const launchingProfiles = new Set();
+
+// Se guarda únicamente una preferencia visual local, nunca datos de perfiles
+// ni credenciales. Por defecto, Gris ofrece un inicio menos oscuro.
+const THEME_KEY = 'userflow:launcher-theme:v1';
+const AVAILABLE_THEMES = new Set(['claro', 'gris', 'noche']);
+function getSavedLauncherTheme() {
+  try {
+    const stored = window.localStorage.getItem(THEME_KEY);
+    return AVAILABLE_THEMES.has(stored) ? stored : 'gris';
+  } catch {
+    return 'gris';
+  }
+}
+function selectLauncherTheme(theme, save = false) {
+  const selected = AVAILABLE_THEMES.has(theme) ? theme : 'gris';
+  clientView.dataset.theme = selected;
+  for (const button of themeChoices) {
+    const active = button.dataset.themeOption === selected;
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('selected', active);
+  }
+  if (save) {
+    try { window.localStorage.setItem(THEME_KEY, selected); } catch { /* No bloquear la UI. */ }
+  }
+}
+selectLauncherTheme(getSavedLauncherTheme());
+for (const button of themeChoices) {
+  button.addEventListener('click', () => selectLauncherTheme(button.dataset.themeOption, true));
+}
 
 function show(view) {
   for (const element of [loadingView, loginView, clientView]) element.classList.add('hidden');
@@ -203,6 +233,25 @@ function descriptionFor(profile) {
   return `${host} · acceso manual`;
 }
 
+function showProfileLaunching(card, launching) {
+  if (!card || !card.isConnected) return;
+  const unavailable = card.classList.contains('unavailable');
+  card.classList.toggle('launching', launching);
+  card.setAttribute('aria-busy', String(launching));
+  card.setAttribute('aria-disabled', String(unavailable || launching));
+  card.tabIndex = unavailable || launching ? -1 : 0;
+  const state = card.querySelector('.card-state');
+  if (state && !unavailable) state.textContent = launching ? 'Abriendo…' : 'Abrir';
+  if (!unavailable) card.title = launching ? 'El perfil se está iniciando…' : card.dataset.defaultTitle || 'Abrir perfil';
+}
+function syncProfileLaunching(profileId, launching) {
+  // El catálogo puede redibujarse por heartbeat mientras Edge está iniciando.
+  // El Set y el DOM deben permanecer sincronizados.
+  for (const card of profilesGrid.querySelectorAll('.profile-card')) {
+    if (card.dataset.profileId === String(profileId)) showProfileLaunching(card, launching);
+  }
+}
+
 async function launchProfile(profile, card) {
   if (launchingProfiles.has(profile.id)) return;
   const unavailable = profile.launchReady === false
@@ -210,11 +259,9 @@ async function launchProfile(profile, card) {
   if (unavailable) return;
 
   launchingProfiles.add(profile.id);
-  card.classList.add('launching');
+  syncProfileLaunching(profile.id, true);
   setError(catalogError, '');
   setStreamingNotice('');
-  const state = card.querySelector('.card-state');
-  if (state) state.textContent = 'Abriendo…';
 
   try {
     const result = await window.userflex.launchProfile(profile.id);
@@ -278,10 +325,11 @@ async function launchProfile(profile, card) {
         );
       }
     }
+  } catch (error) {
+    setError(catalogError, error?.message || 'No se pudo iniciar este perfil.');
   } finally {
     launchingProfiles.delete(profile.id);
-    card.classList.remove('launching');
-    if (state) state.textContent = 'Abrir';
+    syncProfileLaunching(profile.id, false);
   }
 }
 
@@ -297,6 +345,7 @@ function makeProfileCard(profile) {
   card.title = unavailable
     ? (profile.unavailableReason || 'Este perfil todavía no está disponible.')
     : `Abrir ${profileLabel(profile)}`;
+  card.dataset.defaultTitle = card.title;
 
   const image = document.createElement('div');
   image.className = 'profile-image';
@@ -338,6 +387,7 @@ function makeProfileCard(profile) {
   footer.append(availability, state);
 
   card.append(image, body, footer);
+  if (launchingProfiles.has(profile.id)) showProfileLaunching(card, true);
   if (!unavailable) {
     card.addEventListener('click', () => void launchProfile(profile, card));
     card.addEventListener('keydown', (event) => {
