@@ -130,6 +130,9 @@ jobs:
       - name: Verify 24-hour token sessions and explicit sign-out
         run: node ../scripts/client-login-lifecycle.test.ts
 
+      - name: Verify updater GitHub mirror and Windows network fallback
+        run: node ../scripts/userflow-updater-github-fallback.test.mjs
+
       - name: Verify 24-hour token storage and server expiry
         run: node ../scripts/userflow-24h-session-cache.test.mjs
 
