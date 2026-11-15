@@ -13,13 +13,6 @@ assert.notEqual(first, second, 'password hashes must use unique salts');
 assert.equal(first.includes(password), false, 'hash must never contain plaintext password');
 assert.equal(await passwordVerify(password, first), true);
 assert.equal(await passwordVerify('wrong-password', first), false);
-assert.equal(await passwordVerify(password, first.replace('$100000
-
-console.log('Password hashing: PBKDF2 round-trip OK');
-, '$310000
-
-console.log('Password hashing: PBKDF2 round-trip OK');
-)), false,
-  'stored iteration parameter must be used rather than assuming the new count');
-
-console.log('Password hashing: PBKDF2 round-trip OK');
+assert.equal(await passwordVerify(password, first.replace('$100000$', '$310000$')), false,
+  'stored iterations must be checked rather than assuming a fixed number');
+console.log('Password hashing: Cloudflare-compatible PBKDF2 round-trip OK');
