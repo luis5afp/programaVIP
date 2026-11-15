@@ -104,6 +104,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/extension-ui-mode.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/restricted-extension-actions.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/restricted-window-guard.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/kaizen-engine.js

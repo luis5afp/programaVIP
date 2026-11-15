@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
+import { prepareRestrictedManagedExtensions } from '../client-app/browser-engine/restricted-extension-actions.js';
 import {
   startRestrictedWindowGuard,
   restrictedAppWindowArgs,
@@ -45,6 +46,7 @@ assert.equal(process.platform, 'win32');
 const root = await mkdtemp(path.join(tmpdir(), 'userflow-restricted-popup-'));
 const userDataDir = path.join(root, 'edge-profile');
 const browserGuardDir = path.join(root, 'browser-guard');
+const mockOriginalDir = path.join(root, 'original-mock-extension');
 const port = 9409;
 const httpServer = createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -67,6 +69,28 @@ let guard = null;
 try {
   await mkdir(userDataDir, { recursive: true });
   await cp(new URL('../client-app/browser-engine/extension', import.meta.url), browserGuardDir, {recursive: true});
+  // Simulate a Toolspoint-style toolbar action. Restricted profiles should
+  // remove only that UI action, keeping the content script functional.
+  await mkdir(mockOriginalDir, {recursive:true});
+  await writeFile(path.join(mockOriginalDir, 'manifest.json'),JSON.stringify({
+    manifest_version:3,
+    name:'userFLOW Action Test',
+    version:'1.0',
+    action:{default_popup:'popup.html',default_title:'Open popup'},
+    content_scripts:[{matches:['http://*/*'],js:['content.js'],run_at:'document_start'}],
+  }));
+  await writeFile(path.join(mockOriginalDir,'popup.html'),'<p>Toolbar popup</p>');
+  await writeFile(path.join(mockOriginalDir,'content.js'),
+    "document.documentElement.dataset.userflowManagedTest = 'running';");
+  const mockRestricted = await prepareRestrictedManagedExtensions([{
+    id:'restricted-action-test',name:'userFLOW Action Test',
+    version:'1.0',dir:mockOriginalDir,
+  }],path.join(root,'restricted-mock-copy'));
+  const mockDir=mockRestricted[0].dir;
+  assert.equal(JSON.parse(await readFile(path.join(mockDir,'manifest.json'),'utf8')).action,
+    undefined,'restricted Chrome manifest must have no clickable action popup');
+  assert.ok(JSON.parse(await readFile(path.join(mockOriginalDir,'manifest.json'),'utf8')).action,
+    'original managed extension cache must keep full functionality');
   await writeFile(path.join(browserGuardDir, 'strategy.js'), [
     `globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = 'restricted';`,
     `globalThis.USERFLEX_PROFILE_HOME_URL = 'http://127.0.0.1:${httpServer.address().port}/index';`,
@@ -86,8 +110,8 @@ try {
     '--remote-allow-origins=*',
     '--no-first-run',
     '--no-default-browser-check',
-    `--disable-extensions-except=${browserGuardDir}`,
-    `--load-extension=${browserGuardDir}`,
+    `--disable-extensions-except=${browserGuardDir},${mockDir}`,
+    `--load-extension=${browserGuardDir},${mockDir}`,
     `--app=${base}/index`,
   ];
   child = spawn(edgeExe, portArgs, { stdio: 'ignore', windowsHide: false });
@@ -130,6 +154,9 @@ try {
     return pages.find((page) => page.url().includes('/secondary'));
   });
   assert.ok(second, 'second page opened in same browser profile');
+  await waitFor(async () => (await second.evaluate(
+    () => document.documentElement.dataset.userflowManagedTest
+  )) === 'running', 12_000);
   const hasCookie = await second.evaluate(() => document.cookie.includes('sameProfileTest=passed'));
   assert.equal(hasCookie, true, 'second app window shares real browser cookies');
   assert.equal(appWindowLaunches, 1, 'one original popup yields exactly one controlled app window');

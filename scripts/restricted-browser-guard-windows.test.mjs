@@ -50,7 +50,8 @@ function createCase(mode) {
       },
     },
     management: {
-      getAll: async () => [],
+      getAll: async () => [{id:'toolspoint-id', name:'Toolspoint-Extension', enabled:true}],
+      setEnabled: async () => null,
       onDisabled: handler(),
       onInstalled: handler(),
       onUninstalled: handler(),
@@ -120,4 +121,22 @@ function createCase(mode) {
   assert.equal(ctx.opened.length,0);
   assert.equal(ctx.closed.length,0);
 }
-console.log('Browser Guard additional Edge window restriction: OK');
+// Disabling any assigned extension must close the whole managed browser
+// profile, and the same applies if it was uninstalled after being discovered.
+{
+  const ctx = createCase('restricted');
+  ctx.initial.set(70,{id:70,type:'popup',tabs:[{url:'https://profile.example/'}]});
+  await delay(15);
+  ctx.chrome.management.onDisabled.callback({id:'toolspoint-id',name:'Toolspoint-Extension'});
+  await delay(35);
+  assert.ok(ctx.closed.includes(70),'disable managed extension must close the restricted profile');
+}
+{
+  const ctx = createCase('restricted');
+  ctx.initial.set(71,{id:71,type:'popup',tabs:[{url:'https://profile.example/'}]});
+  await delay(15);
+  ctx.chrome.management.onUninstalled.callback('toolspoint-id');
+  await delay(35);
+  assert.ok(ctx.closed.includes(71),'uninstall managed extension must close the restricted profile');
+}
+console.log('Browser Guard additional Edge window restriction and extension tamper detection: OK');
