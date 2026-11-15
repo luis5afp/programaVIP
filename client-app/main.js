@@ -732,7 +732,7 @@ async function catalog(options = {}) {
   try {
     const requestOptions = options.quickVerify
       ? { timeout: FAST_SESSION_VERIFY_TIMEOUT_MS, maxAttempts: 1 }
-      : {};
+      : (options.sessionRetry ? { timeout: 8_000, maxAttempts: 2 } : {});
     const payload = await apiRequest('/api/client/catalog', requestOptions);
     if (options.deferImages) return catalogWithoutImageDelay(payload);
     return await hydrateCatalogProfileImages(payload);
@@ -2245,7 +2245,11 @@ ipcMain.handle('userflex:bootstrap', async (event, input = {}) => {
         ? { authenticated: false, error: { ...pending, status: 401 } }
         : { authenticated: false };
     }
-    const data = await catalog({ quickVerify: input?.retry !== true, deferImages: true });
+    const data = await catalog({
+      quickVerify: input?.retry !== true,
+      sessionRetry: input?.retry === true,
+      deferImages: true,
+    });
     // The server has validated this exact token and its expiry. Remote logos
     // and local marker reconciliation must not hold the login screen open.
     mergeValidationMeta(data);
@@ -2446,9 +2450,10 @@ app.on('before-quit', (event) => {
     .finally(() => app.quit());
 });
 
-app.whenReady().then(async () => {
-  await getDeviceKey();
-  await loadAuth();
+app.whenReady().then(() => {
+  // Display UI first. Token restoration is handled by bootstrap IPC and the
+  // device key is needed only for a fresh manual login. Neither disk reads nor
+  // Windows identity lookup should hold up the first visible window.
   createMainWindow();
 });
 
