@@ -405,6 +405,22 @@ async function downloadGithubInstaller(manifest) {
 
 async function downloadInstaller(manifest) {
   if (manifest.githubDownloadUrl) return downloadGithubInstaller(manifest);
+  try {
+    return await downloadR2Installer(manifest);
+  } catch (primaryError) {
+    await updaterLog('fragmentos Cloudflare no disponibles: ' + updaterErrorReason(primaryError));
+    try {
+      const release = await fetchVerifiedGithubRelease();
+      if (release.version !== manifest.version) throw new Error('UPDATE_GITHUB_VERSION_MISMATCH');
+      return await downloadGithubInstaller(release);
+    } catch (mirrorError) {
+      await updaterLog('mirror tras error de descarga: ' + updaterErrorReason(mirrorError));
+      throw primaryError;
+    }
+  }
+}
+
+async function downloadR2Installer(manifest) {
   const updateDir = await prepareUpdateDirectory();
   const installerPath = path.join(updateDir, `userFLOW-${manifest.version}-Setup.exe`);
   const file = await fs.open(installerPath, 'w');
