@@ -465,6 +465,7 @@ export async function clientLogin(request: Request, env: Env) {
     accessToken: raw,
     createdAt: sessionCreatedAt,
     expiresAt,
+    serverTime: new Date().toISOString(),
     client: {
       id: client.id,
       name: client.name,
