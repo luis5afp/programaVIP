@@ -285,9 +285,10 @@ export async function startRestrictedTabbedGuard({
     // Keeping a CDP debugging session attached prevents the Manifest V3
     // service worker from suspending as idle on supported Chromium versions.
     // Its destruction then signals disabled, removed or crashed protection.
-    for (const target of browser.targets()) {
-      if (target.type?.() !== 'service_worker'
-        || !/chrome-extension:\/\/[^/]+\/background\.js(?:$|\?)/.test(target.url?.() || '')) continue;
+    const workerTargets = browser.targets().filter((target) => target.type?.() === 'service_worker');
+    warn('Diagnostic: service workers activos ' + workerTargets.length + '.');
+    for (const target of workerTargets) {
+      if (!/chrome-extension:\/\/[^/]+\/background\.js(?:$|\?)/.test(target.url?.() || '')) continue;
       let session = null;
       try {
         session = await target.createCDPSession();
@@ -301,7 +302,11 @@ export async function startRestrictedTabbedGuard({
           guardSession = session;
           return;
         }
-      } catch { /* Another extension's worker may be unavailable. */ }
+        warn('Diagnostic: worker manifest name=' + String(response?.result?.value ?? 'undefined')
+          + '; exception=' + String(response?.exceptionDetails?.text || 'none'));
+      } catch (error) {
+        warn('Diagnostic: worker inspection=' + String(error?.message || error).slice(0, 180));
+      }
       await session?.detach().catch(() => null);
     }
     throw new Error('No se pudo conectar con userFLEX Browser Guard. Perfil bloqueado.');
