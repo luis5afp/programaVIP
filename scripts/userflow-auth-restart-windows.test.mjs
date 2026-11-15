@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { selectPersistentUserData } from '../client-app/user-data-location.js';
 
 assert.equal(process.platform, 'win32', 'Smoke test must run in a Windows runner');
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -11,9 +12,9 @@ const electron = process.env.USERFLOW_TEST_ELECTRON_BIN || path.join(root, 'smok
 await access(electron);
 const fixtureDir = await mkdtemp(path.join(tmpdir(), 'userflow-secure-login-'));
 const appDir = path.join(fixtureDir, 'app');
-const userData = path.join(fixtureDir, 'userData-login');
-const otherUserData = path.join(fixtureDir, 'userData-reopen');
 const appData = path.join(fixtureDir, 'appData');
+const userData = path.join(appData, 'userFLOW');
+const otherUserData = path.join(appData, 'userflow-client');
 await mkdir(appDir, { recursive:true });
 await mkdir(userData, { recursive:true });
 await mkdir(otherUserData, { recursive:true });
@@ -59,7 +60,7 @@ async function run(phase, marker) {
       stdio:['ignore','pipe','pipe'],
       env: {
         ...process.env,
-        USERFLOW_AUTH_TEST_USER_DATA: phase === 'save' ? userData : otherUserData,
+        USERFLOW_AUTH_TEST_USER_DATA: selectPersistentUserData(appData, phase === 'save' ? userData : otherUserData),
         USERFLOW_AUTH_TEST_APP_DATA:appData,
         USERFLOW_AUTH_TEST_LOCATIONS:locationModule,
         USERFLOW_AUTH_TEST_MODULE:modulePath,
