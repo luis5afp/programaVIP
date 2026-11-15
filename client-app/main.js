@@ -49,6 +49,8 @@ const pendingUsageCloseRequests = new Set();
 const profileImageDataCache = new Map();
 let quitAfterUsageFlush = false;
 let kaizenBrowserEngine = null;
+let initialCatalogSyncPromise = null;
+const FAST_SESSION_VERIFY_TIMEOUT_MS = 6_000;
 
 class UserflexError extends Error {
   constructor(message, code = 'CLIENT_ERROR', status = 0) {
@@ -284,7 +286,10 @@ function waitForRetry(attempt) {
 async function apiRequest(pathName, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const retryable = method === 'GET' || method === 'HEAD';
-  const maxAttempts = retryable ? 3 : 1;
+  const configuredAttempts = Number(options.maxAttempts);
+  const maxAttempts = retryable
+    ? (Number.isInteger(configuredAttempts) && configuredAttempts >= 1 ? Math.min(3, configuredAttempts) : 3)
+    : 1;
   const operationId = clientRequestId();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -405,6 +410,52 @@ async function hydrateCatalogProfileImages(payload) {
     };
   }));
   return { ...payload, profiles };
+}
+
+// A verified catalog can display immediately. Icons are cached in memory,
+// and missing icons are fetched after navigation rather than blocking login.
+function catalogWithoutImageDelay(payload) {
+  if (!payload || !Array.isArray(payload.profiles)) return payload;
+  const profiles = payload.profiles.map((profile) => {
+    const imageSourceUrl = typeof profile?.imageUrl === 'string' ? profile.imageUrl : null;
+    let cached = null;
+    try {
+      if (imageSourceUrl && new URL(imageSourceUrl).protocol === 'https:') {
+        cached = profileImageDataCache.get(imageSourceUrl + '::' + String(profile?.imageVersion || '')) || null;
+      }
+    } catch {}
+    return { ...profile, imageSourceUrl, imageUrl: cached };
+  });
+  return { ...payload, profiles };
+}
+
+function loadCatalogImagesInBackground(payload) {
+  const clientId = String(payload?.client?.id || '');
+  if (!clientId || !Array.isArray(payload?.profiles)) return;
+  for (const profile of payload.profiles) {
+    const profileId = String(profile?.id || '');
+    const sourceUrl = profile?.imageSourceUrl;
+    if (!profileId || !sourceUrl || profile.imageUrl) continue;
+    void profileImageDataUrl(sourceUrl, profile?.imageVersion || null).then((imageUrl) => {
+      if (!imageUrl || !accessToken || String(authMeta?.client?.id || '') !== clientId) return;
+      sendClient('userflex:profile-image', {
+        clientId, profileId, imageSourceUrl: sourceUrl,
+        imageVersion: profile?.imageVersion || null, imageUrl,
+      });
+    }).catch(() => null);
+  }
+}
+
+function scheduleInitialCatalogSync(data, reason) {
+  // Local profile-marker reconciliation stays mandatory before first launch,
+  // but must not delay displaying a server-authorized catalog.
+  const work = syncClientConfiguration(data, reason, data);
+  initialCatalogSyncPromise = work;
+  void work.catch((error) => {
+    console.warn('userFLOW deferred catalog reconciliation failed:', error?.code || 'UNKNOWN');
+  }).finally(() => {
+    if (initialCatalogSyncPromise === work) initialCatalogSyncPromise = null;
+  });
 }
 
 async function apiBinaryRequest(pathName, options = {}) {
@@ -676,10 +727,14 @@ function preserveProfilesForAuthError(error) {
   return false;
 }
 
-async function catalog() {
+async function catalog(options = {}) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
   try {
-    const payload = await apiRequest('/api/client/catalog');
+    const requestOptions = options.quickVerify
+      ? { timeout: FAST_SESSION_VERIFY_TIMEOUT_MS, maxAttempts: 1 }
+      : {};
+    const payload = await apiRequest('/api/client/catalog', requestOptions);
+    if (options.deferImages) return catalogWithoutImageDelay(payload);
     return await hydrateCatalogProfileImages(payload);
   } catch (error) {
     if (authError(error)) {
@@ -1807,6 +1862,8 @@ async function reportSessionHealth(profileId, authenticated, result = null, opti
 
 async function openProfile(profileId) {
   if (!accessToken) throw new UserflexError('Inicia sesión para continuar.', 'CLIENT_UNAUTHENTICATED', 401);
+  if (initialCatalogSyncPromise) await initialCatalogSyncPromise;
+  if (!accessToken) throw new UserflexError('Tu sesión dejó de estar activa.', 'CLIENT_UNAUTHENTICATED', 401);
 
   const launch = await apiRequest(`/api/client/profiles/${profileId}/launch`, {
     method: 'POST',
@@ -2177,7 +2234,7 @@ for (const pendingUrl of Array.from(globalThis.__userflowPendingProtocolUrls || 
 }
 globalThis.__userflowPendingProtocolUrls = [];
 
-ipcMain.handle('userflex:bootstrap', async (event) => {
+ipcMain.handle('userflex:bootstrap', async (event, input = {}) => {
   try {
     await removeLegacyLoginCredentials();
     if (!accessToken) await loadAuth();
@@ -2188,11 +2245,15 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
         ? { authenticated: false, error: { ...pending, status: 401 } }
         : { authenticated: false };
     }
-    const data = await catalog();
-    await syncClientConfiguration(data, 'bootstrap', data);
-    void requestSessionKeeperChecks();
+    const data = await catalog({ quickVerify: input?.retry !== true, deferImages: true });
+    // The server has validated this exact token and its expiry. Remote logos
+    // and local marker reconciliation must not hold the login screen open.
+    mergeValidationMeta(data);
+    scheduleInitialCatalogSync(data, 'bootstrap');
     startHeartbeat();
     enterWorkspace(event.sender);
+    loadCatalogImagesInBackground(data);
+    void requestSessionKeeperChecks();
     return { authenticated: true, auth: authMeta, catalog: data };
   } catch (error) {
     // A network or catalog failure is NOT a logout. Keep the valid encrypted
@@ -2236,11 +2297,13 @@ ipcMain.handle('userflex:login', async (event, input) => {
     };
     await removeLegacyLoginCredentials();
     await saveAuth(result.accessToken, meta);
-    const data = await catalog();
-    await syncClientConfiguration(data, 'login', data);
-    void requestSessionKeeperChecks();
+    const data = await catalog({ deferImages: true });
+    mergeValidationMeta(data);
+    scheduleInitialCatalogSync(data, 'login');
     startHeartbeat();
     enterWorkspace(event.sender);
+    loadCatalogImagesInBackground(data);
+    void requestSessionKeeperChecks();
     return { ok: true, auth: authMeta, catalog: data };
   } catch (error) {
     return { ok: false, error: serializeError(error) };
