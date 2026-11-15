@@ -96,7 +96,7 @@ try {
   const worker = await until(() => browser.targets().find((t) =>
     t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
   nativeGuard = await startRestrictedTabbedGuard({
-    connectBrowser: connectKaizenBrowser, debugPort: port,
+    browser, debugPort: port,
     onIntegrityLost: async () => { guardLost = true; },
   });
   session = await worker.createCDPSession();
