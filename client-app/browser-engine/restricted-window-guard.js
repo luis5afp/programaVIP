@@ -254,3 +254,67 @@ export async function startRestrictedWindowGuard({
     },
   };
 }
+
+
+// Event-driven guard for native Edge tabs. Unlike the legacy --app router,
+// never destroys valid popup targets or their window.opener relationships.
+// Native Browser Guard consolidates additional *normal windows* by moving
+// their tabs into the first Edge normal window, with no network/API polling.
+const RESTRICTED_INTERNAL_PAGE = /^(?:edge|chrome):\/(?:\/)(?:extensions|settings|flags|policy|inspect|password-manager)(?:\/|$|[?#])/i;
+const DEVTOOLS_PAGE = /^devtools:\/\//i;
+
+export async function startRestrictedTabbedGuard({
+  connectBrowser,
+  debugPort,
+  logger = console,
+  onViolation = null,
+} = {}) {
+  if (typeof connectBrowser !== 'function') {
+    throw new Error('Falta el canal de protección de pestañas.');
+  }
+  const browser = await connectBrowser(debugPort);
+  let stopped = false;
+  const pending = new Set();
+  const inspected = new WeakSet();
+  const warn = (message) => logger.warn?.('userFLOW restricted tabbed Edge:', message);
+
+  async function blockUnsafeTarget(target) {
+    if (stopped || !target || inspected.has(target)) return;
+    const url = String(target.url?.() || '');
+    if (!RESTRICTED_INTERNAL_PAGE.test(url) && !DEVTOOLS_PAGE.test(url)) return;
+    inspected.add(target);
+    try {
+      const page = await target.page?.();
+      if (page) await page.close({runBeforeUnload:false});
+      else {
+        const targetId = target._targetId || target._targetInfo?.targetId;
+        if (!targetId) throw new Error('No hay ID de objetivo.');
+        const session = await browser.createBrowserCDPSession();
+        try { await session.send('Target.closeTarget', {targetId}); }
+        finally { await session.detach().catch(() => null); }
+      }
+    } catch (error) {
+      warn('No se pudo bloquear una página interna de Edge.');
+      if (typeof onViolation === 'function') await onViolation(error);
+    }
+  }
+  const checkTarget = (target) => {
+    const job = blockUnsafeTarget(target);
+    pending.add(job);
+    void job.catch(() => warn('No se pudo inspeccionar la navegación protegida.'))
+      .finally(() => pending.delete(job));
+  };
+  browser.on('targetcreated',checkTarget);
+  browser.on('targetchanged',checkTarget);
+  for (const target of browser.targets()) checkTarget(target);
+  return {
+    async close() {
+      if (stopped) return;
+      stopped = true;
+      browser.off('targetcreated',checkTarget);
+      browser.off('targetchanged',checkTarget);
+      await Promise.allSettled([...pending]);
+      await browser.disconnect().catch(() => null);
+    },
+  };
+}
