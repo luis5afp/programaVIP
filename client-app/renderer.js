@@ -39,6 +39,7 @@ let catalog = null;
 let query = '';
 let category = 'all';
 const launchingProfiles = new Set();
+const deferredProfileImages = new Map();
 
 // Se guarda únicamente una preferencia visual local, nunca datos de perfiles
 // ni credenciales. Por defecto, Gris ofrece un inicio menos oscuro.
@@ -430,11 +431,57 @@ function renderProfiles() {
   for (const profile of filtered) profilesGrid.appendChild(makeProfileCard(profile));
 }
 
+function acceptDeferredProfileImage(update) {
+  if (!update || typeof update !== 'object') return;
+  const clientId = String(update.clientId || '');
+  const profileId = String(update.profileId || '');
+  const imageUrl = update.imageUrl;
+  if (!clientId || !profileId || typeof imageUrl !== 'string'
+    || !/^data:image\/(?:png|jpeg|webp|gif);base64,/.test(imageUrl)) return;
+  if (!catalog || !Array.isArray(catalog?.profiles)) {
+    if (deferredProfileImages.size < 60) deferredProfileImages.set(clientId + ':' + profileId, update);
+    return;
+  }
+  if (String(catalog?.client?.id || '') !== clientId) return;
+  const profile = catalog.profiles.find((entry) => String(entry?.id || '') === profileId);
+  if (!profile || profile.imageSourceUrl !== update.imageSourceUrl
+    || String(profile.imageVersion || '') !== String(update.imageVersion || '')) return;
+  profile.imageUrl = imageUrl;
+  for (const card of profilesGrid.querySelectorAll('.profile-card')) {
+    if (card.dataset.profileId !== profileId) continue;
+    const picture = card.querySelector('.profile-image');
+    if (!picture) continue;
+    const existing = picture.querySelector('img');
+    if (existing) {
+      existing.src = imageUrl;
+      continue;
+    }
+    const img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('load', () => picture.classList.add('has-image'), { once: true });
+    img.addEventListener('error', () => {
+      img.remove();
+      picture.classList.remove('has-image');
+    }, { once: true });
+    img.src = imageUrl;
+    picture.appendChild(img);
+  }
+}
+
+window.userflex.onProfileImage?.((payload) => acceptDeferredProfileImage(payload));
+
+function applyQueuedProfileImages() {
+  for (const update of deferredProfileImages.values()) acceptDeferredProfileImage(update);
+  deferredProfileImages.clear();
+}
+
 function renderClient() {
   renderAccount();
   renderCategoryFilters();
   renderProfiles();
   show(clientView);
+  applyQueuedProfileImages();
 }
 
 async function refreshCatalog() {
@@ -575,13 +622,14 @@ window.userflex.onAuthInvalidated((payload) => {
   catalog = null;
   identifierInput.value = '';
   passwordInput.value = '';
+  deferredProfileImages.clear();
   setPasswordVisible(false);
   setError(loginError, payload?.message || 'Tu sesión ya no está activa.');
   show(loginView);
 });
 
 let restoringSession = false;
-async function restoreSavedSession() {
+async function restoreSavedSession(retry = false) {
   if (restoringSession) return;
   restoringSession = true;
   retrySessionButton.disabled = true;
@@ -589,7 +637,7 @@ async function restoreSavedSession() {
   loadingMessage.textContent = 'Verificando tu sesión guardada…';
   show(loadingView);
   try {
-    const result = await window.userflex.bootstrap();
+    const result = await window.userflex.bootstrap({ retry });
     if (result?.authenticated) {
       auth = result.auth;
       catalog = result.catalog;
@@ -614,7 +662,7 @@ async function restoreSavedSession() {
     retrySessionButton.disabled = false;
   }
 }
-retrySessionButton.addEventListener('click', () => void restoreSavedSession());
+retrySessionButton.addEventListener('click', () => void restoreSavedSession(true));
 loadingSignoutButton.addEventListener('click', async () => {
   loadingSignoutButton.disabled = true;
   try {
