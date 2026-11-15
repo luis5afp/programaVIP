@@ -177,15 +177,63 @@ export async function adminRoutes(request: Request, env: Env, admin: AdminIdenti
         p_expires_at: expiresAt,
       }),
     });
-    const id = Array.isArray(result) ? result[0] : result;
-    await db(env, `userflex_clients?id=eq.${id}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ max_devices: maxDevices, browser_extensions_access: browserAccess, updated_at: new Date().toISOString() }),
-    });
-    await audit(env, request, 'admin', admin.userId, 'client.create', 'client', String(id), { maxDevices, browserExtensionsAccess: browserAccess });
-    const rows = await db(env, `userflex_clients?select=id,name,email,phone,status,max_devices,allow_external_browsing,browser_extensions_access,created_at,updated_at&id=eq.${id}&limit=1`);
-    return json((await clientDetails(env, rows))[0], 201);
+    // The creation RPC is atomic for client, credential and subscription. In
+    // particular, never report a failed creation merely because enriching the
+    // response or writing a secondary audit record takes longer than expected.
+    const rawId = Array.isArray(result) ? (result[0]?.userflex_create_client ?? result[0]) : result;
+    if (typeof rawId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(rawId)) {
+      console.error('Client creation RPC returned an invalid identifier');
+      throw new HttpError(502, 'CLIENT_CREATE_RESULT_INVALID', 'No se pudo confirmar la creación del cliente. Revisa la lista antes de reintentar.');
+    }
+    const id = uuid(rawId, 'clientId');
+    let rows: any[];
+    try {
+      rows = await db(env, `userflex_clients?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({
+          max_devices: maxDevices,
+          browser_extensions_access: browserAccess,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      if (!rows?.[0]) throw new HttpError(404, 'CLIENT_CREATE_ROW_MISSING', 'El cliente recién creado no pudo encontrarse.');
+    } catch (error) {
+      // The creation RPC has committed already. Compensate a failed settings
+      // update rather than leaving a partially configured new customer.
+      try {
+        await db(env, `userflex_clients?id=eq.${id}`, {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' },
+        });
+      } catch (cleanupError) {
+        console.error('Client create rollback failed', id, cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+        throw new HttpError(409, 'CLIENT_CREATED_CONFIGURATION_INCOMPLETE',
+          'El cliente pudo quedar creado sin sus permisos. Revisa Clientes antes de volver a intentarlo.');
+      }
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(503, 'CLIENT_CREATE_CONFIGURATION_FAILED',
+        'No se pudieron guardar los permisos del cliente. La creación se revirtió; inténtalo nuevamente.');
+    }
+
+    // Auditing and response enrichment must never turn a successfully created
+    // customer into a false "failed" POST that encourages duplicate retries.
+    try {
+      await audit(env, request, 'admin', admin.userId, 'client.create', 'client', id,
+        { maxDevices, browserExtensionsAccess: browserAccess });
+    } catch (auditError) {
+      console.error('Client creation audit write failed', id,
+        auditError instanceof Error ? auditError.message : String(auditError));
+    }
+
+    try {
+      const details = await clientDetails(env, rows);
+      if (details?.[0]) return json(details[0], 201);
+    } catch (enrichmentError) {
+      console.warn('Client creation detail enrichment failed', id,
+        enrichmentError instanceof Error ? enrichmentError.message : String(enrichmentError));
+    }
+    return json({ ...rows[0], credential: { username, has_password: true }, subscription: null }, 201);
   }
 
   const credentialsMatch = path.match(/^\/api\/clients\/([0-9a-f-]{36})\/credentials$/i);
