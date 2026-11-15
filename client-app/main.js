@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession } from './auth-session-cache.js';
+import { canonicalAuthFile, previousAuthFiles } from './auth-session-locations.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,18 +58,14 @@ class UserflexError extends Error {
   }
 }
 
-// The token is tied to the Windows account, not to Electron's mutable
-// display name. Preserve browser profile/cookie directories unchanged.
+// Store only the authentication file in an explicit Windows-user location;
+// browser profiles, cookies and registered devices stay in their current dirs.
 function authPath() {
-  return path.join(app.getPath('appData'), 'userFLEX Client', 'auth.json');
+  return canonicalAuthFile(app.getPath('appData'));
 }
 
 function previousAuthPaths() {
-  return Array.from(new Set([
-    path.join(app.getPath('userData'), 'auth.json'),
-    path.join(app.getPath('appData'), 'userFLOW', 'auth.json'),
-    path.join(app.getPath('appData'), 'userflow-client', 'auth.json'),
-  ])).filter((candidate) => path.resolve(candidate).toLowerCase() !== path.resolve(authPath()).toLowerCase());
+  return previousAuthFiles(app.getPath('appData'), app.getPath('userData'));
 }
 
 function loginCredentialsPath() {
