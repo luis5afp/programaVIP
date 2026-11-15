@@ -6,6 +6,8 @@ const source = (path: string) => readFileSync(new URL('../' + path, import.meta.
 const client = source('src/api.ts');
 const clientView = source('src/views/ClientsView.tsx');
 const ui = source('src/components/ui.tsx');
+const errorBoundary = source('src/components/ErrorBoundary.tsx');
+const app = source('src/App.tsx');
 
 const internal = friendlyApiError({
   path: '/api/clients',
@@ -98,4 +100,9 @@ assert.match(client, /friendlyApiError\(\{/);
 assert.match(clientView, /setError\(createError\?\.message/);
 assert.doesNotMatch(clientView, /Código: \$\{code\}/);
 assert.match(ui, /whiteSpace: 'pre-line'/);
+assert.match(errorBoundary, /Motivo:/);
+assert.match(errorBoundary, /Qué hacer:/);
+assert.match(errorBoundary, /Referencia para soporte:/);
+assert.match(app, /setSessionError\(error\?\.message/);
+assert.match(app, /No se pudo verificar la sesión de administrador/);
 console.log('Actionable Spanish Admin errors: OK');
