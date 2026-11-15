@@ -37,6 +37,8 @@ let heartbeatInFlight = false;
 let heartbeatFailureSince = 0;
 let heartbeatFailClosed = false;
 let subscriptionExpiryTimer = null;
+let authSessionExpiryTimer = null;
+let authTransitionInFlight = false;
 let pendingAuthInvalidation = null;
 const profileTabs = new Map();
 let profileOrder = [];
@@ -165,6 +167,13 @@ async function loadAuth() {
     if (typeof raw?.token !== 'string') return null;
     const token = safeStorage.decryptString(Buffer.from(raw.token, 'base64'));
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return null;
+    const expiresAt = Date.parse(String(raw?.meta?.expiresAt || ''));
+    // Fail closed on missing, invalid or elapsed expiry; the server also
+    // validates the token on every authenticated request.
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      await clearAuth();
+      return null;
+    }
     accessToken = token;
     authMeta = raw.meta || null;
     return { token, meta: authMeta };
@@ -180,50 +189,18 @@ async function loadAuth() {
   }
 }
 
-async function saveLoginCredentials(identifier, password) {
-  const normalizedIdentifier = String(identifier || '').trim();
-  const normalizedPassword = String(password || '');
-  if (!normalizedIdentifier || !normalizedPassword || !safeStorage.isEncryptionAvailable()) return false;
-
-  const encrypted = safeStorage.encryptString(JSON.stringify({
-    identifier: normalizedIdentifier,
-    password: normalizedPassword,
-  })).toString('base64');
+// Earlier versions stored a second encrypted copy of username/password and
+// used it to silently create a fresh server session after the token expired.
+// 24-hour sign-in must rely on the server-issued token only, never the password.
+async function removeLegacyLoginCredentials() {
   const file = loginCredentialsPath();
-  const payload = JSON.stringify({ version: 1, encrypted });
-  await fs.mkdir(path.dirname(file), { recursive: true });
   try {
-    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
+    await fs.unlink(file);
   } catch (error) {
-    if (!isLocalPermissionError(error)) throw error;
+    if (!isLocalPermissionError(error)) return;
     await repairLocalPathAccess(app.getPath('userData'));
     await repairLocalPathAccess(file);
-    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
-  }
-  return true;
-}
-
-async function loadLoginCredentials() {
-  if (!safeStorage.isEncryptionAvailable()) return null;
-
-  const read = async () => {
-    const raw = JSON.parse(await fs.readFile(loginCredentialsPath(), 'utf8'));
-    if (typeof raw?.encrypted !== 'string') return null;
-    const decrypted = safeStorage.decryptString(Buffer.from(raw.encrypted, 'base64'));
-    const parsed = JSON.parse(decrypted);
-    const identifier = String(parsed?.identifier || '').trim();
-    const password = String(parsed?.password || '');
-    if (!identifier || !password) return null;
-    return { identifier, password };
-  };
-
-  try {
-    return await read();
-  } catch (error) {
-    if (!isLocalPermissionError(error)) return null;
-    await repairLocalPathAccess(app.getPath('userData'));
-    await repairLocalPathAccess(loginCredentialsPath());
-    try { return await read(); } catch { return null; }
+    await fs.unlink(file).catch(() => null);
   }
 }
 
@@ -643,7 +620,8 @@ function authError(error) {
 function preserveProfilesForAuthError(error) {
   const code = String(error?.code || '');
   if (['CLIENT_SUSPENDED', 'DEVICE_REVOKED', 'SUBSCRIPTION_INACTIVE', 'PLAN_INACTIVE'].includes(code)) return false;
-  return Number(error?.status || 0) === 401 || code === 'CLIENT_UNAUTHENTICATED';
+  // Expired/invalid credentials must never leave managed browser profiles open.
+  return false;
 }
 
 async function catalog() {
@@ -697,6 +675,7 @@ function mergeValidationMeta(payload) {
   }
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
   scheduleSubscriptionExpiry();
+  scheduleAuthSessionExpiry();
 }
 
 async function syncClientConfiguration(payload, reason = 'server', knownCatalog = null) {
@@ -752,6 +731,31 @@ function scheduleHeartbeat(delayMs = HEARTBEAT_MS, reason = '12h') {
   }, Math.max(1_000, delayMs));
 }
 
+function scheduleAuthSessionExpiry() {
+  if (authSessionExpiryTimer) clearTimeout(authSessionExpiryTimer);
+  authSessionExpiryTimer = null;
+  if (!accessToken) return;
+  const expiresAt = Date.parse(String(authMeta?.expiresAt || ''));
+  const remaining = expiresAt - Date.now();
+  if (!Number.isFinite(expiresAt) || remaining <= 0) {
+    queueMicrotask(() => {
+      if (accessToken && !authTransitionInFlight) {
+        void returnToLogin(
+          'Tu sesión de 24 horas finalizó. Inicia sesión nuevamente.',
+          'CLIENT_SESSION_EXPIRED',
+        );
+      }
+    });
+    return;
+  }
+  // Browsers and Node cap long timeouts. A single local timer is enough;
+  // no server polling is introduced by this expiration guard.
+  authSessionExpiryTimer = setTimeout(() => {
+    authSessionExpiryTimer = null;
+    scheduleAuthSessionExpiry();
+  }, Math.min(remaining, 2_147_000_000));
+}
+
 function scheduleSubscriptionExpiry() {
   if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
   subscriptionExpiryTimer = null;
@@ -777,6 +781,15 @@ async function runHeartbeat(reason = 'scheduled') {
   heartbeatInFlight = true;
   clearHeartbeatTimer();
 
+  const authExpiresAt = Date.parse(String(authMeta?.expiresAt || ''));
+  if (!Number.isFinite(authExpiresAt) || authExpiresAt <= Date.now()) {
+    heartbeatInFlight = false;
+    await returnToLogin(
+      'Tu sesión de 24 horas finalizó. Inicia sesión nuevamente.',
+      'CLIENT_SESSION_EXPIRED',
+    );
+    return;
+  }
   const subscriptionExpiresAt = Date.parse(String(authMeta?.subscription?.expiresAt || ''));
   if (Number.isFinite(subscriptionExpiresAt) && subscriptionExpiresAt <= Date.now()) {
     heartbeatInFlight = false;
@@ -849,6 +862,7 @@ function startHeartbeat() {
   heartbeatFailureSince = 0;
   heartbeatFailClosed = false;
   scheduleSubscriptionExpiry();
+  scheduleAuthSessionExpiry();
   scheduleHeartbeat(HEARTBEAT_MS, '12h');
 }
 
@@ -859,6 +873,8 @@ function stopHeartbeat() {
   heartbeatFailClosed = false;
   if (subscriptionExpiryTimer) clearTimeout(subscriptionExpiryTimer);
   subscriptionExpiryTimer = null;
+  if (authSessionExpiryTimer) clearTimeout(authSessionExpiryTimer);
+  authSessionExpiryTimer = null;
 }
 
 function createMainWindow() {
@@ -907,6 +923,9 @@ function enterWorkspace(sender) {
 }
 
 async function returnToLogin(message = null, code = null, options = {}) {
+  if (authTransitionInFlight) return;
+  authTransitionInFlight = true;
+  try {
   const clientId = authMeta?.client?.id || null;
   const preserveProfiles = options?.preserveProfiles === true;
 
@@ -916,6 +935,7 @@ async function returnToLogin(message = null, code = null, options = {}) {
   await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
   await clearAuth();
+  await removeLegacyLoginCredentials();
   pendingAuthInvalidation = message ? {
     message: String(message),
     code: code || null,
@@ -930,6 +950,9 @@ async function returnToLogin(message = null, code = null, options = {}) {
 
   if (message) {
     sendClient('userflex:auth-invalidated', pendingAuthInvalidation);
+  }
+  } finally {
+    authTransitionInFlight = false;
   }
 }
 
@@ -2099,6 +2122,7 @@ globalThis.__userflowPendingProtocolUrls = [];
 
 ipcMain.handle('userflex:bootstrap', async (event) => {
   try {
+    await removeLegacyLoginCredentials();
     if (!accessToken) await loadAuth();
     if (!accessToken) {
       const pending = pendingAuthInvalidation;
@@ -2116,11 +2140,6 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
   } catch (error) {
     return { authenticated: false, error: serializeError(error) };
   }
-});
-
-ipcMain.handle('userflex:saved-login', async () => {
-  const credentials = await loadLoginCredentials();
-  return credentials || { identifier: '', password: '' };
 });
 
 ipcMain.handle('userflex:login', async (event, input) => {
@@ -2147,7 +2166,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
       subscription: result.subscription,
       expiresAt: result.expiresAt,
     };
-    await saveLoginCredentials(identifier, password);
+    await removeLegacyLoginCredentials();
     await saveAuth(result.accessToken, meta);
     const data = await catalog();
     await syncClientConfiguration(data, 'login', data);
@@ -2158,6 +2177,23 @@ ipcMain.handle('userflex:login', async (event, input) => {
   } catch (error) {
     return { ok: false, error: serializeError(error) };
   }
+});
+
+ipcMain.handle('userflex:logout', async () => {
+  // Explicit sign-out revokes the current server token and terminates every
+  // protected profile. Local sign-out still succeeds if the server is offline.
+  let revokedOnServer = false;
+  if (accessToken) {
+    try {
+      const response = await apiRequest('/api/client/logout', { method: 'POST' });
+      revokedOnServer = response?.ok === true;
+    } catch (error) {
+      console.warn('userFLOW logout: no se pudo confirmar revocación remota.',
+        String(error?.code || 'NETWORK_UNAVAILABLE'));
+    }
+  }
+  await returnToLogin();
+  return { ok: true, revokedOnServer };
 });
 
 ipcMain.handle('userflex:catalog', async () => {

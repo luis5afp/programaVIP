@@ -12,6 +12,7 @@ const profilesGrid = document.getElementById('profiles-grid');
 const emptyState = document.getElementById('empty-state');
 const searchInput = document.getElementById('profile-search');
 const refreshButton = document.getElementById('refresh-button');
+const logoutButton = document.getElementById('logout-button');
 const heartbeatTime = document.getElementById('heartbeat-time');
 const serverState = document.getElementById('server-state');
 const subscriptionStatus = document.getElementById('subscription-status');
@@ -467,28 +468,23 @@ passwordToggle.addEventListener('click', () => {
   } catch {}
 });
 
-async function applySavedLogin() {
-  try {
-    const saved = await window.userflex.savedLogin();
-    if (!saved?.identifier || !saved?.password) return false;
-    identifierInput.value = saved.identifier;
-    passwordInput.value = saved.password;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function performLogin({ automatic = false } = {}) {
+async function performLogin() {
   setError(loginError, '');
   loginButton.disabled = true;
-  loginButton.textContent = automatic ? 'Restaurando acceso…' : 'Ingresando…';
-  const result = await window.userflex.login({
-    identifier: identifierInput.value,
-    password: passwordInput.value,
-  });
-  loginButton.disabled = false;
-  loginButton.textContent = 'Ingresar';
+  loginButton.textContent = 'Ingresando…';
+  let result;
+  try {
+    result = await window.userflex.login({
+      identifier: identifierInput.value,
+      password: passwordInput.value,
+    });
+  } catch (error) {
+    setError(loginError, error?.message || 'No se pudo iniciar sesión.');
+    return false;
+  } finally {
+    loginButton.disabled = false;
+    loginButton.textContent = 'Ingresar';
+  }
 
   if (!result?.ok) {
     setPasswordVisible(false);
@@ -497,6 +493,7 @@ async function performLogin({ automatic = false } = {}) {
   }
 
   setPasswordVisible(false);
+  passwordInput.value = '';
   auth = result.auth;
   catalog = result.catalog;
   query = '';
@@ -526,6 +523,24 @@ categoryFilters.addEventListener('click', (event) => {
 
 refreshButton.addEventListener('click', () => void refreshCatalog());
 
+logoutButton.addEventListener('click', async () => {
+  if (logoutButton.disabled) return;
+  logoutButton.disabled = true;
+  logoutButton.textContent = 'Cerrando sesión…';
+  setError(catalogError, '');
+  try {
+    const result = await window.userflex.logout();
+    if (!result?.ok) {
+      setError(catalogError, result?.error?.message || 'No se pudo cerrar sesión.');
+    }
+  } catch (error) {
+    setError(catalogError, error?.message || 'No se pudo cerrar sesión.');
+  } finally {
+    logoutButton.textContent = '↪ Cerrar sesión';
+    logoutButton.disabled = false;
+  }
+});
+
 window.userflex.onHeartbeat((payload) => {
   if (payload?.auth) auth = payload.auth;
   if (payload?.catalog) {
@@ -554,7 +569,8 @@ window.userflex.onHeartbeat((payload) => {
 window.userflex.onAuthInvalidated((payload) => {
   auth = null;
   catalog = null;
-  void applySavedLogin();
+  identifierInput.value = '';
+  passwordInput.value = '';
   setPasswordVisible(false);
   setError(loginError, payload?.message || 'Tu sesión ya no está activa.');
   show(loginView);
@@ -569,13 +585,8 @@ window.userflex.onAuthInvalidated((payload) => {
     return;
   }
 
-  // If the encrypted auth token no longer exists after an update, use the
-  // credentials saved with Electron safeStorage to restore the same client
-  // session automatically. On failure the fields stay prefilled so the user
-  // can reveal/edit the password instead of retyping it blindly.
-  const hasSavedLogin = await applySavedLogin();
-  if (hasSavedLogin && await performLogin({ automatic: true })) return;
-
+  // A token stored with Electron safeStorage is the only automatic-login
+  // mechanism. If it expired or the server rejected it, require credentials.
   if (result?.error?.message && !loginError.textContent) setError(loginError, result.error.message);
   setPasswordVisible(false);
   show(loginView);

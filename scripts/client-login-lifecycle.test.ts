@@ -37,9 +37,27 @@ assert.match(
   'outdated stored sessions must be rejected before entering the catalog',
 );
 
-assert.match(main, /safeStorage\.encryptString\(JSON\.stringify\(\{[\s\S]{0,180}identifier[\s\S]{0,180}password/, 'quick-login credentials must be encrypted with Electron safeStorage');
-assert.match(main, /loginCredentialsPath\(\)[\s\S]{0,220}login-credentials\.json/, 'quick-login credentials must use a dedicated local file');
-assert.match(main, /await saveLoginCredentials\(identifier, password\)/, 'successful client login must refresh the encrypted quick-login cache');
+const core = readFileSync(new URL('../cloudflare/lib/core.ts', import.meta.url), 'utf8');
+const auth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
+const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
+
+assert.match(core, /CLIENT_SESSION_SECONDS = 24 \* 60 \* 60/, 'server token lifetime is 24 hours');
+assert.match(auth, /Date\.now\(\) \+ CLIENT_SESSION_SECONDS \* 1000/,
+  'client login creates a fixed 24-hour server expiration');
+assert.match(auth, /revoked_at=is\.null&expires_at=gt/,
+  'every validated token must be neither revoked nor expired');
+assert.match(main, /safeStorage\.encryptString\(token\)/,
+  'the issued token is encrypted locally with Electron safeStorage');
+assert.match(main, /async function loadAuth\(\)/,
+  'valid encrypted token resumes login after restarting the app');
+assert.match(main, /if \(!Number\.isFinite\(expiresAt\) \|\| expiresAt <= Date\.now\(\)\)/,
+  'restart must reject already-expired token before opening the catalog');
+assert.match(main, /function scheduleAuthSessionExpiry\(\)/,
+  'live sessions must expire even when no heartbeat is due');
+assert.match(main, /await removeLegacyLoginCredentials\(\)/,
+  'old auto-login password cache must be removed during upgrade');
+assert.doesNotMatch(main, /saveLoginCredentials\(|loadLoginCredentials\(/,
+  'userFLOW must never silently reauthenticate with a saved password');
 const syncStart = main.indexOf('async function syncClientConfiguration(');
 const syncEnd = main.indexOf('\nfunction clearHeartbeatTimer(', syncStart);
 assert.ok(syncStart >= 0 && syncEnd > syncStart, 'client configuration sync must be discoverable');
@@ -51,10 +69,22 @@ assert.ok(
   clientIdPos >= 0 && authClientPos > clientIdPos && reconcilePos > authClientPos,
   'client configuration sync must resolve clientId locally before profile reconciliation',
 );
-assert.match(preload, /savedLogin:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('userflex:saved-login'\)/, 'renderer must read quick-login data only through preload IPC');
+assert.match(preload, /logout:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('userflex:logout'\)/,
+  'renderer can request explicit logout through an isolated preload bridge');
+assert.match(main, /ipcMain\.handle\('userflex:logout'[\s\S]*apiRequest\('\/api\/client\/logout', \{ method: 'POST' \}\)/,
+  'logout must revoke the token on the server');
+assert.match(client, /export async function clientLogout[\s\S]*revoked_at/,
+  'backend must invalidate the current server session');
+assert.match(html, /id="logout-button"/, 'there must be a visible Cerrar sesión control');
+assert.match(renderer, /logoutButton\.addEventListener\('click'/,
+  'Cerrar sesión must perform an actual logout');
 assert.match(html, /id="password-toggle"[\s\S]{0,120}>Ver<\/button>/, 'login form must provide a show/hide password control');
 assert.match(renderer, /setPasswordVisible\(visible\)[\s\S]{0,260}passwordInput\.type = visible \? 'text' : 'password'/, 'password visibility control must toggle the input type');
-assert.match(renderer, /applySavedLogin\(\)[\s\S]{0,520}performLogin\(\{ automatic: true \}\)/, 'saved encrypted credentials must restore the client session automatically');
-assert.match(startup, /copyIdentityFile\('login-credentials\.json'\)/, 'updates must preserve the encrypted quick-login cache across stable userData migration');
+assert.doesNotMatch(renderer, /applySavedLogin\(|performLogin\(\{ automatic: true \}\)/,
+  'expired sessions must ask for credentials instead of silently issuing a new token');
+assert.doesNotMatch(startup, /copyIdentityFile\('login-credentials\.json'\)/,
+  'old saved login passwords must not be restored from migration paths');
+assert.match(startup, /copyIdentityFile\('auth\.json'\)/,
+  'the encrypted, expiring token must survive app updates');
 
 console.log('Client login/window lifecycle regression: OK');
