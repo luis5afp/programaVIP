@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { spawn, execFile } from 'node:child_process';
 import path from 'node:path';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
+import { startRestrictedTabbedGuard } from '../client-app/browser-engine/restricted-window-guard.js';
 
 async function until(check, timeoutMs = 20000) {
   const end = Date.now() + timeoutMs;
@@ -48,16 +49,21 @@ const server = createServer((req, res) => {
   return res.end('<title>' + pathname + '</title><h1>' + pathname + '</h1>');
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-let proc, browser, session;
+let proc, browser, session, nativeGuard;
+let guardLost = false;
 try {
   await cp(new URL('../client-app/browser-engine/extension', import.meta.url), guardPath, { recursive: true });
   await mkdir(mockPath, { recursive: true });
   await writeFile(path.join(mockPath, 'manifest.json'), JSON.stringify({
     manifest_version: 3, name: 'ex1', version: '1.0',
+    permissions: ['management'],
+    background: {service_worker:'bg.js'},
     content_scripts: [{matches:['http://*/*'],js:['content.js'],run_at:'document_start'}]
   }));
+  await writeFile(path.join(mockPath, 'bg.js'),
+    "chrome.runtime.onMessage.addListener(()=>{});chrome.runtime.onStartup.addListener(()=>{});");
   await writeFile(path.join(mockPath, 'content.js'),
-    "document.documentElement.dataset.ex1Loaded = 'yes';");
+    "document.documentElement.dataset.ex1Loaded = 'yes';chrome.runtime.sendMessage({ping:true}).catch(()=>{});");
   const base = 'http://127.0.0.1:' + server.address().port;
   await writeFile(path.join(guardPath, 'strategy.js'), [
     "globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = 'restricted';",
@@ -91,6 +97,10 @@ try {
     t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
   session = await worker.createCDPSession();
   await session.send('Runtime.enable');
+  nativeGuard = await startRestrictedTabbedGuard({
+    connectBrowser: connectKaizenBrowser, debugPort: port,
+    onIntegrityLost: async () => { guardLost = true; },
+  });
   const inspect = async () => {
     const response = await session.send('Runtime.evaluate', {
       expression: 'chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
@@ -123,6 +133,27 @@ try {
   assert.ok(afterPopup[0].urls.some(u => u?.includes('/secondary')));
   assert.ok(afterPopup[0].urls.some(u => u?.includes('/popup')));
   console.log('USERFLOW_RESTRICTED_TABBED_WINDOWS='+JSON.stringify(afterPopup));
+  // Browser Guard is a distinct extension from ex1. Simulate an attacker
+  // disabling Browser Guard from another extension with management access.
+  const ex1Worker = await until(() => browser.targets().find((t) =>
+    t.type() === 'service_worker' && /chrome-extension:\/\/.+\/bg\.js/.test(t.url())), 10000);
+  const ex1Session = await ex1Worker.createCDPSession();
+  try {
+    await ex1Session.send('Runtime.enable');
+    const response = await ex1Session.send('Runtime.evaluate', {
+      expression: `(async()=>{const items=await chrome.management.getAll();
+        const guard=items.find(x=>x.name==='userFLEX Browser Guard');
+        if(!guard) throw new Error('Browser Guard missing');
+        await chrome.management.setEnabled(guard.id,false);
+        return true;})()`,
+      awaitPromise:true, returnByValue:true
+    });
+    assert.equal(response?.result?.value,true,'simulated disable must succeed');
+    await until(() => guardLost, 12000);
+    console.log('USERFLOW_NATIVE_GUARD_DISCONNECT_DETECTED=true');
+  } finally {
+    await ex1Session.detach().catch(() => {});
+  }
   for (const preferenceFile of ['Preferences', 'Secure Preferences']) {
     try {
       const prefs = JSON.parse(await readFile(path.join(userData,'Default',preferenceFile),'utf8'));
@@ -136,6 +167,7 @@ try {
     }
   }
 } finally {
+  await nativeGuard?.close().catch(() => {});
   await session?.detach().catch(() => {});
   await browser?.disconnect().catch(() => {});
   await killTree(proc?.pid);
