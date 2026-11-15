@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "userFLEX Backup Guard",
+  "version": "1.0.0",
+  "description": "Testigo local de seguridad de Browser Guard en perfiles userFLOW.",
+  "permissions": [
+    "management",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
