@@ -13,11 +13,17 @@ const fakeStorage = {
 const token = 'A'.repeat(48);
 const root = await mkdtemp(path.join(tmpdir(), 'userflow-auth-cache-test-'));
 const file = path.join(root, 'auth.json');
-const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+const createdAt = new Date().toISOString();
+const expiresAt = new Date(Date.parse(createdAt) + 24 * 60 * 60 * 1000).toISOString();
 try {
-  await saveEncryptedAuthSession(file, token, { expiresAt, client: { id: 'test' } }, fakeStorage);
+  await saveEncryptedAuthSession(file, token, { createdAt, expiresAt, client: { id: 'test' } }, fakeStorage);
   const savedFile = await readFile(file, 'utf8');
   assert.ok(!savedFile.includes(token), 'the token must never be written in plaintext');
+  const saved = JSON.parse(savedFile);
+  assert.equal(saved.createdAt, createdAt);
+  assert.equal(saved.expiresAt, expiresAt);
+  assert.equal(saved.version, 3);
+  assert.equal((await readEncryptedAuthSession(file, fakeStorage)).legacyCreatedAt, false);
   assert.deepEqual((await readEncryptedAuthSession(file, fakeStorage)).token, token,
     'the encrypted token must be readable after the process restarts');
   assert.equal((await readEncryptedAuthSession(file, fakeStorage)).legacyExpiry, false);
@@ -39,15 +45,17 @@ try {
   const auth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
   const finalizer = readFileSync(new URL('../client-app/build/finalize-client-ui.mjs', import.meta.url), 'utf8');
   assert.match(main, /await saveEncryptedAuthSession|saveEncryptedAuthSession\(authPath\(\), token, meta, safeStorage\)/);
-  assert.match(main, /readEncryptedAuthSession\(authPath\(\), safeStorage\)/);
+  assert.match(main, /readEncryptedAuthSession\(candidate, safeStorage\)/,
+    'the canonical and legacy files must use the same secure decryption');
   assert.match(main, /if \(accessToken && !authError\(error\)\)/,
     'a server/network error must retain an existing saved token');
   assert.match(renderer, /result\?\.pending === true/,
     'on reopening, temporary validation errors must not demand credentials');
   assert.match(html, /id="retry-session-button"/);
   assert.match(finalizer, /pending: true/, 'bootstrap timeout should not show login prematurely');
-  assert.match(auth, /select=id,client_id,device_id,expires_at&token_hash=/,
+  assert.match(auth, /select=id,client_id,device_id,created_at,expires_at&token_hash=/,
     'server must return actual token expiry from the database');
+  assert.match(worker, /sessionCreatedAt: id\.sessionCreatedAt/, 'catalog and heartbeat must return issue date');
   assert.match(worker, /sessionExpiresAt: id\.sessionExpiresAt/,
     'server catalog/heartbeat must return the existing expiry');
   assert.doesNotMatch(worker, /expires_at: sessionExpiresAt/,

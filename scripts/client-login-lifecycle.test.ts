@@ -43,8 +43,8 @@ const auth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url),
 const client = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 
 assert.match(core, /CLIENT_SESSION_SECONDS = 24 \* 60 \* 60/, 'server token lifetime is 24 hours');
-assert.match(auth, /Date\.now\(\) \+ CLIENT_SESSION_SECONDS \* 1000/,
-  'client login creates a fixed 24-hour server expiration');
+assert.match(auth, /Date\.parse\(sessionCreatedAt\) \+ CLIENT_SESSION_SECONDS \* 1000/,
+  'client login creates a fixed 24-hour server expiration from creation time');
 assert.match(auth, /revoked_at=is\.null&expires_at=gt/,
   'every validated token must be neither revoked nor expired');
 assert.match(authCache, /encryption\.encryptString\(token\)/,
@@ -87,7 +87,9 @@ assert.doesNotMatch(renderer, /applySavedLogin\(|performLogin\(\{ automatic: tru
   'expired sessions must ask for credentials instead of silently issuing a new token');
 assert.doesNotMatch(startup, /copyIdentityFile\('login-credentials\.json'\)/,
   'old saved login passwords must not be restored from migration paths');
-assert.match(startup, /copyIdentityFile\('auth\.json'\)/,
-  'the encrypted, expiring token must survive app updates');
+assert.doesNotMatch(startup, /copyIdentityFile\('auth\.json'\)/,
+  'startup must not duplicate encrypted token files in temporary userData directories');
+assert.match(main, /canonicalAuthFile\(app\.getPath\('appData'\)\)/,
+  'the token must use a stable per-Windows-user location across launches');
 
 console.log('Client login/window lifecycle regression: OK');

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession } from './auth-session-cache.js';
+import { canonicalAuthFile, previousAuthFiles } from './auth-session-locations.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,8 +58,14 @@ class UserflexError extends Error {
   }
 }
 
+// Store only the authentication file in an explicit Windows-user location;
+// browser profiles, cookies and registered devices stay in their current dirs.
 function authPath() {
-  return path.join(app.getPath('userData'), 'auth.json');
+  return canonicalAuthFile(app.getPath('appData'));
+}
+
+function previousAuthPaths() {
+  return previousAuthFiles(app.getPath('appData'), app.getPath('userData'));
 }
 
 function loginCredentialsPath() {
@@ -172,24 +179,46 @@ async function saveAuth(token, meta) {
 }
 
 async function loadAuth() {
-  const recover = () => readEncryptedAuthSession(authPath(), safeStorage);
-  let restored;
-  try {
-    restored = await recover();
-  } catch (error) {
-    if (!isLocalPermissionError(error)) {
-      await logAuthCacheState('LOAD_FAILED');
-      return null;
+  const tryRead = async (candidate) => {
+    try {
+      return await readEncryptedAuthSession(candidate, safeStorage);
+    } catch (error) {
+      if (!isLocalPermissionError(error)) return { ok: false, reason: 'LOAD_FAILED' };
+      await repairLocalPathAccess(path.dirname(candidate));
+      await repairLocalPathAccess(candidate);
+      try {
+        return await readEncryptedAuthSession(candidate, safeStorage);
+      } catch {
+        return { ok: false, reason: 'ACCESS_DENIED' };
+      }
     }
-    await repairLocalPathAccess(app.getPath('userData'));
-    await repairLocalPathAccess(authPath());
-    try { restored = await recover(); } catch {
-      await logAuthCacheState('ACCESS_DENIED');
-      return null;
+  };
+  let restored = await tryRead(authPath());
+  let migrated = false;
+  // Only migrate when the canonical cache is missing. An expired/invalidated
+  // canonical token must NOT be replaced with a stale token elsewhere.
+  if (!restored.ok && ['MISSING', 'DECRYPT_OR_FILE_INVALID'].includes(restored.reason)) {
+    for (const oldPath of previousAuthPaths()) {
+      const old = await tryRead(oldPath);
+      if (old.ok) {
+        try {
+          await saveAuth(old.token, old.meta);
+          restored = old;
+          migrated = true;
+          await logAuthCacheState('MIGRATED_FROM_PREVIOUS_DATA_DIR');
+          // Never resurrect the same credentials from a previous directory.
+          await fs.unlink(oldPath).catch(() => null);
+          break;
+        } catch (error) {
+          await logAuthCacheState(error?.code || 'MIGRATION_SAVE_FAILED');
+          restored = { ok: false, reason: 'MIGRATION_SAVE_FAILED' };
+          break;
+        }
+      }
     }
   }
-  if (!restored?.ok) {
-    const reason = restored?.reason || 'UNKNOWN';
+  if (!restored.ok) {
+    const reason = restored.reason || 'UNKNOWN';
     await logAuthCacheState(reason);
     if (reason === 'EXPIRED') await clearAuth();
     if (reason === 'ENCRYPTION_UNAVAILABLE') {
@@ -202,7 +231,9 @@ async function loadAuth() {
   }
   accessToken = restored.token;
   authMeta = restored.meta;
-  await logAuthCacheState(restored.legacyExpiry ? 'RESTORED_NEEDS_SERVER_EXPIRY' : 'RESTORED');
+  await logAuthCacheState(migrated ? 'MIGRATED_VERIFIED' : (
+    restored.legacyExpiry ? 'RESTORED_NEEDS_SERVER_EXPIRY' : 'RESTORED'
+  ));
   return { token: restored.token, meta: restored.meta };
 }
 
@@ -226,13 +257,17 @@ async function clearAuth() {
   authMeta = null;
   profileImageDataCache.clear();
   stopHeartbeat();
-  try {
-    await fs.unlink(authPath());
-  } catch (error) {
-    if (!isLocalPermissionError(error)) return;
-    await repairLocalPathAccess(app.getPath('userData'));
-    await repairLocalPathAccess(authPath());
-    await fs.unlink(authPath()).catch(() => null);
+  // Logout/expiration invalidates all historical cache locations, including
+  // the directories used before the Electron display name was standardized.
+  for (const file of [authPath(), ...previousAuthPaths()]) {
+    try {
+      await fs.unlink(file);
+    } catch (error) {
+      if (!isLocalPermissionError(error)) continue;
+      await repairLocalPathAccess(path.dirname(file));
+      await repairLocalPathAccess(file);
+      await fs.unlink(file).catch(() => null);
+    }
   }
 }
 
@@ -690,6 +725,7 @@ function mergeValidationMeta(payload) {
       offlineGraceMinutes: Math.max(0, Number(payload.offlineGraceMinutes || 0)),
     };
   }
+  if (payload.sessionCreatedAt) authMeta.createdAt = payload.sessionCreatedAt;
   if (payload.sessionExpiresAt) authMeta.expiresAt = payload.sessionExpiresAt;
   scheduleSubscriptionExpiry();
   scheduleAuthSessionExpiry();
@@ -2187,6 +2223,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
       client: result.client,
       plan: result.plan,
       subscription: result.subscription,
+      createdAt: result.createdAt,
       expiresAt: result.expiresAt,
     };
     await removeLegacyLoginCredentials();

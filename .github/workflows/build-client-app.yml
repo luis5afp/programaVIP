@@ -136,6 +136,9 @@ jobs:
       - name: Verify 24-hour token storage and server expiry
         run: node ../scripts/userflow-24h-session-cache.test.mjs
 
+      - name: Verify stable auth path across Windows app restarts and logout
+        run: node ../scripts/userflow-auth-stable-location.test.mjs
+
       - name: Install Electron for native Windows auth persistence smoke test
         if: github.event_name == 'pull_request'
         shell: pwsh

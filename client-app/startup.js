@@ -2,6 +2,7 @@ import { app, Menu, dialog, nativeTheme, session } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { startSocksHttpBridge } from './proxy-bridge.js';
+import { selectPersistentUserData } from './user-data-location.js';
 
 const USERFLEX_API_ORIGIN = 'https://userflex-admin.luis5afp.workers.dev';
 const PROFILE_ZOOM_FACTOR = 0.85;
@@ -100,8 +101,10 @@ function installRuntimeProxyAdapter(log) {
 // Capture Electron's packaged default user-data directory before changing the
 // visible application name. Keep that directory fixed for every future launch
 // so an update/rebrand cannot silently generate a different device identity.
-const STABLE_USER_DATA = app.getPath('userData');
+const STABLE_USER_DATA = selectPersistentUserData(app.getPath('appData'), app.getPath('userData'));
 const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'userFLEX Client');
+// Must be fixed *before* Electron starts: Windows safeStorage can depend on
+// Chromium Local State inside userData, not only the Windows account.
 app.setPath('userData', STABLE_USER_DATA);
 app.setName('userFLOW');
 
@@ -172,7 +175,8 @@ async function startAfterReady() {
     await log(`READY userFLOW v${app.getVersion()} from ${app.getPath('exe')}`);
     await log(`stable userData: ${currentUserData}`);
     await copyIdentityFile('device.json');
-    await copyIdentityFile('auth.json');
+    // main.js owns the one-time migration of the encrypted token into its
+    // canonical Windows account cache. Never duplicate the auth file here.
 
     // bootstrap.js still contains one legacy userData compatibility call. The
     // stable path is already locked before app.whenReady(), so ignore that late
