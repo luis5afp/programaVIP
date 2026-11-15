@@ -117,6 +117,7 @@ jobs:
           node --check browser-engine/proxy-relay.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/extension/background.js
+          node --check browser-engine/backup-guard/background.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/extension/content.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
