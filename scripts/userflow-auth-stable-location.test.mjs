@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { canonicalAuthFile, previousAuthFiles } from '../client-app/auth-session-locations.js';
+import { selectPersistentUserData } from '../client-app/user-data-location.js';
 
 const appData = path.join('C:', 'Users', 'Test', 'AppData', 'Roaming');
 const firstLaunch = path.join(appData, 'userFLOW');
@@ -18,8 +20,24 @@ assert.ok(previousAuthFiles(appData, renamedLaunch).includes(path.join(renamedLa
 assert.ok(!previousAuthFiles(appData, firstLaunch).includes(stable),
   'never treat canonical auth as a migration source');
 
+const testRoot = mkdtempSync(path.join(tmpdir(), 'userflow-stable-root-'));
+try {
+  const first = path.join(testRoot, 'userFLOW');
+  const second = path.join(testRoot, 'userflow-client');
+  mkdirSync(first);
+  mkdirSync(second);
+  const chosenOnLogin = selectPersistentUserData(testRoot, first);
+  const chosenOnReopen = selectPersistentUserData(testRoot, second);
+  assert.equal(chosenOnLogin, chosenOnReopen,
+    'startup must reuse the same safeStorage/Chromium root even after app rename');
+} finally {
+  rmSync(testRoot, { recursive:true, force:true });
+}
+
 const source = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const startup = readFileSync(new URL('../client-app/startup.js', import.meta.url), 'utf8');
+assert.match(startup, /selectPersistentUserData\(app\.getPath\('appData'\), app\.getPath\('userData'\)\)/,
+  'startup must select the persistent encryption root before Electron is ready');
 const server = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
 const catalog = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 assert.match(source, /canonicalAuthFile\(app\.getPath\('appData'\)\)/);
