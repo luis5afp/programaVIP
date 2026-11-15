@@ -1,6 +1,6 @@
 {
   "name": "userflow-client",
-  "version": "0.3.113",
+  "version": "0.3.114",
   "private": true,
   "type": "module",
   "description": "userFLOW para Windows",
@@ -39,6 +39,7 @@
       "updater-release-fallback.js",
       "main.js",
       "auth-session-cache.js",
+      "auth-session-locations.js",
       "widevine-runtime.js",
       "proxy-bridge.js",
       "preload.cjs",
