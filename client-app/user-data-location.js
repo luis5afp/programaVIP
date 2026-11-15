@@ -17,6 +17,10 @@ function existingDirectory(candidate) {
   try { return fs.statSync(candidate).isDirectory(); } catch { return false; }
 }
 
+function lastAuthModification(candidate) {
+  try { return fs.statSync(path.join(candidate, 'auth.json')).mtimeMs || 0; } catch { return 0; }
+}
+
 function scoreRoot(candidate) {
   // Prefer a directory containing the actual previous auth + Chromium state.
   // Never inspect or copy token contents here.
@@ -45,7 +49,8 @@ export function selectPersistentUserData(appDataDir, defaultDir) {
   if (!selected) {
     const available = options.filter(existingDirectory);
     // A past signed-in session and its Chromium local state take precedence.
-    available.sort((a, b) => scoreRoot(b) - scoreRoot(a));
+    available.sort((a, b) =>
+      (scoreRoot(b) - scoreRoot(a)) || (lastAuthModification(b) - lastAuthModification(a)));
     selected = available[0] || path.resolve(defaultDir);
   }
   fs.mkdirSync(selected, { recursive: true });
