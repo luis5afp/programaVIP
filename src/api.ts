@@ -23,6 +23,7 @@ import type {
   ProfileValidationJob,
   ProxyRecord,
 } from './types';
+import { friendlyApiError } from './error-messages';
 
 export class ApiError extends Error {
   status: number;
@@ -103,31 +104,45 @@ async function request<T>(path: string, init: RequestOptions = {}): Promise<T> {
         if (adminSessionExpired) {
           window.dispatchEvent(new CustomEvent('userflex:admin-session-expired'));
         }
+        const safeRequestId = response.headers.get('X-Userflex-Request-Id') || operationId;
         const error = new ApiError(
-          adminSessionExpired
-            ? 'Tu sesión de administrador venció. Inicia sesión nuevamente.'
-            : payload?.message || payload?.error || `HTTP ${response.status}`,
+          friendlyApiError({
+            path,
+            method,
+            status: response.status,
+            code: adminSessionExpired ? 'UNAUTHENTICATED' : payload?.code,
+            serverMessage: adminSessionExpired ? undefined : payload?.message || payload?.error,
+            requestId: safeRequestId,
+          }),
           response.status,
           payload?.code,
         );
-        error.requestId =
-          response.headers.get('X-Userflex-Request-Id') || operationId;
+        error.requestId = safeRequestId;
         throw error;
       }
       return payload as T;
     } catch (error) {
       lastError = error;
       if (error instanceof ApiError) throw error;
-      if (externalSignal?.aborted) throw new ApiError('La operación fue cancelada.', 0, 'REQUEST_CANCELLED');
+      if (externalSignal?.aborted) {
+        const cancelled = new ApiError(
+          friendlyApiError({ path, method, status: 0, code: 'REQUEST_CANCELLED' }),
+          0,
+          'REQUEST_CANCELLED',
+        );
+        cancelled.requestId = operationId;
+        throw cancelled;
+      }
       if (retryable && attempt < maxAttempts) {
         await retryDelay(attempt);
         continue;
       }
       const timedOut = controller.signal.aborted;
+      const problemCode = timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR';
       const failure = new ApiError(
-        timedOut ? 'El servidor tardó demasiado en responder. Intenta nuevamente.' : 'No se pudo conectar con userFLEX.',
+        friendlyApiError({ path, method, status: 0, code: problemCode, requestId: operationId }),
         0,
-        timedOut ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+        problemCode,
       );
       failure.requestId = operationId;
       throw failure;
