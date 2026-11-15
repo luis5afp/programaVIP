@@ -15,8 +15,10 @@ assert.equal(normalizeBrowserExtensionsAccess(undefined), 'restricted', 'unknown
 assert.equal(normalizeBrowserExtensionsAccess('full'), 'full');
 assert.equal(normalizeBrowserExtensionsAccess('restricted'), 'restricted');
 assert.equal(normalizeBrowserExtensionsAccess('FULL'), 'restricted');
-assert.equal(browserStartupArgument('https://example.com', 'restricted'), '--app=https://example.com');
-assert.equal(browserStartupArgument('about:blank', 'restricted'), '--app=about:blank');
+assert.equal(browserStartupArgument('https://example.com', 'restricted'), 'https://example.com');
+assert.equal(browserStartupArgument('about:blank', 'restricted'), 'about:blank');
+// Real tabs must be native, without Edge --app spawning one normal window per tab.
+assert.match(engine, /args.push\('--new-window'\)/);
 assert.equal(browserStartupArgument('https://example.com', 'full'), 'https://example.com');
 
 assert.match(schema, /DEFAULT 'restricted'/, 'new and existing customer rows start restricted');
