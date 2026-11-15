@@ -104,6 +104,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/extension-ui-mode.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check browser-engine/restricted-window-guard.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/kaizen-engine.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/credential-policy.js
@@ -118,6 +120,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check build/vmp-sign.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify restricted Edge popup navigation in real Windows Edge
+        if: github.event_name == 'pull_request'
+        run: node ../scripts/restricted-edge-popup-windows.test.mjs
 
       - name: Build Windows installer
         if: github.event_name != 'pull_request'
