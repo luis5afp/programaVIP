@@ -59,6 +59,10 @@
       {
         "from": "browser-engine/extension",
         "to": "browser-engine/extension"
+      },
+      {
+        "from": "browser-engine/backup-guard",
+        "to": "browser-engine/backup-guard"
       }
     ],
     "win": {
