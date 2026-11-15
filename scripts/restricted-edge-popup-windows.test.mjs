@@ -23,11 +23,16 @@ async function waitFor(check, timeoutMs = 18_000) {
   }
   throw new Error('Timed out waiting for restricted Edge popup ' + last);
 }
-function findEdge() {
-  return [
+async function findEdge() {
+  const options = [
     process.env['PROGRAMFILES(X86)'] && path.join(process.env['PROGRAMFILES(X86)'], 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  ].filter(Boolean)[0];
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+  ].filter(Boolean);
+  for (const candidate of options) {
+    try { await readFile(candidate); return candidate; } catch {}
+  }
+  throw new Error('Microsoft Edge is missing on the Windows runner.');
 }
 function killTree(pid) {
   return new Promise((resolve) => {
@@ -60,9 +65,7 @@ let browser = null;
 let guard = null;
 try {
   await mkdir(userDataDir, { recursive: true });
-  const edgeExe = findEdge();
-  assert.ok(edgeExe, 'Microsoft Edge path is available');
-  await readFile(edgeExe);
+  const edgeExe = await findEdge();
   const address = httpServer.address();
   const base = `http://127.0.0.1:${address.port}`;
   const portArgs = [
@@ -92,12 +95,16 @@ try {
     settleMs: 200,
     launchAppWindow: async (url) => {
       appWindowLaunches += 1;
-      const second = spawn(edgeExe, restrictedAppWindowArgs({
-        userDataDir,
-        url,
-      }), { stdio: 'ignore', windowsHide: false });
-      second.once('error', (error) => { throw error; });
-      second.unref();
+      await new Promise((resolve, reject) => {
+        const second = spawn(edgeExe, restrictedAppWindowArgs({ userDataDir, url }), {
+          stdio: 'ignore', windowsHide: false,
+        });
+        second.once('error', reject);
+        second.once('spawn', () => {
+          second.unref();
+          resolve();
+        });
+      });
     },
   });
   await home.evaluate(() => {
