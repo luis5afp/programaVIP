@@ -35,7 +35,7 @@ assert.equal(selectVerifiedGithubRelease([item({ assets: [{ ...item().assets[0],
   browser_download_url: 'https://attacker.example/installer.exe' }] })]), null);
 assert.equal(selectVerifiedGithubRelease([item({ assets: [{ ...item().assets[0], size: 500_000_000 }] })]), null);
 assert.equal(selectVerifiedGithubRelease([item({ assets: [{ ...item().assets[0], digest: 'sha256:invalid' }] })]), null);
-assert.equal(selectVerifiedGithubRelease(null) === null, false);
+assert.throws(() => selectVerifiedGithubRelease(null), /GITHUB_RELEASE_DATA_INVALID/);
 assert.equal(compareUpdaterVersions('0.3.113', '0.3.112'), 1);
 assert.equal(compareUpdaterVersions('0.3.112', '0.3.113'), -1);
 assert.equal(compareUpdaterVersions('0.3.112', '0.3.112'), 0);
