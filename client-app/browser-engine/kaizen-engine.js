@@ -7,6 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
 import { normalizeBrowserExtensionsAccess, browserStartupArgument } from './extension-ui-mode.js';
+import { prepareRestrictedManagedExtensions } from './restricted-extension-actions.js';
 import { startRestrictedWindowGuard, restrictedAppWindowArgs } from './restricted-window-guard.js';
 import {
   closeDevtoolsTargets,
@@ -786,21 +787,30 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     }
 
     const debugPort = await freePort();
+    // Only restricted real profiles get action-free copies. Full-access
+    // customers and ephemeral extension validation use the signed ZIP cache
+    // unchanged, avoiding global changes to Toolspoint, EX1 and EX2.
+    const scopedManaged = extensionsUiAccess === 'restricted' && !ephemeral
+      ? await prepareRestrictedManagedExtensions(
+        Array.isArray(managedExtensions) ? managedExtensions : [],
+        path.join(clientExtensionsDir(clientId), `${safeSegment(profile.id)}_restricted_managed`),
+      )
+      : (Array.isArray(managedExtensions) ? managedExtensions : []);
     const extensionDir = await prepareProfileExtension(
       clientId,
       profile.id,
       runtime.extensionStrategy,
       {
         streamingDomEnabled,
-        managedExtensionNames: (Array.isArray(managedExtensions) ? managedExtensions : [])
-          .map((item) => item?.name)
+        managedExtensionNames: scopedManaged
+          .flatMap((item) => [item?.name, item?.manifestName])
           .filter((name) => typeof name === 'string' && name.trim()),
         contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules : [],
         browserExtensionsAccess: extensionsUiAccess,
         profileHomeUrl: profile.url,
       },
     );
-    const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
+    const managedExtensionDirs = scopedManaged
       .map((item) => item?.dir)
       .filter((dir) => typeof dir === 'string');
     const extensionDirs = [extensionDir, ...managedExtensionDirs].filter(Boolean);
