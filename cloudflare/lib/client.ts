@@ -1,6 +1,6 @@
 import { ClientIdentity } from './auth';
 import { browserExtensionsAccess } from './client-browser-access';
-import { CLIENT_SESSION_SECONDS, Env, HttpError, audit, bodyJson, decryptProxy, json, db } from './core';
+import { Env, HttpError, audit, bodyJson, decryptProxy, json, db } from './core';
 import { managedProfileCredentials, managedSessionMaterial, validateCapturedMaterial } from './profile-sessions';
 import { closeOpenProfileUsageForSession, openProfileUsage } from './profile-usage';
 import { managedExtensionsForProfiles } from './extensions';
@@ -210,6 +210,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
+    sessionExpiresAt: id.sessionExpiresAt,
     offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });
@@ -543,12 +544,8 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     });
   }
 
-  const sessionExpiresAt = new Date(Date.now() + CLIENT_SESSION_SECONDS * 1000).toISOString();
-  await db(env, `userflex_client_sessions?id=eq.${id.sessionId}`, {
-    method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({ expires_at: sessionExpiresAt, last_seen_at: new Date().toISOString() }),
-  });
+  // Heartbeat is informative. It must never extend a login token beyond its
+  // original 24-hour expiration. requireClient already updated last_seen_at.
   return json({
     ok: true,
     active: true,
@@ -557,7 +554,7 @@ export async function clientHeartbeat(request: Request, env: Env, id: ClientIden
     configRevision: id.client.updated_at,
     plan: { id: id.plan.id, name: id.plan.name },
     expiresAt: id.subscription.expires_at,
-    sessionExpiresAt,
+    sessionExpiresAt: id.sessionExpiresAt,
     serverTime: new Date().toISOString(),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });

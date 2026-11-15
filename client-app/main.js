@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
+import { saveEncryptedAuthSession, readEncryptedAuthSession } from './auth-session-cache.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -141,52 +142,68 @@ async function getDeviceKey() {
   return deviceKey;
 }
 
+async function logAuthCacheState(code) {
+  // Diagnostic marker only. Never write tokens, names, email, passwords or
+  // complete file paths. Existing startup.log helps identify the real cause.
+  try {
+    await fs.appendFile(
+      path.join(app.getPath('userData'), 'startup.log'),
+      `[${new Date().toISOString()}] AUTH_CACHE ${String(code || 'UNKNOWN').replace(/[^A-Z0-9_]/gi, '').slice(0, 48)}\n`,
+    );
+  } catch {}
+}
+
 async function saveAuth(token, meta) {
+  const persist = () => saveEncryptedAuthSession(authPath(), token, meta, safeStorage);
+  try {
+    await persist();
+  } catch (error) {
+    if (!isLocalPermissionError(error)) {
+      await logAuthCacheState(error?.code || 'SAVE_FAILED');
+      throw error;
+    }
+    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(authPath());
+    await persist();
+  }
   accessToken = token;
   authMeta = meta || null;
-  if (!safeStorage.isEncryptionAvailable()) return;
-  const encrypted = safeStorage.encryptString(token).toString('base64');
-  const file = authPath();
-  const payload = JSON.stringify({ token: encrypted, meta });
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  try {
-    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
-  } catch (error) {
-    if (!isLocalPermissionError(error)) throw error;
-    await repairLocalPathAccess(app.getPath('userData'));
-    await repairLocalPathAccess(file);
-    await fs.writeFile(file, payload, { encoding: 'utf8', mode: 0o600 });
-  }
+  await logAuthCacheState('SAVED_VERIFIED');
 }
 
 async function loadAuth() {
-  if (!safeStorage.isEncryptionAvailable()) return null;
-
-  const read = async () => {
-    const raw = JSON.parse(await fs.readFile(authPath(), 'utf8'));
-    if (typeof raw?.token !== 'string') return null;
-    const token = safeStorage.decryptString(Buffer.from(raw.token, 'base64'));
-    if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return null;
-    const expiresAt = Date.parse(String(raw?.meta?.expiresAt || ''));
-    // Fail closed on missing, invalid or elapsed expiry; the server also
-    // validates the token on every authenticated request.
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      await clearAuth();
+  const recover = () => readEncryptedAuthSession(authPath(), safeStorage);
+  let restored;
+  try {
+    restored = await recover();
+  } catch (error) {
+    if (!isLocalPermissionError(error)) {
+      await logAuthCacheState('LOAD_FAILED');
       return null;
     }
-    accessToken = token;
-    authMeta = raw.meta || null;
-    return { token, meta: authMeta };
-  };
-
-  try {
-    return await read();
-  } catch (error) {
-    if (!isLocalPermissionError(error)) return null;
     await repairLocalPathAccess(app.getPath('userData'));
     await repairLocalPathAccess(authPath());
-    try { return await read(); } catch { return null; }
+    try { restored = await recover(); } catch {
+      await logAuthCacheState('ACCESS_DENIED');
+      return null;
+    }
   }
+  if (!restored?.ok) {
+    const reason = restored?.reason || 'UNKNOWN';
+    await logAuthCacheState(reason);
+    if (reason === 'EXPIRED') await clearAuth();
+    if (reason === 'ENCRYPTION_UNAVAILABLE') {
+      pendingAuthInvalidation = {
+        code: 'AUTH_SECURE_STORAGE_UNAVAILABLE',
+        message: 'Windows no permitió recuperar la sesión cifrada. Comprueba la protección de datos de este usuario.',
+      };
+    }
+    return null;
+  }
+  accessToken = restored.token;
+  authMeta = restored.meta;
+  await logAuthCacheState(restored.legacyExpiry ? 'RESTORED_NEEDS_SERVER_EXPIRY' : 'RESTORED');
+  return { token: restored.token, meta: restored.meta };
 }
 
 // Earlier versions stored a second encrypted copy of username/password and
@@ -2138,6 +2155,12 @@ ipcMain.handle('userflex:bootstrap', async (event) => {
     enterWorkspace(event.sender);
     return { authenticated: true, auth: authMeta, catalog: data };
   } catch (error) {
+    // A network or catalog failure is NOT a logout. Keep the valid encrypted
+    // token so the user can retry, rather than asking for the password again.
+    if (accessToken && !authError(error)) {
+      await logAuthCacheState('SERVER_VALIDATION_PENDING');
+      return { authenticated: false, pending: true, error: serializeError(error) };
+    }
     return { authenticated: false, error: serializeError(error) };
   }
 });

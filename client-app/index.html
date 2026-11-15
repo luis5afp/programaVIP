@@ -13,7 +13,11 @@
     <section id="loading-view" class="screen center-screen">
       <div class="brand-mark"><img src="./assets/userflow.png" alt="" /></div>
       <h1>userFLOW</h1>
-      <p>Conectando con el servidor…</p>
+      <p id="loading-message">Recuperando tu sesión segura…</p>
+      <div id="session-retry-controls" class="session-retry-controls hidden">
+        <button id="retry-session-button" class="primary-button" type="button">Reintentar conexión</button>
+        <button id="loading-signout-button" class="session-switch-button" type="button">Cerrar sesión</button>
+      </div>
     </section>
 
     <section id="login-view" class="screen hidden">
