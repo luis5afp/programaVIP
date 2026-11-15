@@ -61,6 +61,8 @@ jobs:
         run: node --experimental-strip-types scripts/cookie-import.test.ts
       - name: Test actionable Admin error explanations
         run: node --experimental-strip-types scripts/actionable-admin-errors.test.ts
+      - name: Test restricted extension toolbar actions
+        run: node scripts/restricted-extension-actions.test.mjs
       - name: Test Browser Guard restricted window policy
         run: node scripts/restricted-browser-guard-windows.test.mjs
       - name: Test restricted Edge popup routing
