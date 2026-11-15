@@ -123,6 +123,18 @@ try {
   assert.ok(afterPopup[0].urls.some(u => u?.includes('/secondary')));
   assert.ok(afterPopup[0].urls.some(u => u?.includes('/popup')));
   console.log('USERFLOW_RESTRICTED_TABBED_WINDOWS='+JSON.stringify(afterPopup));
+  for (const preferenceFile of ['Preferences', 'Secure Preferences']) {
+    try {
+      const prefs = JSON.parse(await readFile(path.join(userData,'Default',preferenceFile),'utf8'));
+      const settings = prefs?.extensions?.settings || {};
+      console.log('USERFLOW_EXTENSION_PREFERENCES_'+preferenceFile.replace(' ','_')+'='+JSON.stringify(
+        Object.values(settings).map(x => ({name:String(x?.manifest?.name || ''),state:x?.state}))
+          .filter(x=>['userFLEX Browser Guard','ex1'].includes(x.name))
+      ));
+    } catch (error) {
+      console.log('USERFLOW_EXTENSION_PREFERENCES_'+preferenceFile.replace(' ','_')+'=unavailable');
+    }
+  }
 } finally {
   await session?.detach().catch(() => {});
   await browser?.disconnect().catch(() => {});
