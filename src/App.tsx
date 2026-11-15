@@ -18,6 +18,7 @@ import { SystemView } from './views/SystemView';
 
 export default function App() {
   const [session, setSession] = useState<AdminSession | null | undefined>(undefined);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [view, setView] = useState<ViewKey>('dashboard');
   const [historySearch, setHistorySearch] = useState('');
   const [activityTab, setActivityTab] = useState<'history' | 'audit'>('history');
@@ -30,10 +31,15 @@ export default function App() {
     };
     window.addEventListener('userflex:admin-session-expired', expireSession);
     api.session()
-      .then((result) => setSession(result.user))
+      .then((result) => {
+        setSessionError(null);
+        setSession(result.user);
+      })
       .catch((error: ApiError) => {
-        if (error.status === 401) setSession(null);
-        else setSession(null);
+        if (error.status !== 401) {
+          setSessionError(error?.message || 'No se pudo verificar la sesión. Recarga el panel o consulta con soporte.');
+        }
+        setSession(null);
       });
     return () => window.removeEventListener('userflex:admin-session-expired', expireSession);
   }, []);
@@ -84,6 +90,15 @@ export default function App() {
 
   if (session === undefined) {
     return <main className="login-screen"><div className="login-card" style={{ textAlign: 'center' }}>Verificando sesión segura…</div></main>;
+  }
+  if (sessionError) {
+    return <main className="login-screen">
+      <div className="login-card" style={{ maxWidth: 600 }}>
+        <h2>No se pudo verificar la sesión de administrador</h2>
+        <p style={{ whiteSpace: 'pre-line' }}>{sessionError}</p>
+        <button className="button primary" onClick={() => window.location.reload()}>Volver a intentar</button>
+      </div>
+    </main>;
   }
   if (!session) return <Login onSuccess={setSession} />;
 
