@@ -172,7 +172,8 @@ async function startAfterReady() {
     await log(`READY userFLOW v${app.getVersion()} from ${app.getPath('exe')}`);
     await log(`stable userData: ${currentUserData}`);
     await copyIdentityFile('device.json');
-    await copyIdentityFile('auth.json');
+    // main.js owns the one-time migration of the encrypted token into its
+    // canonical Windows account cache. Never duplicate the auth file here.
 
     // bootstrap.js still contains one legacy userData compatibility call. The
     // stable path is already locked before app.whenReady(), so ignore that late
