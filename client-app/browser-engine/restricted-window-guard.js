@@ -28,7 +28,6 @@ export function restrictedAppWindowArgs({ userDataDir, url, proxyRules = null })
     `--user-data-dir=${userDataDir}`,
     '--no-first-run',
     '--no-default-browser-check',
-    '--disable-popup-blocking=false',
     `--app=${destination}`,
   ];
   if (proxyRules) {
@@ -57,10 +56,11 @@ export async function startRestrictedWindowGuard({
   const checked = new WeakSet();
   const processing = new WeakSet();
   const pageSessions = new Set();
+  const targetSessions = new WeakMap();
+  const activeAppTargets = new Set();
   const hintedPopups = [];
   const expectedAppPages = [];
   const tasks = new Set();
-  let windowsOpened = 0;
   let routedCount = 0;
 
   const logWarning = (message) => logger.warn?.('userFLOW restricted windows:', message);
@@ -104,6 +104,7 @@ export async function startRestrictedWindowGuard({
         return;
       }
       pageSessions.add(session);
+      targetSessions.set(target, session);
       session.on('Page.windowOpen', (event) => {
         const destination = restrictedPopupUrl(event?.url);
         if (!destination || stopped) return;
@@ -157,6 +158,7 @@ export async function startRestrictedWindowGuard({
       // Do not close/relaunch it or a loop would occur.
       if (destination && claimExpected(destination) && !opener) {
         acceptedTargets.add(target);
+        activeAppTargets.add(target);
         await attachWindowOpenEvents(target);
         return;
       }
@@ -173,8 +175,21 @@ export async function startRestrictedWindowGuard({
           const arrived = restrictedPopupUrl(target.url?.());
           if (arrived && claimExpected(arrived)) {
             acceptedTargets.add(target);
+            activeAppTargets.add(target);
             await attachWindowOpenEvents(target);
             return;
+          }
+          if (!arrived) {
+            // Edge can register the new --app page before it receives its
+            // destination. Claim the matching pending launch rather than
+            // closing a controlled window and launching it repeatedly.
+            const pending = expectedAppPages.shift();
+            if (pending) {
+              acceptedTargets.add(target);
+              activeAppTargets.add(target);
+              await attachWindowOpenEvents(target);
+              return;
+            }
           }
         }
       }
@@ -188,14 +203,14 @@ export async function startRestrictedWindowGuard({
         return;
       }
       if (stopped) return;
-      if (windowsOpened >= MAX_APP_WINDOWS) {
+      recent(expectedAppPages);
+      if (activeAppTargets.size + expectedAppPages.length >= MAX_APP_WINDOWS) {
         logWarning('Se alcanzó el límite de ventanas adicionales de este perfil.');
         return;
       }
       markExpected(url);
       try {
         await launchAppWindow(url);
-        windowsOpened += 1;
         routedCount += 1;
       } catch {
         logWarning('No se pudo abrir una ventana adicional en modo restringido.');
@@ -214,7 +229,16 @@ export async function startRestrictedWindowGuard({
   };
 
   for (const target of initialTargets) await attachWindowOpenEvents(target);
+  const onTargetDestroyed = (target) => {
+    activeAppTargets.delete(target);
+    const session = targetSessions.get(target);
+    if (session) {
+      pageSessions.delete(session);
+      void session.detach().catch(() => null);
+    }
+  };
   browser.on('targetcreated', onTargetCreated);
+  browser.on('targetdestroyed', onTargetDestroyed);
 
   return {
     get routedCount() { return routedCount; },
@@ -222,6 +246,7 @@ export async function startRestrictedWindowGuard({
       if (stopped) return;
       stopped = true;
       browser.off('targetcreated', onTargetCreated);
+      browser.off('targetdestroyed', onTargetDestroyed);
       await Promise.allSettled(Array.from(tasks));
       await Promise.allSettled(Array.from(pageSessions, (session) => session.detach()));
       await browser.disconnect().catch(() => null);
