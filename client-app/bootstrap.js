@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, net } from 'electron';
-import { PUBLIC_RELEASES_API, MANUAL_DOWNLOAD_PAGE, selectVerifiedGithubRelease, updaterErrorReason } from './updater-release-fallback.js';
+import { PUBLIC_RELEASES_API, selectVerifiedGithubRelease, updaterErrorReason } from './updater-release-fallback.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
