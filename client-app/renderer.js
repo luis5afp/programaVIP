@@ -1,4 +1,8 @@
 const loadingView = document.getElementById('loading-view');
+const loadingMessage = document.getElementById('loading-message');
+const retryControls = document.getElementById('session-retry-controls');
+const retrySessionButton = document.getElementById('retry-session-button');
+const loadingSignoutButton = document.getElementById('loading-signout-button');
 const loginView = document.getElementById('login-view');
 const clientView = document.getElementById('client-view');
 const loginForm = document.getElementById('login-form');
@@ -576,18 +580,56 @@ window.userflex.onAuthInvalidated((payload) => {
   show(loginView);
 });
 
-(async () => {
-  const result = await window.userflex.bootstrap();
-  if (result?.authenticated) {
-    auth = result.auth;
-    catalog = result.catalog;
-    renderClient();
-    return;
+let restoringSession = false;
+async function restoreSavedSession() {
+  if (restoringSession) return;
+  restoringSession = true;
+  retrySessionButton.disabled = true;
+  retryControls.classList.add('hidden');
+  loadingMessage.textContent = 'Verificando tu sesión guardada…';
+  show(loadingView);
+  try {
+    const result = await window.userflex.bootstrap();
+    if (result?.authenticated) {
+      auth = result.auth;
+      catalog = result.catalog;
+      renderClient();
+      return;
+    }
+    if (result?.pending === true) {
+      // A temporary network problem must not discard the encrypted token or
+      // require credentials while the server has not rejected the session.
+      loadingMessage.textContent = 'No se pudo verificar la conexión. Tu acceso guardado sigue disponible.';
+      retryControls.classList.remove('hidden');
+      return;
+    }
+    if (result?.error?.message && !loginError.textContent) setError(loginError, result.error.message);
+    setPasswordVisible(false);
+    show(loginView);
+  } catch {
+    loadingMessage.textContent = 'No se pudo confirmar la sesión. Reintenta sin ingresar tus credenciales.';
+    retryControls.classList.remove('hidden');
+  } finally {
+    restoringSession = false;
+    retrySessionButton.disabled = false;
   }
+}
+retrySessionButton.addEventListener('click', () => void restoreSavedSession());
+loadingSignoutButton.addEventListener('click', async () => {
+  loadingSignoutButton.disabled = true;
+  try {
+    await window.userflex.logout();
+    identifierInput.value = '';
+    passwordInput.value = '';
+    setPasswordVisible(false);
+    show(loginView);
+  } catch {
+    loadingMessage.textContent = 'No se pudo cerrar la sesión. Intenta nuevamente.';
+  } finally {
+    loadingSignoutButton.disabled = false;
+  }
+});
 
-  // A token stored with Electron safeStorage is the only automatic-login
-  // mechanism. If it expired or the server rejected it, require credentials.
-  if (result?.error?.message && !loginError.textContent) setError(loginError, result.error.message);
-  setPasswordVisible(false);
-  show(loginView);
+(async () => {
+  await restoreSavedSession();
 })();
