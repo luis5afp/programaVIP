@@ -49,6 +49,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
       expiresAt: id.subscription.expires_at,
       sessionCreatedAt: id.sessionCreatedAt,
       sessionExpiresAt: id.sessionExpiresAt,
+      serverTime: new Date().toISOString(),
       offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
       minimumClientVersion: MIN_USERFLOW_VERSION,
     });
@@ -214,6 +215,7 @@ export async function clientCatalog(request: Request, env: Env, id: ClientIdenti
     expiresAt: id.subscription.expires_at,
     sessionCreatedAt: id.sessionCreatedAt,
     sessionExpiresAt: id.sessionExpiresAt,
+    serverTime: new Date().toISOString(),
     offlineGraceMinutes: Number(id.subscription.offline_grace_minutes || 0),
     minimumClientVersion: MIN_USERFLOW_VERSION,
   });
