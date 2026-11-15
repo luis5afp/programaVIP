@@ -501,6 +501,18 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return target;
   }
 
+  async function prepareBackupGuard(clientId, profileId) {
+    const source = path.join(process.resourcesPath, 'browser-engine', 'backup-guard');
+    if (!fs.existsSync(path.join(source, 'manifest.json'))) {
+      throw new Error('No se encontró la extensión de respaldo del perfil restringido.');
+    }
+    const target = path.join(clientExtensionsDir(clientId), `${safeSegment(profileId)}_backup_guard`);
+    await fsp.rm(target, { recursive: true, force: true });
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.cp(source, target, { recursive: true });
+    return target;
+  }
+
   async function cleanup(entry, reason = 'closed') {
     if (!entry || entry.cleaned) return;
     entry.cleaned = true;
@@ -514,6 +526,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (entry.ephemeral === true) {
       await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
       await fsp.rm(profileExtensionDir(entry.clientId, entry.profile.id), { recursive: true, force: true }).catch(() => null);
+      await fsp.rm(path.join(clientExtensionsDir(entry.clientId), `${safeSegment(entry.profile.id)}_backup_guard`), { recursive: true, force: true }).catch(() => null);
     }
   }
 
@@ -814,7 +827,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const managedExtensionDirs = scopedManaged
       .map((item) => item?.dir)
       .filter((dir) => typeof dir === 'string');
-    const extensionDirs = [extensionDir, ...managedExtensionDirs].filter(Boolean);
+    if (extensionsUiAccess === 'restricted' && !extensionDir) {
+      throw new Error('No se puede abrir el perfil sin Browser Guard.');
+    }
+    const backupExtensionDir = extensionsUiAccess === 'restricted' && !ephemeral
+      ? await prepareBackupGuard(clientId, profile.id)
+      : null;
+    const extensionDirs = [extensionDir, backupExtensionDir, ...managedExtensionDirs].filter(Boolean);
     // Do not replay a captured User-Agent from another browser/device. That can
     // disagree with Client Hints and the actual TLS/browser engine identity,
     // which causes some sites to classify the session as suspicious.
