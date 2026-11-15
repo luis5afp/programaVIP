@@ -33,7 +33,7 @@ export function Modal({ title, children, onClose, actions, error = null, success
           <button className="icon-button" type="button" onClick={onClose} aria-label="Cerrar"><X size={17} /></button>
         </div>
         <div className="modal-body">
-          {error ? <div className="error-banner modal-feedback" role="alert">{error}</div> : null}
+          {error ? <div className="error-banner modal-feedback" role="alert" style={{ whiteSpace: 'pre-line' }}>{error}</div> : null}
           {success ? <div className="success-banner modal-feedback" role="status">{success}</div> : null}
           {children}
         </div>
@@ -43,6 +43,6 @@ export function Modal({ title, children, onClose, actions, error = null, success
   );
 }
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'ok' | 'warn' | 'bad' | 'neutral' }) { return <span className={`badge ${tone}`}>{children}</span>; }
-export function ErrorBanner({ message }: { message: string | null }) { return message ? <div className="error-banner" role="alert">{message}</div> : null; }
+export function ErrorBanner({ message }: { message: string | null }) { return message ? <div className="error-banner" role="alert" style={{ whiteSpace: 'pre-line' }}>{message}</div> : null; }
 export function SuccessBanner({ message }: { message: string | null }) { return message ? <div className="success-banner" role="status">{message}</div> : null; }
 export function Empty({ title, description }: { title: string; description: string }) { return <div className="empty"><strong>{title}</strong>{description}</div>; }
