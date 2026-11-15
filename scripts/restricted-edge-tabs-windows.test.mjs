@@ -1,0 +1,132 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { mkdtemp, cp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { spawn, execFile } from 'node:child_process';
+import path from 'node:path';
+import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
+
+async function until(check, timeoutMs = 20000) {
+  const end = Date.now() + timeoutMs;
+  let last = '';
+  while (Date.now() < end) {
+    try {
+      const result = await check();
+      if (result) return result;
+    } catch (error) { last = String(error); }
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  throw new Error('Timed out waiting for Edge tabs: ' + last);
+}
+async function findEdge() {
+  for (const directory of [process.env['PROGRAMFILES(X86)'], process.env.PROGRAMFILES, process.env.LOCALAPPDATA]) {
+    if (!directory) continue;
+    const file = path.join(directory, 'Microsoft', 'Edge', 'Application', 'msedge.exe');
+    try { await readFile(file); return file; } catch {}
+  }
+  throw new Error('Microsoft Edge is not installed');
+}
+function killTree(pid) {
+  return new Promise((resolve) => {
+    if (!pid) return resolve();
+    execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+  });
+}
+
+assert.equal(process.platform, 'win32');
+const root = await mkdtemp(path.join(tmpdir(), 'userflow-tabs-one-window-'));
+const userData = path.join(root, 'edge-profile');
+const guardPath = path.join(root, 'browser-guard');
+const mockPath = path.join(root, 'mock-ex1');
+const server = createServer((req, res) => {
+  const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (pathname === '/index') {
+    res.setHeader('Set-Cookie', 'managedSession=preserved; Path=/; SameSite=Lax');
+    return res.end('<title>ToolsPoint mock</title><a href="/secondary" target="_blank">Open Claude</a>');
+  }
+  return res.end('<title>' + pathname + '</title><h1>' + pathname + '</h1>');
+});
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+let proc, browser, session;
+try {
+  await cp(new URL('../client-app/browser-engine/extension', import.meta.url), guardPath, { recursive: true });
+  await mkdir(mockPath, { recursive: true });
+  await writeFile(path.join(mockPath, 'manifest.json'), JSON.stringify({
+    manifest_version: 3, name: 'ex1', version: '1.0',
+    content_scripts: [{matches:['http://*/*'],js:['content.js'],run_at:'document_start'}]
+  }));
+  await writeFile(path.join(mockPath, 'content.js'),
+    "document.documentElement.dataset.ex1Loaded = 'yes';");
+  const base = 'http://127.0.0.1:' + server.address().port;
+  await writeFile(path.join(guardPath, 'strategy.js'), [
+    "globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = 'restricted';",
+    "globalThis.USERFLEX_RESTRICTED_TABBED_BROWSER = true;",
+    "globalThis.USERFLEX_RUNTIME_STRATEGY = 'guard-only';",
+    "globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = ['ex1'];",
+    "globalThis.USERFLEX_CONTENT_RULES = [];",
+    "globalThis.USERFLEX_PROFILE_HOME_URL = " + JSON.stringify(base + '/index') + ';'
+  ].join('\n'));
+  const executable = await findEdge();
+  const port = 9549;
+  proc = spawn(executable, [
+    '--user-data-dir=' + userData,
+    '--remote-debugging-port=' + port,
+    '--remote-debugging-address=127.0.0.1',
+    '--remote-allow-origins=*',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--new-window',
+    '--disable-extensions-except=' + guardPath + ',' + mockPath,
+    '--load-extension=' + guardPath + ',' + mockPath,
+    base + '/index'
+  ], { stdio:'ignore', windowsHide:false });
+  await until(async () => (await fetch('http://127.0.0.1:' + port + '/json/version')).ok, 30000);
+  browser = await connectKaizenBrowser(port);
+  const home = await until(async () => {
+    const pages = await browser.pages();
+    return pages.find((p) => p.url().includes('/index'));
+  });
+  const worker = await until(() => browser.targets().find((t) =>
+    t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
+  session = await worker.createCDPSession();
+  await session.send('Runtime.enable');
+  const inspect = async () => {
+    const response = await session.send('Runtime.evaluate', {
+      expression: 'chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
+      awaitPromise:true, returnByValue:true
+    });
+    return response?.result?.value;
+  };
+  await home.evaluate(() => document.querySelector('a').click());
+  const secondary = await until(async () => (await browser.pages()).find(p => p.url().includes('/secondary')));
+  await until(async () => (await secondary.evaluate(
+    () => document.documentElement.dataset.ex1Loaded)) === 'yes', 10000);
+  assert.equal(await secondary.evaluate(() => document.cookie.includes('managedSession=preserved')), true,
+    'child tab must keep the same cookie/session as the original profile');
+  const beforePopup = await until(async () => {
+    const windows = await inspect();
+    return Array.isArray(windows) && windows.length === 1
+      && windows[0].type === 'normal'
+      && windows[0].urls.some((u) => u?.includes('/secondary')) ? windows : false;
+  });
+  assert.equal(beforePopup.length,1);
+  // Explicit window dimensions force a real popup native window on Edge.
+  await home.evaluate(() => window.open('/popup', 'toolspoint-popup', 'width=400,height=420'));
+  const afterPopup = await until(async () => {
+    const windows = await inspect();
+    return Array.isArray(windows) && windows.length === 1
+      && windows[0].urls.some(u => u?.includes('/popup')) ? windows : false;
+  }, 12000);
+  assert.equal(afterPopup[0].type, 'normal', 'only normal tabbed Edge window remains');
+  assert.ok(afterPopup[0].urls.some(u => u?.includes('/index')));
+  assert.ok(afterPopup[0].urls.some(u => u?.includes('/secondary')));
+  assert.ok(afterPopup[0].urls.some(u => u?.includes('/popup')));
+  console.log('USERFLOW_RESTRICTED_TABBED_WINDOWS='+JSON.stringify(afterPopup));
+} finally {
+  await session?.detach().catch(() => {});
+  await browser?.disconnect().catch(() => {});
+  await killTree(proc?.pid);
+  await new Promise(resolve => server.close(resolve));
+  await rm(root, {recursive:true, force:true, maxRetries:6, retryDelay:300}).catch(() => {});
+}
