@@ -231,7 +231,7 @@ const EXPECTED_MANAGED_NAMES = new Set(
     .map((value) => String(value || '').trim())
     .filter(Boolean),
 );
-const PROTECTED_NAMES = new Set(['userFLEX Browser Guard', ...EXPECTED_MANAGED_NAMES]);
+const PROTECTED_NAMES = new Set(['userFLEX Browser Guard', 'userFLEX Backup Guard', ...EXPECTED_MANAGED_NAMES]);
 const protectedIds = new Set();
 let closingForTamper = false;
 
