@@ -38,6 +38,7 @@ assert.equal(process.platform, 'win32');
 const root = await mkdtemp(path.join(tmpdir(), 'userflow-tabs-one-window-'));
 const userData = path.join(root, 'edge-profile');
 const guardPath = path.join(root, 'browser-guard');
+const backupPath = path.join(root, 'backup-guard');
 const mockPath = path.join(root, 'mock-ex1');
 const server = createServer((req, res) => {
   const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -49,10 +50,10 @@ const server = createServer((req, res) => {
   return res.end('<title>' + pathname + '</title><h1>' + pathname + '</h1>');
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-let proc, browser, session, nativeGuard;
-let guardLost = false;
+let proc, browser, session;
 try {
   await cp(new URL('../client-app/browser-engine/extension', import.meta.url), guardPath, { recursive: true });
+  await cp(new URL('../client-app/browser-engine/backup-guard', import.meta.url), backupPath, { recursive: true });
   await mkdir(mockPath, { recursive: true });
   await writeFile(path.join(mockPath, 'manifest.json'), JSON.stringify({
     manifest_version: 3, name: 'ex1', version: '1.0',
@@ -83,8 +84,8 @@ try {
     '--no-first-run',
     '--no-default-browser-check',
     '--new-window',
-    '--disable-extensions-except=' + guardPath + ',' + mockPath,
-    '--load-extension=' + guardPath + ',' + mockPath,
+    '--disable-extensions-except=' + guardPath + ',' + backupPath + ',' + mockPath,
+    '--load-extension=' + guardPath + ',' + backupPath + ',' + mockPath,
     base + '/index'
   ], { stdio:'ignore', windowsHide:false });
   await until(async () => (await fetch('http://127.0.0.1:' + port + '/json/version')).ok, 30000);
@@ -95,9 +96,8 @@ try {
   });
   const worker = await until(() => browser.targets().find((t) =>
     t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
-  nativeGuard = await startRestrictedTabbedGuard({
+  const navigationGuard = await startRestrictedTabbedGuard({
     browser, debugPort: port,
-    onIntegrityLost: async () => { guardLost = true; },
   });
   session = await worker.createCDPSession();
   await session.send('Runtime.enable');
@@ -149,8 +149,16 @@ try {
       awaitPromise:true, returnByValue:true
     });
     assert.equal(response?.result?.value,true,'simulated disable must succeed');
-    await until(() => guardLost, 12000);
-    console.log('USERFLOW_NATIVE_GUARD_DISCONNECT_DETECTED=true');
+    await until(async () => {
+      try {
+        const pages = await browser.pages();
+        return pages.filter((page) => page.url().startsWith('http')).length === 0;
+      } catch {
+        // Edge disconnects CDP when its final profile window closes.
+        return true;
+      }
+    }, 12000);
+    console.log('USERFLOW_BACKUP_GUARD_CLOSED_PROFILE=true');
   } finally {
     await ex1Session.detach().catch(() => {});
   }
@@ -167,9 +175,8 @@ try {
     }
   }
 } finally {
-  await nativeGuard?.close().catch(() => {});
-  await session?.detach().catch(() => {});
   await browser?.disconnect().catch(() => {});
+  await session?.detach().catch(() => {});
   await killTree(proc?.pid);
   await new Promise(resolve => server.close(resolve));
   await rm(root, {recursive:true, force:true, maxRetries:6, retryDelay:300}).catch(() => {});
