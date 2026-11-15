@@ -157,13 +157,13 @@ async function foldNormalWindow(windowId) {
     await new Promise((resolve) => setTimeout(resolve, 160));
     const windows = await chrome.windows.getAll({ populate: true });
     const normal = (Array.isArray(windows) ? windows : [])
-      .filter((win) => win?.type === 'normal' && Number.isInteger(win.id))
+      .filter((win) => ['normal', 'popup'].includes(win?.type) && Number.isInteger(win.id))
       .sort((a, b) => a.id - b.id);
-    if (!normal.length) return;
+    if (!normal.some((win) => win.type === 'normal')) return;
     if (!normal.some((win) => win.id === primaryWindowId)) {
       const withHome = normal.find((win) => (win.tabs || []).some((tab) =>
         allowedWindowUrl(tab.pendingUrl || tab.url) === RESTRICTED_HOME));
-      primaryWindowId = (withHome || normal[0]).id;
+      primaryWindowId = (withHome?.type === 'normal' ? withHome : normal.find((win) => win.type === 'normal')).id;
     }
     if (windowId === primaryWindowId) return;
     const extra = normal.find((win) => win.id === windowId);
@@ -196,13 +196,13 @@ async function discoverTabbedWindows() {
   try {
     const all = await chrome.windows.getAll({ populate: true });
     const normal = (Array.isArray(all) ? all : [])
-      .filter((win) => win?.type === 'normal' && Number.isInteger(win.id))
+      .filter((win) => ['normal', 'popup'].includes(win?.type) && Number.isInteger(win.id))
       .sort((a, b) => a.id - b.id);
-    if (!normal.length) return;
+    if (!normal.some((win) => win.type === 'normal')) return;
     const withHome = normal.find((win) => (win.tabs || []).some((tab) =>
       allowedWindowUrl(tab.pendingUrl || tab.url) === RESTRICTED_HOME));
     if (!normal.some((win) => win.id === primaryWindowId)) {
-      primaryWindowId = (withHome || normal[0]).id;
+      primaryWindowId = (withHome?.type === 'normal' ? withHome : normal.find((win) => win.type === 'normal')).id;
     }
     for (const win of normal) {
       if (win.id !== primaryWindowId) void foldNormalWindow(win.id);
@@ -213,7 +213,7 @@ async function discoverTabbedWindows() {
 
 if (TABBED_RESTRICTED && RESTRICTED_HOME) {
   chrome.windows.onCreated.addListener((win) => {
-    if (win?.type !== 'normal') return;
+    if (!['normal', 'popup'].includes(win?.type)) return;
     void discoverTabbedWindows();
   });
   chrome.windows.onFocusChanged.addListener((id) => {
