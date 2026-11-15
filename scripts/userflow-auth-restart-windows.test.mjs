@@ -11,25 +11,32 @@ const electron = process.env.USERFLOW_TEST_ELECTRON_BIN || path.join(root, 'smok
 await access(electron);
 const fixtureDir = await mkdtemp(path.join(tmpdir(), 'userflow-secure-login-'));
 const appDir = path.join(fixtureDir, 'app');
-const userData = path.join(fixtureDir, 'userData');
+const userData = path.join(fixtureDir, 'userData-login');
+const otherUserData = path.join(fixtureDir, 'userData-reopen');
+const appData = path.join(fixtureDir, 'appData');
 await mkdir(appDir, { recursive:true });
 await mkdir(userData, { recursive:true });
-const cacheFile = path.join(userData,'auth.json');
+await mkdir(otherUserData, { recursive:true });
+await mkdir(appData, { recursive:true });
 const modulePath = path.join(root, 'client-app', 'auth-session-cache.js');
+const locationModule = path.join(root, 'client-app', 'auth-session-locations.js');
 const testMain = [
   "const { app, safeStorage } = require('electron');",
   "const { pathToFileURL } = require('node:url');",
   "app.setPath('userData', process.env.USERFLOW_AUTH_TEST_USER_DATA);",
   "app.whenReady().then(async () => {",
   "  const { saveEncryptedAuthSession, readEncryptedAuthSession } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_MODULE).href);",
+  "  const { canonicalAuthFile } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_LOCATIONS).href);",
+  "  const cacheFile = canonicalAuthFile(process.env.USERFLOW_AUTH_TEST_APP_DATA);",
   "  const token = 'AUTH_TEST_ONLY_A'.repeat(4);",
   "  if (process.env.USERFLOW_AUTH_TEST_PHASE === 'save') {",
-  "    const meta = { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() };",
-  "    await saveEncryptedAuthSession(process.env.USERFLOW_AUTH_TEST_FILE, token, meta, safeStorage);",
+  "    const createdAt = new Date().toISOString();",
+  "    const meta = { createdAt, expiresAt: new Date(Date.parse(createdAt) + 24 * 60 * 60 * 1000).toISOString() };",
+  "    await saveEncryptedAuthSession(cacheFile, token, meta, safeStorage);",
   "    process.stdout.write('USERFLOW_AUTH_SMOKE_SAVED\\n');",
   "  } else {",
-  "    const result = await readEncryptedAuthSession(process.env.USERFLOW_AUTH_TEST_FILE, safeStorage);",
-  "    if (result.ok !== true || result.token !== token || result.legacyExpiry) {",
+  "    const result = await readEncryptedAuthSession(cacheFile, safeStorage);",
+  "    if (result.ok !== true || result.token !== token || result.legacyCreatedAt || result.legacyExpiry) {",
   "      throw new Error('Cannot reopen secure session: ' + String(result.reason || 'invalid token'));",
   "    }",
   "    process.stdout.write('USERFLOW_AUTH_SMOKE_REOPENED\\n');",
@@ -52,9 +59,10 @@ async function run(phase, marker) {
       stdio:['ignore','pipe','pipe'],
       env: {
         ...process.env,
-        USERFLOW_AUTH_TEST_USER_DATA:userData,
+        USERFLOW_AUTH_TEST_USER_DATA: phase === 'save' ? userData : otherUserData,
+        USERFLOW_AUTH_TEST_APP_DATA:appData,
+        USERFLOW_AUTH_TEST_LOCATIONS:locationModule,
         USERFLOW_AUTH_TEST_MODULE:modulePath,
-        USERFLOW_AUTH_TEST_FILE:cacheFile,
         USERFLOW_AUTH_TEST_PHASE:phase,
       },
     });
@@ -70,7 +78,8 @@ async function run(phase, marker) {
 }
 try {
   await run('save','USERFLOW_AUTH_SMOKE_SAVED');
-  // A fresh native Electron process reads the existing Windows-encrypted file.
+  // A new Electron process with DIFFERENT userData retrieves the same
+  // token because its canonical Windows account location does not change.
   await run('load','USERFLOW_AUTH_SMOKE_REOPENED');
   console.log('userFLOW Windows DPAPI/electron safeStorage: persisted across closing and reopening: OK');
 } finally {
