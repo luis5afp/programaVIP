@@ -68,7 +68,9 @@ export function ClientsView({ onHistory }: { onHistory: (client: Client) => void
       setSuccess('Cliente creado correctamente.');
       await load();
     } catch (createError: any) {
-      setError(createError.message);
+      const code = typeof createError?.code === 'string' ? createError.code : '';
+      const requestId = typeof createError?.requestId === 'string' ? createError.requestId : '';
+      setError([createError?.message || 'No se pudo crear el cliente.', code && `Código: ${code}`, requestId && `Solicitud: ${requestId}`].filter(Boolean).join(' · '));
     }
   }
 
