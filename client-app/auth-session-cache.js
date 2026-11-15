@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -16,7 +17,7 @@ export async function saveEncryptedAuthSession(file, token, meta, encryption) {
   }
   const ciphertext = encryption.encryptString(token).toString('base64');
   const payload = JSON.stringify({ version: 2, token: ciphertext, meta });
-  const temporary = `${file}.${process.pid}.tmp`;
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(temporary, payload, { encoding: 'utf8', mode: 0o600 });
