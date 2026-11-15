@@ -53,8 +53,10 @@ assert.match(main, /saveEncryptedAuthSession\(authPath\(\), token, meta, safeSto
   'the main process must save a verified encrypted auth cache');
 assert.match(main, /async function loadAuth\(\)/,
   'valid encrypted token resumes login after restarting the app');
-assert.match(authCache, /if \(Number\.isFinite\(expiresAt\) && expiresAt <= now\)/,
-  'restart must reject known-expired tokens before opening the catalog');
+assert.match(authCache, /locallyExpired = Number\.isFinite\(expiresAt\)/,
+  'local expiry is advisory until the server authorizes or revokes the token');
+assert.match(main, /const data = await catalog\(\)/,
+  'reopened sessions must validate the token online before entering profiles');
 assert.match(main, /function scheduleAuthSessionExpiry\(\)/,
   'live sessions must expire even when no heartbeat is due');
 assert.match(main, /await removeLegacyLoginCredentials\(\)/,

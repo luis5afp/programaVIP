@@ -3,7 +3,7 @@ import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { saveEncryptedAuthSession, readEncryptedAuthSession } from '../client-app/auth-session-cache.js';
+import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from '../client-app/auth-session-cache.js';
 
 const fakeStorage = {
   isEncryptionAvailable: () => true,
@@ -27,8 +27,11 @@ try {
   assert.deepEqual((await readEncryptedAuthSession(file, fakeStorage)).token, token,
     'the encrypted token must be readable after the process restarts');
   assert.equal((await readEncryptedAuthSession(file, fakeStorage)).legacyExpiry, false);
-  assert.equal((await readEncryptedAuthSession(file, fakeStorage, Date.now() + 26 * 3600_000)).reason,
-    'EXPIRED', 'expired tokens must not be reused');
+  const apparentlyExpired = await readEncryptedAuthSession(file, fakeStorage, Date.now() + 26 * 3600_000);
+  assert.equal(apparentlyExpired.ok, true,
+    'local clock expiry alone must not delete a token without server validation');
+  assert.equal(apparentlyExpired.locallyExpired, true,
+    'locally elapsed token is flagged for online verification before access');
   await assert.rejects(
     saveEncryptedAuthSession(file, token, { expiresAt }, { isEncryptionAvailable: () => false }),
     { code: 'AUTH_SECURE_STORAGE_UNAVAILABLE' },
@@ -56,6 +59,8 @@ try {
   assert.match(auth, /select=id,client_id,device_id,created_at,expires_at&token_hash=/,
     'server must return actual token expiry from the database');
   assert.match(worker, /sessionCreatedAt: id\.sessionCreatedAt/, 'catalog and heartbeat must return issue date');
+  assert.match(worker, /serverTime: new Date\(\)\.toISOString\(\)/,
+    'online session verification must synchronize the Windows clock offset');
   assert.match(worker, /sessionExpiresAt: id\.sessionExpiresAt/,
     'server catalog/heartbeat must return the existing expiry');
   assert.doesNotMatch(worker, /expires_at: sessionExpiresAt/,

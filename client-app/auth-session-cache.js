@@ -3,6 +3,27 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// Expiration is issued and enforced by the server, not by the Windows clock.
+// The offset is estimated from the server's response at login/validation.
+// It is only a convenience for UI timers; server verification is mandatory
+// before opening the catalog or any protected browser profile.
+export function estimatedServerNow(meta, localNow = Date.now()) {
+  const offset = Number(meta?.serverClockOffsetMs);
+  return localNow + (Number.isFinite(offset) ? offset : 0);
+}
+
+function validSessionDates(meta) {
+  const expiresAt = Date.parse(String(meta?.expiresAt || ''));
+  const createdAt = Date.parse(String(meta?.createdAt || ''));
+  if (!Number.isFinite(expiresAt)) return false;
+  if (Number.isFinite(createdAt)) {
+    const duration = expiresAt - createdAt;
+    if (duration <= 0 || duration > SESSION_MAX_AGE_MS + 1_000) return false;
+  }
+  return true;
+}
 
 export async function saveEncryptedAuthSession(file, token, meta, encryption) {
   if (!encryption?.isEncryptionAvailable?.()) {
@@ -11,12 +32,15 @@ export async function saveEncryptedAuthSession(file, token, meta, encryption) {
       { code: 'AUTH_SECURE_STORAGE_UNAVAILABLE' },
     );
   }
-  const expiry = Date.parse(String(meta?.expiresAt || ''));
-  const createdAt = Date.parse(String(meta?.createdAt || ''));
-  const hasCreatedAt = Number.isFinite(createdAt);
-  if (!TOKEN_PATTERN.test(String(token || '')) || !Number.isFinite(expiry) || expiry <= Date.now()
-    || (hasCreatedAt && (createdAt > Date.now() + 60_000 || expiry > createdAt + 24 * 60 * 60 * 1000 + 1_000))) {
-    throw Object.assign(new Error('El servidor devolvió una sesión no válida.'), { code: 'AUTH_INVALID_SESSION' });
+  const hasCreatedAt = Number.isFinite(Date.parse(String(meta?.createdAt || '')));
+  // A Windows clock set ahead or behind must not turn a valid server-issued
+  // login into AUTH_INVALID_SESSION. The server independently validates
+  // creation, expiry and revocation on every authenticated request.
+  if (!TOKEN_PATTERN.test(String(token || '')) || !validSessionDates(meta)) {
+    throw Object.assign(
+      new Error('El servidor devolvió un token o fechas de sesión incorrectos.'),
+      { code: 'AUTH_INVALID_SESSION_DATA' },
+    );
   }
   const ciphertext = encryption.encryptString(token).toString('base64');
   // The creation/expiration dates are stored alongside the encrypted token;
@@ -57,11 +81,14 @@ export async function readEncryptedAuthSession(file, encryption, now = Date.now(
     const meta = data?.meta && typeof data.meta === 'object' ? data.meta : {};
     const expiresAt = Date.parse(String(meta.expiresAt || data?.expiresAt || ''));
     const createdAt = Date.parse(String(meta.createdAt || data?.createdAt || ''));
-    if (Number.isFinite(expiresAt) && expiresAt <= now) return { ok: false, reason: 'EXPIRED' };
     if (Number.isFinite(createdAt) && Number.isFinite(expiresAt)
-      && (createdAt > now + 60_000 || expiresAt > createdAt + 24 * 60 * 60 * 1000 + 1_000)) {
+      && (expiresAt <= createdAt || expiresAt - createdAt > SESSION_MAX_AGE_MS + 1_000)) {
       return { ok: false, reason: 'INVALID_DATES' };
     }
+    // An apparently elapsed expiry is *not* enough to delete a token:
+    // Windows time might differ from server time. Always ask the server
+    // whether this exact token is still valid before allowing access.
+    const locallyExpired = Number.isFinite(expiresAt) && expiresAt <= estimatedServerNow(meta, now);
     // Do not silently renew missing dates. Server catalog fills them
     // from the original session row during online verification.
     if (Number.isFinite(expiresAt)) meta.expiresAt = new Date(expiresAt).toISOString();
@@ -70,6 +97,7 @@ export async function readEncryptedAuthSession(file, encryption, now = Date.now(
       ok: true, token, meta,
       legacyExpiry: !Number.isFinite(expiresAt),
       legacyCreatedAt: !Number.isFinite(createdAt),
+      locallyExpired,
     };
   } catch (error) {
     if (error?.code === 'ENOENT') return { ok: false, reason: 'MISSING' };
