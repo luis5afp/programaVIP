@@ -163,6 +163,8 @@ function actionLabel(method: string, path: string): string {
     : target.includes('auth') ? 'inicio de sesión'
     : 'operación';
   if (target === '/api/clients' && verb === 'POST') return 'crear el cliente';
+  if (target === '/api/auth/login') return 'iniciar sesión';
+  if (target === '/api/auth/session') return 'verificar tu sesión';
   if (target.endsWith('/credentials')) return 'guardar las credenciales';
   if (target.includes('upload') || target.includes('package') || target.includes('image')) {
     return isList ? 'descargar el archivo' : 'subir el archivo';
