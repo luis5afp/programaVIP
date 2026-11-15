@@ -20,9 +20,18 @@ export async function ensureClientBrowserAccessSchema(env: Env): Promise<void> {
   readyPromise = (async () => {
     const { neon } = await import('@neondatabase/serverless');
     const sql = neon(databaseUrl);
-    await sql.query(
-      "ALTER TABLE public.userflex_clients ADD COLUMN IF NOT EXISTS browser_extensions_access text NOT NULL DEFAULT 'restricted'"
-    );
+    // Existing databases already have this column. A read-only probe avoids
+    // taking a PostgreSQL DDL lock on every cold Worker isolate; Neon can
+    // otherwise stall concurrent admin/client requests during startup.
+    try {
+      await sql.query('SELECT browser_extensions_access FROM public.userflex_clients LIMIT 0');
+    } catch (error: any) {
+      if (String(error?.code || '') !== '42703') throw error;
+      // Only older databases without the column require a one-time migration.
+      await sql.query(
+        "ALTER TABLE public.userflex_clients ADD COLUMN IF NOT EXISTS browser_extensions_access text NOT NULL DEFAULT 'restricted'"
+      );
+    }
   })().catch((error: any) => {
     readyPromise = null;
     console.error('Client browser access schema bootstrap failed', String(error?.code || ''), String(error?.message || error).slice(0, 160));
