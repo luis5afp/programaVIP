@@ -197,7 +197,7 @@ async function loadAuth() {
   let migrated = false;
   // Only migrate when the canonical cache is missing. An expired/invalidated
   // canonical token must NOT be replaced with a stale token elsewhere.
-  if (!restored.ok && restored.reason === 'MISSING') {
+  if (!restored.ok && ['MISSING', 'DECRYPT_OR_FILE_INVALID'].includes(restored.reason)) {
     for (const oldPath of previousAuthPaths()) {
       const old = await tryRead(oldPath);
       if (old.ok) {
