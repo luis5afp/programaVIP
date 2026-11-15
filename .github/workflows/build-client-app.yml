@@ -133,6 +133,10 @@ jobs:
       - name: Verify 24-hour token storage and server expiry
         run: node ../scripts/userflow-24h-session-cache.test.mjs
 
+      - name: Install Electron for native Windows auth persistence smoke test
+        if: github.event_name == 'pull_request'
+        run: npm install --prefix ../smoke-electron --no-save --no-audit --no-fund electron@44.1.0
+
       - name: Verify encrypted token survives closing and reopening Electron (Windows)
         if: github.event_name == 'pull_request'
         run: node ../scripts/userflow-auth-restart-windows.test.mjs
