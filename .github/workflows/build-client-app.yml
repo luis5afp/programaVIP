@@ -135,7 +135,19 @@ jobs:
 
       - name: Install Electron for native Windows auth persistence smoke test
         if: github.event_name == 'pull_request'
-        run: npm install --prefix ../smoke-electron --no-save --no-audit --no-fund electron@44.1.0
+        shell: pwsh
+        run: |
+          npm install --prefix ../smoke-electron --no-save --no-audit --no-fund electron@44.1.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'smoke-electron/node_modules/electron/dist/electron.exe'
+          if (-not (Test-Path $binary)) {
+            # The repo uses a git-based CastLabs Electron dependency and CI can
+            # skip the npm postinstall. Request this isolated smoke runtime now.
+            Remove-Item Env:ELECTRON_SKIP_BINARY_DOWNLOAD -ErrorAction SilentlyContinue
+            node ../smoke-electron/node_modules/electron/install.js
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (-not (Test-Path $binary)) { throw 'Standalone Electron runtime unavailable for DPAPI smoke test.' }
 
       - name: Verify encrypted token survives closing and reopening Electron (Windows)
         if: github.event_name == 'pull_request'
