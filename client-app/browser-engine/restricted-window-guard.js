@@ -265,14 +265,15 @@ const DEVTOOLS_PAGE = /^devtools:\/\//i;
 
 export async function startRestrictedTabbedGuard({
   connectBrowser,
+  browser: activeBrowser = null,
   debugPort,
   logger = console,
   onIntegrityLost = null,
 } = {}) {
-  if (typeof connectBrowser !== 'function') {
+  if (!activeBrowser && typeof connectBrowser !== 'function') {
     throw new Error('Falta el canal de protección de pestañas.');
   }
-  const browser = await connectBrowser(debugPort);
+  const browser = activeBrowser || await connectBrowser(debugPort);
   let stopped = false;
   let warned = false;
   const pending = new Set();
@@ -285,8 +286,9 @@ export async function startRestrictedTabbedGuard({
     // Keeping a CDP debugging session attached prevents the Manifest V3
     // service worker from suspending as idle on supported Chromium versions.
     // Its destruction then signals disabled, removed or crashed protection.
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
     const workerTargets = browser.targets().filter((target) => target.type?.() === 'service_worker');
-    warn('Diagnostic: service workers activos ' + workerTargets.length + '.');
     for (const target of workerTargets) {
       if (!/chrome-extension:\/\/[^/]+\/background\.js(?:$|\?)/.test(target.url?.() || '')) continue;
       let session = null;
@@ -302,12 +304,10 @@ export async function startRestrictedTabbedGuard({
           guardSession = session;
           return;
         }
-        warn('Diagnostic: worker manifest name=' + String(response?.result?.value ?? 'undefined')
-          + '; exception=' + String(response?.exceptionDetails?.text || 'none'));
-      } catch (error) {
-        warn('Diagnostic: worker inspection=' + String(error?.message || error).slice(0, 180));
-      }
+      } catch { /* Another extension's worker may be unavailable. */ }
       await session?.detach().catch(() => null);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
     }
     throw new Error('No se pudo conectar con userFLEX Browser Guard. Perfil bloqueado.');
   }
