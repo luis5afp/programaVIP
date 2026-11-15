@@ -127,6 +127,10 @@ jobs:
         if: github.event_name == 'pull_request'
         run: node ../scripts/restricted-edge-popup-windows.test.mjs
 
+      - name: Check Edge app window single-tab capability (experimental)
+        if: github.event_name == 'pull_request'
+        run: node ../scripts/edge-tabbed-app-spike-windows.test.mjs
+
       - name: Build Windows installer
         if: github.event_name != 'pull_request'
         env:
