@@ -48,6 +48,97 @@ chrome.tabs.onCreated.addListener((tab) => {
   void moveAway(tab.id);
 });
 
+// App-window command-line flags only protect the first Edge window. A site
+// or a managed extension can subsequently create a *normal* Edge window,
+// exposing the extensions toolbar. In restricted profiles, convert those
+// additional browser windows to Chromium "popup" windows, which keep the
+// same profile, cookies and managed extensions but have no browser toolbar.
+// This is a best-effort UI guard, not a replacement for Windows policies.
+const RESTRICTED_WINDOWS = globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS === 'restricted';
+const RESTRICTED_HOME = (() => {
+  try {
+    const url = new URL(String(globalThis.USERFLEX_PROFILE_HOME_URL || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : null;
+  } catch { return null; }
+})();
+const convertingWindows = new Set();
+let restrictedWindowBootstrap = false;
+
+function allowedWindowUrl(raw) {
+  try {
+    const url = new URL(String(raw || ''));
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    return url.toString();
+  } catch { return null; }
+}
+
+async function convertNormalWindow(windowId) {
+  if (!RESTRICTED_WINDOWS || !RESTRICTED_HOME || !Number.isInteger(windowId)
+    || windowId < 0 || convertingWindows.has(windowId)) return;
+  convertingWindows.add(windowId);
+  try {
+    // Edge may dispatch onCreated before the page has been assigned its URL.
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    const info = await chrome.windows.get(windowId, { populate: true });
+    if (info?.type !== 'normal') return;
+    const urls = (Array.isArray(info?.tabs) ? info.tabs : [])
+      .map((tab) => allowedWindowUrl(tab?.pendingUrl || tab?.url))
+      .filter(Boolean)
+      .slice(0, 8);
+    if (!urls.length) urls.push(RESTRICTED_HOME);
+    let created = 0;
+    for (const url of urls) {
+      try {
+        const popup = await chrome.windows.create({
+          url,
+          type: 'popup',
+          focused: created === 0,
+        });
+        if (popup?.id != null) created++;
+      } catch (error) {
+        console.warn('userFLEX could not keep secondary page inside a popup window:', String(error?.message || error));
+      }
+    }
+    // Do not destroy the original browser window unless the user still has
+    // a visible replacement with the same authorized profile context.
+    if (created > 0) {
+      await chrome.windows.remove(windowId).catch(() => null);
+    }
+  } catch {
+    // Window might have been closed concurrently by the CDP-level guard.
+  } finally {
+    convertingWindows.delete(windowId);
+  }
+}
+
+if (RESTRICTED_WINDOWS && RESTRICTED_HOME) {
+  chrome.windows.onCreated.addListener((windowInfo) => {
+    if (windowInfo?.type !== 'normal') return;
+    void convertNormalWindow(Number(windowInfo.id));
+  });
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (!Number.isInteger(windowId) || windowId < 0) return;
+    void convertNormalWindow(windowId);
+  });
+  // Handles normal windows created by Toolspoint before the Browser Guard
+  // service worker registered its event listener at browser startup.
+  async function inspectWindowsAtStartup() {
+    if (restrictedWindowBootstrap) return;
+    restrictedWindowBootstrap = true;
+    try {
+      const windows = await chrome.windows.getAll({ populate: false });
+      for (const info of (Array.isArray(windows) ? windows : [])) {
+        if (info?.type === 'normal') void convertNormalWindow(Number(info.id));
+      }
+    } catch {}
+    restrictedWindowBootstrap = false;
+  }
+  chrome.runtime.onStartup.addListener(() => {
+    void inspectWindowsAtStartup();
+  });
+  void inspectWindowsAtStartup();
+}
+
 const EXPECTED_MANAGED_NAMES = new Set(
   (Array.isArray(globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS)
     ? globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS

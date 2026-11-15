@@ -471,6 +471,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         .filter(Boolean)
         .slice(0, 64),
     )];
+    const browserExtensionsAccess = normalizeBrowserExtensionsAccess(options.browserExtensionsAccess);
+    const profileHomeUrl = String(options.profileHomeUrl || '').trim();
     const contentRules = (Array.isArray(options.contentRules) ? options.contentRules : [])
       .slice(0, 150)
       .map((item) => ({
@@ -488,6 +490,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         `globalThis.USERFLEX_STREAMING_DOM = ${JSON.stringify(streamingDomEnabled)};`,
         `globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = ${JSON.stringify(managedExtensionNames)};`,
         `globalThis.USERFLEX_CONTENT_RULES = ${JSON.stringify(contentRules)};`,
+        `globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = ${JSON.stringify(browserExtensionsAccess)};`,
+        `globalThis.USERFLEX_PROFILE_HOME_URL = ${JSON.stringify(profileHomeUrl)};`,
         '',
       ].join('\n'),
       'utf8',
@@ -792,6 +796,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
           .map((item) => item?.name)
           .filter((name) => typeof name === 'string' && name.trim()),
         contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules : [],
+        browserExtensionsAccess: extensionsUiAccess,
+        profileHomeUrl: profile.url,
       },
     );
     const managedExtensionDirs = (Array.isArray(managedExtensions) ? managedExtensions : [])
