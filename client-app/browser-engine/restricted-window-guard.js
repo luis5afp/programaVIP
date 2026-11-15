@@ -275,42 +275,9 @@ export async function startRestrictedTabbedGuard({
   }
   const browser = activeBrowser || await connectBrowser(debugPort);
   let stopped = false;
-  let warned = false;
   const pending = new Set();
   const inspected = new WeakSet();
   const warn = (message) => logger.warn?.('userFLOW restricted tabbed Edge:', message);
-
-  let guardWorker = null;
-  let guardSession = null;
-  async function adoptBrowserGuardWorker() {
-    // Keeping a CDP debugging session attached prevents the Manifest V3
-    // service worker from suspending as idle on supported Chromium versions.
-    // Its destruction then signals disabled, removed or crashed protection.
-    const deadline = Date.now() + 8_000;
-    while (Date.now() < deadline) {
-    const workerTargets = browser.targets().filter((target) => target.type?.() === 'service_worker');
-    for (const target of workerTargets) {
-      if (!/chrome-extension:\/\/[^/]+\/background\.js(?:$|\?)/.test(target.url?.() || '')) continue;
-      let session = null;
-      try {
-        session = await target.createCDPSession();
-        await session.send('Runtime.enable');
-        const response = await session.send('Runtime.evaluate', {
-          expression: 'chrome.runtime.getManifest().name',
-          returnByValue: true,
-        });
-        if (response?.result?.value === 'userFLEX Browser Guard') {
-          guardWorker = target;
-          guardSession = session;
-          return;
-        }
-      } catch { /* Another extension's worker may be unavailable. */ }
-      await session?.detach().catch(() => null);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    }
-    throw new Error('No se pudo conectar con userFLEX Browser Guard. Perfil bloqueado.');
-  }
 
   async function blockUnsafeTarget(target) {
     if (stopped || !target || inspected.has(target)) return;
@@ -329,46 +296,27 @@ export async function startRestrictedTabbedGuard({
       }
     } catch (error) {
       warn('No se pudo bloquear una página interna de Edge.');
-      if (typeof onIntegrityLost === 'function') void onIntegrityLost(error);
+      if (typeof onIntegrityLost === 'function') {
+        void Promise.resolve(onIntegrityLost(error)).catch(() => null);
+      }
     }
   }
-
   const checkTarget = (target) => {
     const job = blockUnsafeTarget(target);
     pending.add(job);
     void job.catch(() => warn('No se pudo inspeccionar la navegación protegida.'))
       .finally(() => pending.delete(job));
   };
-  const workerDestroyed = (target) => {
-    if (stopped || target !== guardWorker || warned) return;
-    warned = true;
-    warn('Se perdió Browser Guard; cerrando el perfil restringido.');
-    if (typeof onIntegrityLost === 'function') {
-      void Promise.resolve(onIntegrityLost(new Error('BROWSER_GUARD_DISCONNECTED')))
-        .catch(() => warn('No se pudo cerrar el perfil tras perder Browser Guard.'));
-    }
-  };
-
-  try {
-    await adoptBrowserGuardWorker();
-    browser.on('targetcreated', checkTarget);
-    browser.on('targetchanged', checkTarget);
-    browser.on('targetdestroyed', workerDestroyed);
-    for (const target of browser.targets()) checkTarget(target);
-  } catch (error) {
-    await guardSession?.detach().catch(() => null);
-    await browser.disconnect().catch(() => null);
-    throw error;
-  }
+  browser.on('targetcreated', checkTarget);
+  browser.on('targetchanged', checkTarget);
+  for (const target of browser.targets()) checkTarget(target);
   return {
     async close() {
       if (stopped) return;
       stopped = true;
       browser.off('targetcreated', checkTarget);
       browser.off('targetchanged', checkTarget);
-      browser.off('targetdestroyed', workerDestroyed);
       await Promise.allSettled([...pending]);
-      await guardSession?.detach().catch(() => null);
       await browser.disconnect().catch(() => null);
     },
   };
