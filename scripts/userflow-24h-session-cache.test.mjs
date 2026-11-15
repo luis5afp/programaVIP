@@ -45,7 +45,8 @@ try {
   const auth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
   const finalizer = readFileSync(new URL('../client-app/build/finalize-client-ui.mjs', import.meta.url), 'utf8');
   assert.match(main, /await saveEncryptedAuthSession|saveEncryptedAuthSession\(authPath\(\), token, meta, safeStorage\)/);
-  assert.match(main, /readEncryptedAuthSession\(authPath\(\), safeStorage\)/);
+  assert.match(main, /readEncryptedAuthSession\(candidate, safeStorage\)/,
+    'the canonical and legacy files must use the same secure decryption');
   assert.match(main, /if \(accessToken && !authError\(error\)\)/,
     'a server/network error must retain an existing saved token');
   assert.match(renderer, /result\?\.pending === true/,
