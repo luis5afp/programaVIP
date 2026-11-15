@@ -483,3 +483,305 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .launcher-footer { grid-template-columns: 1fr auto; }
   .footer-account { display: none; }
 }
+
+
+/* --- userFLOW 0.3.110: launcher iOS-inspired / three offline themes --- */
+/* These variables are scoped to the catalog only: they never affect Edge,
+   browser sessions, extension guards, the network or the login form. */
+.launcher-screen[data-theme="noche"] {
+  color-scheme: dark;
+  --ui-bg: #0b1533;
+  --ui-header: rgba(14, 24, 53, .94);
+  --ui-panel: rgba(31, 45, 87, .91);
+  --ui-hover: rgba(41, 56, 104, .96);
+  --ui-input: rgba(42, 58, 109, .75);
+  --ui-border: rgba(131, 153, 226, .29);
+  --ui-text: #f6f7ff;
+  --ui-muted: #c1cce2;
+  --ui-soft: #a6b5d5;
+  --ui-pill: rgba(44, 59, 109, .65);
+  --ui-button: rgba(96, 77, 220, .28);
+  --ui-shadow: rgba(7, 12, 38, .38);
+  --ui-wave-a: rgba(90, 67, 207, .22);
+  --ui-wave-b: rgba(39, 103, 210, .20);
+}
+.launcher-screen[data-theme="gris"] {
+  color-scheme: light;
+  --ui-bg: #8994ac;
+  --ui-header: rgba(109, 122, 148, .91);
+  --ui-panel: rgba(245, 246, 253, .91);
+  --ui-hover: rgba(255, 255, 255, .99);
+  --ui-input: rgba(244, 247, 254, .56);
+  --ui-border: rgba(228, 235, 251, .76);
+  --ui-text: #202a40;
+  --ui-muted: #4d5870;
+  --ui-soft: #65738f;
+  --ui-pill: rgba(233, 238, 250, .35);
+  --ui-button: rgba(114, 96, 231, .14);
+  --ui-shadow: rgba(35, 45, 77, .18);
+  --ui-wave-a: rgba(220, 212, 255, .19);
+  --ui-wave-b: rgba(203, 222, 255, .18);
+}
+.launcher-screen[data-theme="claro"] {
+  color-scheme: light;
+  --ui-bg: #f3f5ff;
+  --ui-header: rgba(248, 249, 255, .91);
+  --ui-panel: rgba(255, 255, 255, .91);
+  --ui-hover: #fff;
+  --ui-input: rgba(255, 255, 255, .86);
+  --ui-border: rgba(201, 211, 238, .70);
+  --ui-text: #1c2541;
+  --ui-muted: #53617d;
+  --ui-soft: #687693;
+  --ui-pill: rgba(232, 236, 252, .75);
+  --ui-button: rgba(111, 93, 233, .11);
+  --ui-shadow: rgba(69, 80, 125, .11);
+  --ui-wave-a: rgba(170, 146, 255, .16);
+  --ui-wave-b: rgba(142, 184, 255, .16);
+}
+.launcher-screen[data-theme] {
+  color: var(--ui-text);
+  background:
+    radial-gradient(ellipse at 8% 90%, var(--ui-wave-a), transparent 42%),
+    radial-gradient(ellipse at 92% 25%, var(--ui-wave-b), transparent 44%),
+    var(--ui-bg);
+}
+.launcher-screen[data-theme] .launcher-header {
+  background: var(--ui-header);
+  border-bottom: 1px solid var(--ui-border);
+  backdrop-filter: blur(12px);
+  padding: 17px 24px 13px;
+}
+.launcher-screen[data-theme] .launcher-topline {
+  grid-template-columns: auto minmax(180px, 1fr) auto;
+  gap: clamp(12px, 2vw, 26px);
+}
+.launcher-screen[data-theme] .brand-inline strong { color: var(--ui-text); font-size: 19px; letter-spacing: -.65px; }
+.launcher-screen[data-theme] .brand-inline .version-text { color: var(--ui-soft); }
+.launcher-screen[data-theme] .brand-mark.compact { width: 42px; height: 42px; border-radius: 15px; }
+.launcher-screen[data-theme] .launcher-search { width: min(100%, 510px); }
+.launcher-screen[data-theme] .launcher-search input {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-input);
+  color: var(--ui-text);
+  border-radius: 18px;
+  height: 44px;
+  box-shadow: 0 5px 18px var(--ui-shadow);
+  padding-left: 42px;
+}
+.launcher-screen[data-theme] .launcher-search input::placeholder { color: var(--ui-soft); }
+.launcher-screen[data-theme] .search-icon { color: var(--ui-soft); left: 16px; }
+.launcher-screen[data-theme] .launcher-search input:focus {
+  border-color: #8d7afa;
+  background: var(--ui-panel);
+  box-shadow: 0 0 0 3px rgba(124, 104, 240, .14);
+}
+.launcher-screen[data-theme] .header-right { gap: 12px; }
+.theme-selector {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: 16px;
+  background: var(--ui-pill);
+  white-space: nowrap;
+}
+.theme-choice {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-weight: 780;
+  padding: 8px 10px;
+  min-height: 33px;
+  transition: background .14s ease, box-shadow .14s ease, color .14s ease;
+}
+.theme-choice span { font-size: 14px; vertical-align: -1px; margin-right: 4px; }
+.theme-choice:hover { background: var(--ui-panel); color: var(--ui-text); }
+.theme-choice.selected {
+  background: linear-gradient(135deg, #8b78fb, #6555dd);
+  border-color: rgba(204, 197, 255, .65);
+  box-shadow: 0 4px 12px rgba(103, 83, 211, .24);
+  color: white;
+}
+.theme-choice:focus-visible { outline: 2px solid #9b87ff; outline-offset: 2px; }
+.launcher-screen[data-theme] .status-dot { color: var(--ui-muted); font-size: 11px; }
+.launcher-screen[data-theme] .icon-button {
+  width: 39px;
+  height: 39px;
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: var(--ui-pill);
+  color: #189b74;
+}
+.launcher-screen[data-theme] .icon-button:hover:not(:disabled) { background: var(--ui-panel); }
+.launcher-screen[data-theme] .category-filters { margin-top: 15px; gap: 8px; }
+.launcher-screen[data-theme] .category-pill {
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: var(--ui-pill);
+  color: var(--ui-muted);
+  min-height: 36px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 780;
+}
+.launcher-screen[data-theme] .category-pill:hover { background: var(--ui-panel); color: var(--ui-text); }
+.launcher-screen[data-theme] .category-pill.active {
+  color: #fff;
+  background: linear-gradient(135deg, #917cff, #6251da);
+  border-color: rgba(183, 169, 255, .90);
+  box-shadow: 0 5px 14px rgba(109, 89, 218, .23);
+}
+.launcher-screen[data-theme] .catalog-content { max-width: 1260px; padding-top: 23px; }
+.launcher-screen[data-theme] .profiles-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.launcher-screen[data-theme] .profile-card {
+  min-height: 166px;
+  grid-template-columns: 62px minmax(0, 1fr);
+  grid-template-rows: minmax(78px, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 10px;
+  padding: 15px;
+  border: 1px solid var(--ui-border);
+  border-radius: 22px;
+  background: var(--ui-panel);
+  box-shadow: 0 11px 24px var(--ui-shadow), inset 0 1px 0 rgba(255,255,255,.12);
+  color: var(--ui-text);
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.launcher-screen[data-theme] .profile-card::before {
+  width: 62px;
+  height: 62px;
+  left: -22px;
+  top: -20px;
+  filter: blur(18px);
+  background: var(--ui-wave-a);
+}
+.launcher-screen[data-theme] .profile-card:not(.unavailable, .launching):hover,
+.launcher-screen[data-theme] .profile-card:not(.unavailable, .launching):focus-visible {
+  transform: translateY(-2px);
+  background: var(--ui-hover);
+  border-color: #9f90f6;
+  box-shadow: 0 15px 30px var(--ui-shadow), 0 0 0 2px rgba(133, 112, 241, .11);
+}
+.launcher-screen[data-theme] .profile-image {
+  width: 62px;
+  height: 62px;
+  border-radius: 17px;
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 5px 16px var(--ui-shadow);
+}
+.launcher-screen[data-theme] .profile-body h3 { color: var(--ui-text); font-size: 13px; letter-spacing: -.25px; }
+.launcher-screen[data-theme] .profile-description {
+  color: var(--ui-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-height: 16px;
+}
+.launcher-screen[data-theme] .availability { color: var(--ui-muted); font-size: 10px; }
+.launcher-screen[data-theme] .availability::before { width: 7px; height: 7px; }
+.launcher-screen[data-theme] .card-state {
+  color: #6756d8;
+  background: var(--ui-button);
+  border: 1px solid rgba(141, 125, 242, .34);
+  border-radius: 999px;
+  padding: 8px 13px;
+  min-width: 65px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+.launcher-screen[data-theme="noche"] .card-state { color: #e0d7ff; }
+.launcher-screen[data-theme] .profile-card:not(.unavailable, .launching):hover .card-state {
+  background: #6e5de7;
+  border-color: #9887ff;
+  color: #fff;
+}
+.launcher-screen[data-theme] .profile-card.unavailable {
+  background: var(--ui-pill);
+  border-color: var(--ui-border);
+  opacity: .68;
+}
+.launcher-screen[data-theme] .profile-card.unavailable .profile-description,
+.launcher-screen[data-theme] .profile-card.unavailable .card-state { color: var(--ui-muted); }
+.launcher-screen[data-theme] .profile-card.launching {
+  opacity: 1;
+  pointer-events: none;
+  cursor: progress;
+  border-color: #947dff;
+  box-shadow: 0 0 0 2px rgba(139, 116, 247, .26), 0 15px 30px var(--ui-shadow);
+}
+.launcher-screen[data-theme] .profile-card.launching::after {
+  content: '';
+  position: absolute;
+  left: 17px;
+  right: 17px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #9678ff, #6a55de, transparent);
+  transform-origin: left;
+  animation: userflow-loading-sweep 1.65s ease-in-out infinite;
+}
+@keyframes userflow-loading-sweep {
+  0% { transform: scaleX(.08); opacity: .4; }
+  55% { transform: scaleX(.85); opacity: 1; }
+  100% { transform: scaleX(1); opacity: .25; }
+}
+.launcher-screen[data-theme] .profile-card.launching .card-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: #7260e5;
+  border-color: #a397ff;
+  color: white;
+}
+.launcher-screen[data-theme] .profile-card.launching .card-state::before {
+  content: '';
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin .75s linear infinite;
+}
+.launcher-screen[data-theme] .empty { color: var(--ui-muted); }
+.launcher-screen[data-theme] .empty h3 { color: var(--ui-text); }
+.launcher-screen[data-theme] .launcher-footer {
+  background: var(--ui-header);
+  border-top: 1px solid var(--ui-border);
+  box-shadow: 0 -6px 20px var(--ui-shadow);
+  backdrop-filter: blur(12px);
+}
+.launcher-screen[data-theme] .footer-account,
+.launcher-screen[data-theme] .footer-account #client-name,
+.launcher-screen[data-theme] .subscription-status { color: var(--ui-muted); }
+.launcher-screen[data-theme] .subscription-status,
+.launcher-screen[data-theme] .footer-account #client-name { font-weight: 800; }
+@media (max-width: 1250px) {
+  .launcher-screen[data-theme] .launcher-topline { grid-template-columns: auto minmax(180px, 1fr); }
+  .launcher-screen[data-theme] .header-right { grid-column: 1 / -1; justify-self: end; }
+  .launcher-screen[data-theme] .profiles-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
+}
+@media (max-width: 900px) {
+  .launcher-screen[data-theme] .profiles-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .launcher-screen[data-theme] .launcher-topline { grid-template-columns: 1fr; gap: 12px; }
+  .launcher-screen[data-theme] .launcher-search { justify-self: stretch; width: 100%; }
+  .launcher-screen[data-theme] .header-right { grid-column: auto; justify-self: stretch; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .launcher-screen[data-theme] .profile-card.launching::after { animation: none; transform: scaleX(.7); }
+  .launcher-screen[data-theme] .profile-card.launching .card-state::before { animation: none; }
+  .launcher-screen[data-theme] .profile-card { transition: none; }
+}

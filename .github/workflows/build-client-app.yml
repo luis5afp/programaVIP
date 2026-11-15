@@ -124,6 +124,9 @@ jobs:
           node --check build/vmp-sign.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify launcher themes and launch feedback
+        run: node ../scripts/userflow-launcher-themes.test.mjs
+
       - name: Verify restricted Edge popup navigation in real Windows Edge
         if: github.event_name == 'pull_request'
         run: node ../scripts/restricted-edge-popup-windows.test.mjs
