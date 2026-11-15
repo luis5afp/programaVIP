@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, cp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
@@ -44,6 +44,7 @@ function killTree(pid) {
 assert.equal(process.platform, 'win32');
 const root = await mkdtemp(path.join(tmpdir(), 'userflow-restricted-popup-'));
 const userDataDir = path.join(root, 'edge-profile');
+const browserGuardDir = path.join(root, 'browser-guard');
 const port = 9409;
 const httpServer = createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -65,6 +66,16 @@ let browser = null;
 let guard = null;
 try {
   await mkdir(userDataDir, { recursive: true });
+  await cp(new URL('../client-app/browser-engine/extension', import.meta.url), browserGuardDir, {recursive: true});
+  await writeFile(path.join(browserGuardDir, 'strategy.js'), [
+    `globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = 'restricted';`,
+    `globalThis.USERFLEX_PROFILE_HOME_URL = 'http://127.0.0.1:${httpServer.address().port}/index';`,
+    `globalThis.USERFLEX_RUNTIME_STRATEGY = 'guard-only';`,
+    `globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = [];`,
+    `globalThis.USERFLEX_CONTENT_RULES = [];`,
+    '',
+  ].join('\n'));
+
   const edgeExe = await findEdge();
   const address = httpServer.address();
   const base = `http://127.0.0.1:${address.port}`;
@@ -75,6 +86,8 @@ try {
     '--remote-allow-origins=*',
     '--no-first-run',
     '--no-default-browser-check',
+    `--disable-extensions-except=${browserGuardDir}`,
+    `--load-extension=${browserGuardDir}`,
     `--app=${base}/index`,
   ];
   child = spawn(edgeExe, portArgs, { stdio: 'ignore', windowsHide: false });
@@ -121,7 +134,34 @@ try {
   assert.equal(hasCookie, true, 'second app window shares real browser cookies');
   assert.equal(appWindowLaunches, 1, 'one original popup yields exactly one controlled app window');
   assert.equal(home.isClosed(), false, 'first app window stays available');
-  console.log('Restricted Edge windows and shared session smoke test: OK');
+
+  // Unlike a mere successful navigation, inspect the native window types:
+  // "normal" exposes the Edge extensions toolbar and means restricted mode
+  // is still leaking. The mandatory Browser Guard must convert it to popup.
+  const worker = await waitFor(() => browser.targets().find((target) =>
+    target.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(target.url())), 15_000);
+  const session = await worker.createCDPSession();
+  try {
+    await session.send('Runtime.enable');
+    const types = await waitFor(async () => {
+      const reply = await session.send('Runtime.evaluate', {
+        expression: 'chrome.windows.getAll({populate:true}).then(ws => ws.map(w => ({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      const items = reply?.result?.value;
+      if (!Array.isArray(items)) return null;
+      if (items.some((w) => w.type === 'normal')) return null;
+      return items.filter((w) => ['popup','app'].includes(w.type)).length >= 2 ? items : null;
+    }, 12_000);
+    assert.ok(types.every((window) => window.type !== 'normal'),
+      'restricted profiles must not leave normal Edge windows with extension buttons');
+    assert.ok(types.some((w) => (w.urls||[]).some((url) => url?.includes('/secondary'))),
+      'secondary page must be reachable in a toolbar-free popup/app window');
+  } finally {
+    await session.detach().catch(() => null);
+  }
+  console.log('Restricted Edge windows, native window types and shared session: OK');
 } finally {
   await guard?.close().catch(() => null);
   await browser?.disconnect().catch(() => null);
