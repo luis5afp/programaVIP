@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 assert.equal(process.platform, 'win32', 'Smoke test must run in a Windows runner');
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const electron = path.join(root, 'client-app', 'node_modules', 'electron', 'dist', 'electron.exe');
+const electron = process.env.USERFLOW_TEST_ELECTRON_BIN || path.join(root, 'smoke-electron', 'node_modules', 'electron', 'dist', 'electron.exe');
 await access(electron);
 const fixtureDir = await mkdtemp(path.join(tmpdir(), 'userflow-secure-login-'));
 const appDir = path.join(fixtureDir, 'app');
