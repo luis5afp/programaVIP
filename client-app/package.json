@@ -40,6 +40,7 @@
       "main.js",
       "auth-session-cache.js",
       "auth-session-locations.js",
+      "user-data-location.js",
       "widevine-runtime.js",
       "proxy-bridge.js",
       "preload.cjs",
