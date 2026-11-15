@@ -471,6 +471,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         .filter(Boolean)
         .slice(0, 64),
     )];
+    const browserExtensionsAccess = normalizeBrowserExtensionsAccess(options.browserExtensionsAccess);
+    const profileHomeUrl = String(options.profileHomeUrl || '').trim();
     const contentRules = (Array.isArray(options.contentRules) ? options.contentRules : [])
       .slice(0, 150)
       .map((item) => ({
