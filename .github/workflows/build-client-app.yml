@@ -130,6 +130,13 @@ jobs:
       - name: Verify 24-hour token sessions and explicit sign-out
         run: node ../scripts/client-login-lifecycle.test.ts
 
+      - name: Verify 24-hour token storage and server expiry
+        run: node ../scripts/userflow-24h-session-cache.test.mjs
+
+      - name: Verify encrypted token survives closing and reopening Electron (Windows)
+        if: github.event_name == 'pull_request'
+        run: node ../scripts/userflow-auth-restart-windows.test.mjs
+
       - name: Verify restricted Edge popup navigation in real Windows Edge
         if: github.event_name == 'pull_request'
         run: node ../scripts/restricted-edge-popup-windows.test.mjs
