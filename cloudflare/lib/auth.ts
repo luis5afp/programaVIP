@@ -37,6 +37,7 @@ export type ClientIdentity = {
   clientId: string;
   deviceId: string;
   sessionId: string;
+  sessionExpiresAt: string;
   client: any;
   plan: any;
   subscription: any;
@@ -332,7 +333,7 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
   const now = encodeURIComponent(new Date().toISOString());
   const sessions = await db(
     env,
-    `userflex_client_sessions?select=id,client_id,device_id&token_hash=eq.${hash}&revoked_at=is.null&expires_at=gt.${now}&limit=1`,
+    `userflex_client_sessions?select=id,client_id,device_id,expires_at&token_hash=eq.${hash}&revoked_at=is.null&expires_at=gt.${now}&limit=1`,
   );
   const session = sessions?.[0];
   if (!session) throw new HttpError(401, 'CLIENT_UNAUTHENTICATED');
@@ -369,6 +370,7 @@ export async function requireClient(request: Request, env: Env): Promise<ClientI
     clientId: session.client_id,
     deviceId: session.device_id,
     sessionId: session.id,
+    sessionExpiresAt: String(session.expires_at),
     client: clients[0],
     plan,
     subscription,
