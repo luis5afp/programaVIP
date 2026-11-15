@@ -7,6 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps, startKaizenProxyRelay } from './proxy-relay.js';
 import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
 import { normalizeBrowserExtensionsAccess, browserStartupArgument } from './extension-ui-mode.js';
+import { startRestrictedWindowGuard, restrictedAppWindowArgs } from './restricted-window-guard.js';
 import {
   closeDevtoolsTargets,
   connectKaizenBrowser,
@@ -498,6 +499,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     if (!entry || entry.cleaned) return;
     entry.cleaned = true;
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
+    try { await entry.windowGuard?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
     if (processes.get(entry.key) === entry) processes.delete(entry.key);
     try { await onClosed?.(entry, reason); } catch (error) {
@@ -837,6 +839,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       stderr: [],
       startedAt: Date.now(),
       devtoolsTimer: null,
+      windowGuard: null,
       sessionVersion: sessionVersionMatches
         ? Number(sessionMarker?.version || desiredSessionVersion)
         : desiredSessionVersion,
@@ -991,6 +994,40 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         });
       }
 
+      // Edge's --app mode only applies to the first window. A web page can
+      // otherwise open target=_blank or window.open in full Edge with visible
+      // extensions controls. The restricted watchdog closes those extra tabs
+      // and reopens their URLs as app windows in the SAME browser data directory
+      // (cookies, proxy and managed extension registration remain shared).
+      // Full-access clients and ephemeral extension tests are unchanged.
+      if (extensionsUiAccess === 'restricted' && !ephemeral) {
+        launchStage = 'restricted-window-guard';
+        entry.windowGuard = await startRestrictedWindowGuard({
+          connectBrowser: connectKaizenBrowser,
+          debugPort,
+          initialUrl: profile.url,
+          logger: log,
+          launchAppWindow: async (url) => {
+            if (entry.cleaned || entry.closing || proc.exitCode !== null) {
+              throw new Error('El perfil ya se cerró.');
+            }
+            const args = restrictedAppWindowArgs({ userDataDir, url, proxyRules });
+            await new Promise((resolve, reject) => {
+              const child = spawn(executable, args, {
+                windowsHide: false,
+                detached: false,
+                stdio: 'ignore',
+              });
+              child.once('error', reject);
+              child.once('spawn', () => {
+                child.unref();
+                resolve();
+              });
+            });
+          },
+        });
+      }
+
       launchStage = 'ready';
       return {
         ok: true,
@@ -1027,7 +1064,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       };
     } catch (error) {
       const browserStillRunning = proc.exitCode === null && !entry.spawnError;
-      if (browserStillRunning && recoverableLaunchStages.has(launchStage)) {
+      if (browserStillRunning && recoverableLaunchStages.has(launchStage)
+        && !(extensionsUiAccess === 'restricted' && launchStage === 'browser-control')) {
         const warning = {
           stage: launchStage,
           code: String(error?.code || 'PROFILE_BOOTSTRAP_DEGRADED'),

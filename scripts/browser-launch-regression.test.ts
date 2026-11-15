@@ -284,11 +284,16 @@ assert.match(
   'a running browser with unavailable CDP control must remain open in degraded mode instead of being killed',
 );
 
-const recoverableCatchStart = engine.indexOf('if (browserStillRunning && recoverableLaunchStages.has(launchStage))');
+const recoverableCatchStart = engine.indexOf('if (browserStillRunning && recoverableLaunchStages.has(launchStage)');
 const recoverableCatchEnd = engine.indexOf("profileState: 'launch-degraded'", recoverableCatchStart);
 assert.ok(
   recoverableCatchStart >= 0 && recoverableCatchEnd > recoverableCatchStart,
   'recoverable bootstrap failures must keep the browser process alive and return degraded diagnostics',
+);
+assert.match(
+  engine.slice(recoverableCatchStart, recoverableCatchEnd),
+  /extensionsUiAccess === 'restricted' && launchStage === 'browser-control'/,
+  'restricted mode must fail closed if its browser-control connection is unavailable',
 );
 
 assert.match(
