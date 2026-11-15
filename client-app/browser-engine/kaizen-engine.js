@@ -490,6 +490,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
         `globalThis.USERFLEX_STREAMING_DOM = ${JSON.stringify(streamingDomEnabled)};`,
         `globalThis.USERFLEX_EXPECTED_MANAGED_EXTENSIONS = ${JSON.stringify(managedExtensionNames)};`,
         `globalThis.USERFLEX_CONTENT_RULES = ${JSON.stringify(contentRules)};`,
+        `globalThis.USERFLEX_BROWSER_EXTENSIONS_ACCESS = ${JSON.stringify(browserExtensionsAccess)};`,
+        `globalThis.USERFLEX_PROFILE_HOME_URL = ${JSON.stringify(profileHomeUrl)};`,
         '',
       ].join('\n'),
       'utf8',
