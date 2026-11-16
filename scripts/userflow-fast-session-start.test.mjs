@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const renderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
 const preload = readFileSync(new URL('../client-app/preload.cjs', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../client-app/index.html', import.meta.url), 'utf8');
 const finalizer = readFileSync(new URL('../client-app/build/finalize-client-ui.mjs', import.meta.url), 'utf8');
 
 const at = (start, end) => {
@@ -56,4 +57,26 @@ assert.match(finalizer, /onProfileImage: \(\) => \(\) => \{\}/,
   'renderer bridge fallback must remain compatible');
 assert.match(bootstrap, /pending: true/,
   'network errors must keep the encrypted token and show retry, not login');
-console.log('userFLOW fast secure bootstrap (6-second initial check, deferred images, launch guard): OK');
+// Startup has exactly one online catalog validation: the embedded view is
+// allowed to reuse only the response held in memory after server approval.
+assert.match(bootstrap, /event\.sender === catalogView\.webContents/);
+assert.match(bootstrap, /serverVerifiedCatalog/);
+assert.match(bootstrap, /expiresAt > estimatedServerNow\(authMeta\)/);
+assert.match(bootstrap, /if \(accessToken\) createBrowserWindow\(\)/,
+  'the native shell should warm while the one online request is running');
+assert.match(main, /serverVerifiedCatalog = data/g);
+const workspace = at('function revealVerifiedWorkspace()', 'async function returnToLogin(');
+assert.match(workspace, /!browserShellReady \|\| !catalogContentReady/);
+assert.match(workspace, /catalogContentReady/);
+assert.match(workspace, /browserWindow\.show\(\)/);
+assert.match(workspace, /mainWindow\.close\(\)/);
+assert.match(main, /show: false,[\s\S]*backgroundColor: '#080b10'/,
+  'auth UI must remain hidden while a saved session is being checked');
+assert.match(main, /ipcMain\.handle\('userflex:reveal-auth-window'/);
+assert.match(main, /ipcMain\.handle\('userflex:catalog-ready'/);
+assert.match(preload, /revealAuthWindow:\s*\(\) => ipcRenderer\.invoke\('userflex:reveal-auth-window'\)/);
+assert.match(preload, /catalogReady:\s*\(\) => ipcRenderer\.invoke\('userflex:catalog-ready'\)/);
+assert.match(renderer, /requestAnimationFrame\(\(\) => void window\.userflex\.catalogReady\?\.\(\)\)/);
+assert.match(renderer, /window\.userflex\.revealAuthWindow\?\.\(\)/);
+assert.match(html, /id="loading-view"/, 'offline retries must remain available');
+console.log('userFLOW fast secure direct catalog startup (single online check, hidden handoff, offline recovery): OK');
