@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
-import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile } from './auth-session-locations.js';
+import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile, priorSignInMarkerFile } from './auth-session-locations.js';
 import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
 
 const execFileAsync = promisify(execFile);
@@ -77,6 +77,10 @@ function authBackupPaths() {
 
 function signedOutPath() {
   return signedOutMarkerFile(app.getPath('appData'));
+}
+
+function priorSignInPath() {
+  return priorSignInMarkerFile(app.getPath('appData'));
 }
 
 async function hasSignedOutMarker() {
@@ -214,6 +218,15 @@ async function saveAuth(token, meta) {
       });
     }
   }
+  // A marker containing no credentials distinguishes first-run login from
+  // an unexpectedly vanished token cache in later launches.
+  try {
+    await fs.writeFile(priorSignInPath(), '{"hadSavedSession":true}', {
+      encoding: 'utf8', mode: 0o600,
+    });
+  } catch {
+    await logAuthCacheState('SESSION_MARKER_WRITE_FAILED');
+  }
   accessToken = token;
   authMeta = meta || null;
   await logAuthCacheState(result.copies ? 'SAVED_WITH_RECOVERY' : 'SAVED_VERIFIED_NO_BACKUP');
@@ -275,6 +288,14 @@ async function loadAuth() {
         code: 'AUTH_CACHE_RECOVERY_FAILED',
         message: 'No se pudo recuperar el acceso cifrado guardado. Comprueba las líneas AUTH_CACHE de startup.log.',
       };
+    } else {
+      try {
+        await fs.access(priorSignInPath());
+        pendingAuthInvalidation = {
+          code: 'AUTH_CACHE_MISSING_AFTER_LOGIN',
+          message: 'No se encontró la sesión que antes estaba guardada. Revisa los códigos AUTH_CACHE de startup.log.',
+        };
+      } catch { /* Normal first launch: no token has ever been saved. */ }
     }
     return null;
   }
