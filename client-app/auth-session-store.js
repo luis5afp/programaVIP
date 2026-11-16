@@ -29,7 +29,11 @@ export async function recoverAuthCopies({ primary, backups = [], previous = [], 
   if (first?.ok) return { ...first, source: 'primary', originalReason: null };
   // A permission error on the primary cache must not hide a separately
   // readable, encrypted backup. The session still needs server validation.
-  const recoverable = ['MISSING', 'DECRYPT_OR_FILE_INVALID', 'INVALID_TOKEN', 'INVALID_DATES', 'ACCESS_DENIED', 'LOAD_FAILED'];
+  const recoverable = [
+    'MISSING', 'DECRYPT_OR_FILE_INVALID', 'INVALID_JSON', 'INVALID_CIPHERTEXT',
+    'DECRYPT_FAILED', 'READ_FAILED', 'INVALID_TOKEN', 'INVALID_DATES',
+    'ACCESS_DENIED', 'LOAD_FAILED',
+  ];
   if (!recoverable.includes(String(first?.reason || ''))) {
     return { ...first, source: null, originalReason: first?.reason || 'UNKNOWN' };
   }
