@@ -229,6 +229,48 @@ export const api = {
       body.append('package', file, file.name || 'extension.zip');
       return request<ManagedExtension>(`/api/extensions/${id}/package`, { method: 'POST', body });
     },
+    downloadPackage: async (id: string): Promise<Blob> => {
+      const path = `/api/extensions/${encodeURIComponent(id)}/package`;
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 60_000);
+      try {
+        const response = await fetch(path, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { Accept: 'application/zip' },
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          const unauthenticated = response.status === 401 && payload?.code === 'UNAUTHENTICATED';
+          if (unauthenticated) {
+            window.dispatchEvent(new CustomEvent('userflex:admin-session-expired'));
+          }
+          throw new ApiError(friendlyApiError({
+            path,
+            method: 'GET',
+            status: response.status,
+            code: unauthenticated ? 'UNAUTHENTICATED' : payload?.code,
+            serverMessage: unauthenticated ? undefined : payload?.message || payload?.error,
+            requestId: response.headers.get('X-Userflex-Request-Id') || undefined,
+          }), response.status, payload?.code);
+        }
+        if (!/^application\/zip(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) {
+          throw new ApiError('El servidor no devolvió un archivo ZIP válido.', 502, 'EXTENSION_DOWNLOAD_INVALID_TYPE');
+        }
+        return await response.blob();
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          controller.signal.aborted ? 'La descarga tardó demasiado. Intenta nuevamente.' : 'No se pudo descargar el ZIP. Comprueba tu conexión.',
+          0,
+          controller.signal.aborted ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+        );
+      } finally {
+        window.clearTimeout(timer);
+      }
+    },
     setProfiles: (id: string, profileIds: string[]) =>
       request<{ ok: true; extension_id: string; profile_ids: string[] }>(`/api/extensions/${id}/profiles`, {
         method: 'POST',
