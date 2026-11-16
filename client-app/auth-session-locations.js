@@ -29,3 +29,7 @@ export function authBackupFiles(appDataDir, userDataDir) {
 export function signedOutMarkerFile(appDataDir) {
   return path.join(path.dirname(canonicalAuthFile(appDataDir)), 'signed-out.json');
 }
+
+export function priorSignInMarkerFile(appDataDir) {
+  return path.join(path.dirname(canonicalAuthFile(appDataDir)), 'signed-in-once.json');
+}
