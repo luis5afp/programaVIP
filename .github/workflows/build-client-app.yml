@@ -279,54 +279,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Publish automatic updater feed to Cloudflare R2
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN is required for R2 publishing." }
-          if (-not $env:CLOUDFLARE_ACCOUNT_ID) { throw "CLOUDFLARE_ACCOUNT_ID is required for R2 publishing." }
-
-          $bucket = 'userflex-client-releases'
-          & npx wrangler@4.130.0 r2 bucket info $bucket --json --cwd .. *> $null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Creating Cloudflare R2 bucket $bucket..."
-            & npx wrangler@4.130.0 r2 bucket create $bucket --cwd ..
-            if ($LASTEXITCODE -ne 0) { throw "Could not create R2 bucket $bucket." }
-          }
-
-          $version = node -p "require('./package.json').version"
-          $feedRoot = Join-Path $PWD 'dist\update-feed'
-          $versionRoot = Join-Path $feedRoot "versions\$version"
-          $parts = @(Get-ChildItem -Path $versionRoot -Filter 'part-*.bin' | Sort-Object Name)
-          if ($parts.Count -lt 1) { throw "No updater chunks were generated." }
-
-          foreach ($file in $parts) {
-            $objectName = "versions/$version/$($file.Name)"
-            Write-Host "Publishing R2 $objectName ($($file.Length) bytes)..."
-            & npx wrangler@4.130.0 r2 object put "$bucket/$objectName" --file "$($file.FullName)" --content-type "application/octet-stream" --cache-control "public, max-age=31536000, immutable" --remote --cwd ..
-            if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 object $objectName." }
-          }
-
-          $versionManifest = Get-Item -Path (Join-Path $versionRoot 'manifest.json')
-          & npx wrangler@4.130.0 r2 object put "$bucket/versions/$version/manifest.json" --file "$($versionManifest.FullName)" --content-type "application/json" --cache-control "public, max-age=31536000, immutable" --remote --cwd ..
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 version manifest." }
-
-          $manifest = Get-Item -Path (Join-Path $feedRoot 'latest.json')
-          & npx wrangler@4.130.0 r2 object put "$bucket/latest.json" --file "$($manifest.FullName)" --content-type "application/json" --cache-control "no-store, max-age=0" --remote --cwd ..
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish R2 latest.json." }
-
-          $verifyPath = Join-Path $env:RUNNER_TEMP 'userflex-r2-latest.json'
-          if (Test-Path $verifyPath) { Remove-Item $verifyPath -Force }
-          & npx wrangler@4.130.0 r2 object get "$bucket/latest.json" --file "$verifyPath" --remote --cwd ..
-          if ($LASTEXITCODE -ne 0) { throw "Failed to read R2 latest.json after publish." }
-          $published = Get-Content -Raw -Path $verifyPath | ConvertFrom-Json
-          if ($published.version -ne $version) { throw "R2 updater feed does not expose version $version." }
-          if (@($published.chunks).Count -ne $parts.Count) { throw "R2 updater feed chunk count mismatch." }
-
       - name: Publish Client release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         continue-on-error: true
@@ -345,6 +297,81 @@ jobs:
           } else {
             gh release create $tag $asset.FullName --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "userFLEX Client v$version" --notes "Instalador de Windows para clientes userFLEX. userFLOW se actualiza de forma independiente y no instala ni modifica userFLEX Session Manager. La firma VMP de producción se aplica cuando las credenciales EVS están disponibles, pero nunca bloquea la publicación de actualizaciones automáticas."
           }
+
+      - name: Publish automatic updater feed to Cloudflare R2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN is required for R2 publishing." }
+          if (-not $env:CLOUDFLARE_ACCOUNT_ID) { throw "CLOUDFLARE_ACCOUNT_ID is required for R2 publishing." }
+
+          # A 502/429 from the Cloudflare R2 API is transient, not a corrupt
+          # installer. Do not write latest.json until EVERY part was published.
+          function Invoke-R2PutWithRetry {
+            param(
+              [string]$Bucket,
+              [string]$ObjectName,
+              [string]$Path,
+              [string]$ContentType,
+              [string]$CacheControl
+            )
+            for ($attempt = 1; $attempt -le 7; $attempt++) {
+              & npx wrangler@4.130.0 r2 object put "$Bucket/$ObjectName" --file "$Path" --content-type "$ContentType" --cache-control "$CacheControl" --remote --cwd ..
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 7) { throw "Failed to publish R2 object $ObjectName after 7 attempts." }
+              $delay = [Math]::Min(30, [int][Math]::Pow(2, $attempt))
+              Write-Warning "R2 upload transient failure ($ObjectName), retry $($attempt + 1)/7 in $delay seconds."
+              Start-Sleep -Seconds $delay
+            }
+          }
+          function Invoke-R2GetWithRetry {
+            param([string]$Bucket, [string]$ObjectName, [string]$Path)
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              & npx wrangler@4.130.0 r2 object get "$Bucket/$ObjectName" --file "$Path" --remote --cwd ..
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 5) { throw "Failed to verify R2 object $ObjectName after 5 attempts." }
+              $delay = [Math]::Min(16, [int][Math]::Pow(2, $attempt))
+              Write-Warning "R2 verification failed, retry $($attempt + 1)/5 in $delay seconds."
+              Start-Sleep -Seconds $delay
+            }
+          }
+
+          $bucket = 'userflex-client-releases'
+          & npx wrangler@4.130.0 r2 bucket info $bucket --json --cwd .. *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Creating Cloudflare R2 bucket $bucket..."
+            & npx wrangler@4.130.0 r2 bucket create $bucket --cwd ..
+            if ($LASTEXITCODE -ne 0) { throw "Could not create R2 bucket $bucket." }
+          }
+
+          $version = node -p "require('./package.json').version"
+          $feedRoot = Join-Path $PWD 'dist\update-feed'
+          $versionRoot = Join-Path $feedRoot "versions\$version"
+          $parts = @(Get-ChildItem -Path $versionRoot -Filter 'part-*.bin' | Sort-Object Name)
+          if ($parts.Count -lt 1) { throw "No updater chunks were generated." }
+
+          foreach ($file in $parts) {
+            $objectName = "versions/$version/$($file.Name)"
+            Write-Host "Publishing R2 $objectName ($($file.Length) bytes)..."
+            Invoke-R2PutWithRetry -Bucket $bucket -ObjectName $objectName -Path $file.FullName -ContentType 'application/octet-stream' -CacheControl 'public, max-age=31536000, immutable'
+          }
+
+          $versionManifest = Get-Item -Path (Join-Path $versionRoot 'manifest.json')
+          Invoke-R2PutWithRetry -Bucket $bucket -ObjectName "versions/$version/manifest.json" -Path $versionManifest.FullName -ContentType 'application/json' -CacheControl 'public, max-age=31536000, immutable'
+
+          $manifest = Get-Item -Path (Join-Path $feedRoot 'latest.json')
+          Invoke-R2PutWithRetry -Bucket $bucket -ObjectName 'latest.json' -Path $manifest.FullName -ContentType 'application/json' -CacheControl 'no-store, max-age=0'
+
+          $verifyPath = Join-Path $env:RUNNER_TEMP 'userflex-r2-latest.json'
+          if (Test-Path $verifyPath) { Remove-Item $verifyPath -Force }
+          Invoke-R2GetWithRetry -Bucket $bucket -ObjectName 'latest.json' -Path $verifyPath
+          $published = Get-Content -Raw -Path $verifyPath | ConvertFrom-Json
+          if ($published.version -ne $version) { throw "R2 updater feed does not expose version $version." }
+          if (@($published.chunks).Count -ne $parts.Count) { throw "R2 updater feed chunk count mismatch." }
 
       - name: Prune old Client updater versions from Cloudflare R2
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
