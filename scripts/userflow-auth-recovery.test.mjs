@@ -52,10 +52,38 @@ try {
   assert.equal(corrupted.source, 'backup');
   assert.equal(corrupted.originalReason, 'DECRYPT_OR_FILE_INVALID');
 
+  // A denied primary may be recovered from a readable encrypted backup.
+  // The main process still validates the exact same token online.
+  const permissionResult = await recoverAuthCopies({
+    primary, backups, encryption,
+    read: async (file) => file === primary
+      ? { ok: false, reason: 'ACCESS_DENIED' }
+      : reader(file),
+  });
+  assert.equal(permissionResult.ok, true);
+  assert.equal(permissionResult.source, 'backup');
+  assert.equal(permissionResult.originalReason, 'ACCESS_DENIED');
+  assert.equal(permissionResult.token, token);
+
+  // An inaccessible backup must be reported as ACCESS_DENIED even if the
+  // primary file is missing, rather than silently treating it as first run.
+  const deniedBackup = await recoverAuthCopies({
+    primary, backups, encryption,
+    read: async (file) => file === primary
+      ? { ok: false, reason: 'MISSING' }
+      : { ok: false, reason: 'ACCESS_DENIED' },
+  });
+  assert.equal(deniedBackup.ok, false);
+  assert.equal(deniedBackup.reason, 'ACCESS_DENIED');
+  assert.equal(deniedBackup.originalReason, 'MISSING');
+
   // A signed-out session must never be resurrected by a previously created
   // backup. Main checks this marker before calling recoverAuthCopies.
   const main = await readFile(new URL('../client-app/main.js', import.meta.url), 'utf8');
   assert.match(main, /if \(await hasSignedOutMarker\(\)\) \{/);
+  assert.match(main, /if \(error\?\.code === 'ENOENT'\) return false;/);
+  assert.match(main, /AUTH_CACHE_ACCESS_DENIED/);
+  assert.match(main, /auth-diagnostics\.log/);
   assert.match(main, /await fs\.writeFile\(signedOutPath\(\), '\{"signedOut":true\}'/);
   assert.match(main, /new Set\(\[authPath\(\), \.\.\.authBackupPaths\(\), \.\.\.previousAuthPaths\(\)\]\)/);
   assert.match(main, /await recoverAuthCopies\(\{[\s\S]*?primary: authPath\(\),[\s\S]*?backups: authBackupPaths\(\)/);
