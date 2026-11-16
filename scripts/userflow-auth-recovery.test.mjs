@@ -63,7 +63,7 @@ try {
     'recovered token must be re-encrypted at canonical location');
   assert.match(main, /const data = await catalog\(\{[\s\S]*?quickVerify: input\?\.retry !== true/,
     'even a recovered local token needs online authorization');
-  assert.match(main, /await logAuthCacheState\('RECOVERED_FROM_BACKUP'\)/,
+  assert.match(main, /restored\.source === 'backup'\s*\? 'RECOVERED_FROM_BACKUP'/,
     'diagnostics must identify backup recovery without logging secrets');
   assert.equal(signedOutMarkerFile(appData), path.join(path.dirname(primary), 'signed-out.json'));
   assert.ok(previousAuthFiles(appData, userData).length >= 1);
