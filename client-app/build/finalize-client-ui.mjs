@@ -39,11 +39,11 @@ if (!renderer.includes(bridgeGuardMarker)) {
 
 const timeoutMarker = '// userFLOW bootstrap timeout v1';
 if (!renderer.includes(timeoutMarker)) {
-  const startupCall = '  const result = await window.userflex.bootstrap();';
+  const startupCall = '  const result = await window.userflex.bootstrap({ retry });';
   if (!renderer.includes(startupCall)) throw new Error('Could not locate renderer bootstrap call');
-  const timeoutHelper = `${timeoutMarker}\nfunction bootstrapWithTimeout(timeoutMs = 30000) {\n  let timer = null;\n  const timeout = new Promise((resolve) => {\n    timer = setTimeout(() => resolve({\n      authenticated: false,\n      pending: true,\n      error: {\n        message: 'El inicio de userFLOW tardó demasiado. Verifica tu conexión y vuelve a intentarlo.',\n        code: 'BOOTSTRAP_TIMEOUT',\n        status: 0,\n      },\n    }), timeoutMs);\n  });\n  return Promise.race([window.userflex.bootstrap(), timeout]).finally(() => {\n    if (timer) clearTimeout(timer);\n  });\n}\n\n`;
+  const timeoutHelper = `${timeoutMarker}\nfunction bootstrapWithTimeout(options = {}, timeoutMs = 30000) {\n  let timer = null;\n  const timeout = new Promise((resolve) => {\n    timer = setTimeout(() => resolve({\n      authenticated: false,\n      pending: true,\n      error: {\n        message: 'El inicio de userFLOW tardó demasiado. Verifica tu conexión y vuelve a intentarlo.',\n        code: 'BOOTSTRAP_TIMEOUT',\n        status: 0,\n      },\n    }), timeoutMs);\n  });\n  return Promise.race([window.userflex.bootstrap(options), timeout]).finally(() => {\n    if (timer) clearTimeout(timer);\n  });\n}\n\n`;
   renderer = renderer.replace('(async () => {\n', `${timeoutHelper}(async () => {\n`);
-  renderer = renderer.replace(startupCall, '  const result = await bootstrapWithTimeout();');
+  renderer = renderer.replace(startupCall, '  const result = await bootstrapWithTimeout({ retry });');
 }
 
 await fs.writeFile(rendererPath, renderer, 'utf8');
