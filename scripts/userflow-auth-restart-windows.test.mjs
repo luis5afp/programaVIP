@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, writeFile, unlink, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,24 +21,31 @@ await mkdir(otherUserData, { recursive:true });
 await mkdir(appData, { recursive:true });
 const modulePath = path.join(root, 'client-app', 'auth-session-cache.js');
 const locationModule = path.join(root, 'client-app', 'auth-session-locations.js');
+const storeModule = path.join(root, 'client-app', 'auth-session-store.js');
 const testMain = [
   "const { app, safeStorage } = require('electron');",
   "const { pathToFileURL } = require('node:url');",
   "app.setPath('userData', process.env.USERFLOW_AUTH_TEST_USER_DATA);",
   "app.whenReady().then(async () => {",
-  "  const { saveEncryptedAuthSession, readEncryptedAuthSession } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_MODULE).href);",
-  "  const { canonicalAuthFile } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_LOCATIONS).href);",
+  "  const { persistRecoverableAuth, recoverAuthCopies } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_STORE).href);",
+  "  const { canonicalAuthFile, authBackupFiles } = await import(pathToFileURL(process.env.USERFLOW_AUTH_TEST_LOCATIONS).href);",
   "  const cacheFile = canonicalAuthFile(process.env.USERFLOW_AUTH_TEST_APP_DATA);",
+  "  const backupFiles = authBackupFiles(process.env.USERFLOW_AUTH_TEST_APP_DATA, process.env.USERFLOW_AUTH_TEST_USER_DATA);",
   "  const token = 'AUTH_TEST_ONLY_A'.repeat(4);",
   "  if (process.env.USERFLOW_AUTH_TEST_PHASE === 'save') {",
   "    const createdAt = new Date().toISOString();",
   "    const meta = { createdAt, expiresAt: new Date(Date.parse(createdAt) + 24 * 60 * 60 * 1000).toISOString() };",
-  "    await saveEncryptedAuthSession(cacheFile, token, meta, safeStorage);",
+  "    const saved = await persistRecoverableAuth({primary:cacheFile, backups:backupFiles, token, meta, encryption:safeStorage});",
+  "    if (saved.copies < 1) throw new Error('No encrypted recovery copy saved');",
   "    process.stdout.write('USERFLOW_AUTH_SMOKE_SAVED\\n');",
   "  } else {",
-  "    const result = await readEncryptedAuthSession(cacheFile, safeStorage);",
+  "    const result = await recoverAuthCopies({primary:cacheFile, backups:backupFiles, encryption:safeStorage});",
   "    if (result.ok !== true || result.token !== token || result.legacyCreatedAt || result.legacyExpiry) {",
   "      throw new Error('Cannot reopen secure session: ' + String(result.reason || 'invalid token'));",
+  "    }",
+  "    if (process.env.USERFLOW_AUTH_TEST_PHASE === 'recover') {",
+  "      if (result.source !== 'backup') throw new Error('Lost cache not recovered from encrypted backup');",
+  "      await persistRecoverableAuth({primary:cacheFile, backups:backupFiles, token, meta:result.meta, encryption:safeStorage});",
   "    }",
   "    process.stdout.write('USERFLOW_AUTH_SMOKE_REOPENED\\n');",
   "  }",
@@ -63,6 +70,7 @@ async function run(phase, marker) {
         USERFLOW_AUTH_TEST_USER_DATA: selectPersistentUserData(appData, phase === 'save' ? userData : otherUserData),
         USERFLOW_AUTH_TEST_APP_DATA:appData,
         USERFLOW_AUTH_TEST_LOCATIONS:locationModule,
+        USERFLOW_AUTH_TEST_STORE:storeModule,
         USERFLOW_AUTH_TEST_MODULE:modulePath,
         USERFLOW_AUTH_TEST_PHASE:phase,
       },
@@ -82,7 +90,15 @@ try {
   // A new Electron process with DIFFERENT userData retrieves the same
   // token because its canonical Windows account location does not change.
   await run('load','USERFLOW_AUTH_SMOKE_REOPENED');
-  console.log('userFLOW Windows DPAPI/electron safeStorage: persisted across closing and reopening: OK');
+  // Simulate the issue from the user's screenshots: a later startup no
+  // longer finds the primary auth.json despite a successful earlier login.
+  // It must recover only a Windows-encrypted backup, then validate with the
+  // server in the actual application before offering access.
+  const { canonicalAuthFile } = await import('../client-app/auth-session-locations.js');
+  await unlink(canonicalAuthFile(appData));
+  await run('recover','USERFLOW_AUTH_SMOKE_REOPENED');
+  await run('load','USERFLOW_AUTH_SMOKE_REOPENED');
+  console.log('userFLOW Windows DPAPI/electron safeStorage: saved, reopened and recovered after lost primary token: OK');
 } finally {
   await rm(fixtureDir,{recursive:true,force:true,maxRetries:5,retryDelay:300}).catch(()=>{});
 }
