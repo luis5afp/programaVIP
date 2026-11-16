@@ -14,7 +14,7 @@ export async function persistRecoverableAuth({
       copies += 1;
     } catch (error) {
       if (typeof onBackupError === 'function') {
-        await onBackupError(error).catch(() => null);
+        await Promise.resolve().then(() => onBackupError(error)).catch(() => null);
       }
     }
   }
