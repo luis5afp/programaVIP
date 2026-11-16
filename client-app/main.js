@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
-import { canonicalAuthFile, previousAuthFiles } from './auth-session-locations.js';
+import { canonicalAuthFile, previousAuthFiles, authBackupFiles } from './auth-session-locations.js';
+import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +69,10 @@ function authPath() {
 
 function previousAuthPaths() {
   return previousAuthFiles(app.getPath('appData'), app.getPath('userData'));
+}
+
+function authBackupPaths() {
+  return authBackupFiles(app.getPath('appData'), app.getPath('userData'));
 }
 
 function loginCredentialsPath() {
@@ -163,21 +168,30 @@ async function logAuthCacheState(code) {
 }
 
 async function saveAuth(token, meta) {
-  const persist = () => saveEncryptedAuthSession(authPath(), token, meta, safeStorage);
+  const persist = () => persistRecoverableAuth({
+    primary: authPath(),
+    backups: authBackupPaths(),
+    token,
+    meta,
+    encryption: safeStorage,
+    onBackupError: (error) => logAuthCacheState(isLocalPermissionError(error)
+      ? 'BACKUP_ACCESS_DENIED' : 'BACKUP_WRITE_FAILED'),
+  });
+  let result;
   try {
-    await persist();
+    result = await persist();
   } catch (error) {
     if (!isLocalPermissionError(error)) {
       await logAuthCacheState(error?.code || 'SAVE_FAILED');
       throw error;
     }
-    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(path.dirname(authPath()));
     await repairLocalPathAccess(authPath());
-    await persist();
+    result = await persist();
   }
   accessToken = token;
   authMeta = meta || null;
-  await logAuthCacheState('SAVED_VERIFIED');
+  await logAuthCacheState(result.copies ? 'SAVED_WITH_RECOVERY' : 'SAVED_VERIFIED_NO_BACKUP');
 }
 
 async function loadAuth() {
@@ -195,28 +209,25 @@ async function loadAuth() {
       }
     }
   };
-  let restored = await tryRead(authPath());
-  let migrated = false;
-  // Only migrate when the canonical cache is missing. An expired/invalidated
-  // canonical token must NOT be replaced with a stale token elsewhere.
-  if (!restored.ok && ['MISSING', 'DECRYPT_OR_FILE_INVALID'].includes(restored.reason)) {
-    for (const oldPath of previousAuthPaths()) {
-      const old = await tryRead(oldPath);
-      if (old.ok) {
-        try {
-          await saveAuth(old.token, old.meta);
-          restored = old;
-          migrated = true;
-          await logAuthCacheState('MIGRATED_FROM_PREVIOUS_DATA_DIR');
-          // Never resurrect the same credentials from a previous directory.
-          await fs.unlink(oldPath).catch(() => null);
-          break;
-        } catch (error) {
-          await logAuthCacheState(error?.code || 'MIGRATION_SAVE_FAILED');
-          restored = { ok: false, reason: 'MIGRATION_SAVE_FAILED' };
-          break;
-        }
+  const restored = await recoverAuthCopies({
+    primary: authPath(),
+    backups: authBackupPaths(),
+    previous: previousAuthPaths(),
+    read: tryRead,
+  });
+  const migrated = Boolean(restored.ok && restored.source !== 'primary');
+  if (migrated) {
+    await logAuthCacheState(restored.source === 'backup'
+      ? 'RECOVERED_FROM_BACKUP' : 'MIGRATED_FROM_PREVIOUS_DATA_DIR');
+    try {
+      await saveAuth(restored.token, restored.meta);
+      if (restored.source === 'legacy' && restored.file) {
+        await fs.unlink(restored.file).catch(() => null);
       }
+    } catch (error) {
+      await logAuthCacheState(error?.code || 'RECOVERY_SAVE_FAILED');
+      // Keep the recovered token in memory; the server must still validate it
+      // before the catalog becomes accessible.
     }
   }
   if (!restored.ok) {
@@ -227,6 +238,13 @@ async function loadAuth() {
       pendingAuthInvalidation = {
         code: 'AUTH_SECURE_STORAGE_UNAVAILABLE',
         message: 'Windows no permitió recuperar la sesión cifrada. Comprueba la protección de datos de este usuario.',
+      };
+    } else if (reason !== 'MISSING') {
+      // Do not silently represent damaged/encrypted-unreadable auth storage
+      // as a fresh installation. The error contains no token or private path.
+      pendingAuthInvalidation = {
+        code: 'AUTH_CACHE_RECOVERY_FAILED',
+        message: 'No se pudo recuperar el acceso cifrado guardado. Comprueba las líneas AUTH_CACHE de startup.log.',
       };
     }
     return null;
@@ -261,7 +279,7 @@ async function clearAuth() {
   stopHeartbeat();
   // Logout/expiration invalidates all historical cache locations, including
   // the directories used before the Electron display name was standardized.
-  for (const file of [authPath(), ...previousAuthPaths()]) {
+  for (const file of new Set([authPath(), ...authBackupPaths(), ...previousAuthPaths()])) {
     try {
       await fs.unlink(file);
     } catch (error) {
