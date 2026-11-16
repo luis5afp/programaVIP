@@ -76,7 +76,9 @@ assert.match(main, /ipcMain\.handle\('userflex:reveal-auth-window'/);
 assert.match(main, /ipcMain\.handle\('userflex:catalog-ready'/);
 assert.match(preload, /revealAuthWindow:\s*\(\) => ipcRenderer\.invoke\('userflex:reveal-auth-window'\)/);
 assert.match(preload, /catalogReady:\s*\(\) => ipcRenderer\.invoke\('userflex:catalog-ready'\)/);
-assert.match(renderer, /requestAnimationFrame\(\(\) => void window\.userflex\.catalogReady\?\.\(\)\)/);
+assert.match(renderer, /queueMicrotask\(\(\) => void window\.userflex\.catalogReady\?\.\(\)\)/);
+assert.doesNotMatch(renderer, /requestAnimationFrame\(\(\) => void window\.userflex\.catalogReady/,
+  'a hidden Electron window must not wait for requestAnimationFrame to signal catalog readiness');
 assert.match(renderer, /window\.userflex\.revealAuthWindow\?\.\(\)/);
 assert.match(html, /id="loading-view"/, 'offline retries must remain available');
 console.log('userFLOW fast secure direct catalog startup (single online check, hidden handoff, offline recovery): OK');
