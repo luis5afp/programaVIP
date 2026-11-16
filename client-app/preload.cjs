@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('userflex', {
   bootstrap: (options) => ipcRenderer.invoke('userflex:bootstrap', options),
+  revealAuthWindow: () => ipcRenderer.invoke('userflex:reveal-auth-window'),
+  catalogReady: () => ipcRenderer.invoke('userflex:catalog-ready'),
   login: (input) => ipcRenderer.invoke('userflex:login', input),
   logout: () => ipcRenderer.invoke('userflex:logout'),
   catalog: () => ipcRenderer.invoke('userflex:catalog'),
