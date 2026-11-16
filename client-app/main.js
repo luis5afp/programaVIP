@@ -1582,8 +1582,11 @@ function showCatalogTab(mode = 'home') {
   pendingCatalogTab = mode === 'pending';
   setActiveContent(createCatalogView());
   sendBrowserState();
-  window.show();
-  window.focus();
+  // On initial launch this window is hidden until its embedded catalog
+  // acknowledges that the authorized cards are ready. Later tab navigation
+  // may focus an already-visible workspace without another server request.
+  if (window.isVisible()) window.focus();
+  else revealVerifiedWorkspace();
   return true;
 }
 
