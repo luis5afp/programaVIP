@@ -94,6 +94,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check main.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check auth-session-store.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check renderer.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check preload.cjs
@@ -141,6 +143,9 @@ jobs:
 
       - name: Verify server-clock token persistence under Windows time skew
         run: node ../scripts/userflow-auth-clock-skew.test.mjs
+
+      - name: Verify recoverable 24-hour token and explicit sign-out
+        run: node ../scripts/userflow-auth-recovery.test.mjs
 
       - name: Verify stable auth path across Windows app restarts and logout
         run: node ../scripts/userflow-auth-stable-location.test.mjs

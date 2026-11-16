@@ -49,8 +49,10 @@ assert.match(auth, /revoked_at=is\.null&expires_at=gt/,
   'every validated token must be neither revoked nor expired');
 assert.match(authCache, /encryption\.encryptString\(token\)/,
   'the issued token is encrypted locally with Electron safeStorage');
-assert.match(main, /saveEncryptedAuthSession\(authPath\(\), token, meta, safeStorage\)/,
-  'the main process must save a verified encrypted auth cache');
+assert.match(main, /persistRecoverableAuth\(\{/,
+  'main must save verified encrypted primary and recovery copies');
+assert.match(main, /await recoverAuthCopies\(\{/,
+  'reopening must check encrypted recovery if primary is missing');
 assert.match(main, /async function loadAuth\(\)/,
   'valid encrypted token resumes login after restarting the app');
 assert.match(authCache, /locallyExpired = Number\.isFinite\(expiresAt\)/,

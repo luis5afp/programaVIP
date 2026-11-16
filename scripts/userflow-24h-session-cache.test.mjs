@@ -47,7 +47,8 @@ try {
   const worker = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
   const auth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
   const finalizer = readFileSync(new URL('../client-app/build/finalize-client-ui.mjs', import.meta.url), 'utf8');
-  assert.match(main, /await saveEncryptedAuthSession|saveEncryptedAuthSession\(authPath\(\), token, meta, safeStorage\)/);
+  assert.match(main, /persistRecoverableAuth\(\{/,
+    'login must save encrypted verified recovery copies');
   assert.match(main, /readEncryptedAuthSession\(candidate, safeStorage\)/,
     'the canonical and legacy files must use the same secure decryption');
   assert.match(main, /if \(accessToken && !authError\(error\)\)/,

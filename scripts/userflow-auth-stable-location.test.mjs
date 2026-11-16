@@ -41,12 +41,12 @@ assert.match(startup, /selectPersistentUserData\(app\.getPath\('appData'\), app\
 const server = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
 const catalog = readFileSync(new URL('../cloudflare/lib/client.ts', import.meta.url), 'utf8');
 assert.match(source, /canonicalAuthFile\(app\.getPath\('appData'\)\)/);
-assert.match(source, /if \(!restored\.ok && \['MISSING', 'DECRYPT_OR_FILE_INVALID'\]\.includes\(restored\.reason\)\)/,
-  'migration handles missing or unreadable historical cache without resurrecting expired tokens');
-assert.match(source, /await saveAuth\(old\.token, old\.meta\)/,
-  'migration must verify the encrypted token in its canonical location');
-assert.match(source, /for \(const file of \[authPath\(\), \.\.\.previousAuthPaths\(\)\]\)/,
-  'logout must delete canonical and legacy tokens, preventing resurrection');
+assert.match(source, /await recoverAuthCopies\(\{/,
+  'migration must test primary, encrypted backups and older auth locations');
+assert.match(source, /await saveAuth\(restored\.token, restored\.meta\)/,
+  'recovery must verify the encrypted token in its canonical location');
+assert.match(source, /new Set\(\[authPath\(\), \.\.\.authBackupPaths\(\), \.\.\.previousAuthPaths\(\)\]\)/,
+  'logout must delete canonical, recovery and legacy tokens, preventing resurrection');
 assert.doesNotMatch(startup, /await copyIdentityFile\('auth\.json'\)/,
   'startup must not duplicate encrypted token after explicit logout');
 assert.match(server, /createdAt: sessionCreatedAt/,

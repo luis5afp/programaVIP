@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
-import { canonicalAuthFile, previousAuthFiles } from './auth-session-locations.js';
+import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile, priorSignInMarkerFile } from './auth-session-locations.js';
+import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +69,27 @@ function authPath() {
 
 function previousAuthPaths() {
   return previousAuthFiles(app.getPath('appData'), app.getPath('userData'));
+}
+
+function authBackupPaths() {
+  return authBackupFiles(app.getPath('appData'), app.getPath('userData'));
+}
+
+function signedOutPath() {
+  return signedOutMarkerFile(app.getPath('appData'));
+}
+
+function priorSignInPath() {
+  return priorSignInMarkerFile(app.getPath('appData'));
+}
+
+async function hasSignedOutMarker() {
+  try {
+    await fs.access(signedOutPath());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function loginCredentialsPath() {
@@ -163,24 +185,58 @@ async function logAuthCacheState(code) {
 }
 
 async function saveAuth(token, meta) {
-  const persist = () => saveEncryptedAuthSession(authPath(), token, meta, safeStorage);
+  const persist = () => persistRecoverableAuth({
+    primary: authPath(),
+    backups: authBackupPaths(),
+    token,
+    meta,
+    encryption: safeStorage,
+    onBackupError: (error) => logAuthCacheState(isLocalPermissionError(error)
+      ? 'BACKUP_ACCESS_DENIED' : 'BACKUP_WRITE_FAILED'),
+  });
+  let result;
   try {
-    await persist();
+    result = await persist();
   } catch (error) {
     if (!isLocalPermissionError(error)) {
       await logAuthCacheState(error?.code || 'SAVE_FAILED');
       throw error;
     }
-    await repairLocalPathAccess(app.getPath('userData'));
+    await repairLocalPathAccess(path.dirname(authPath()));
     await repairLocalPathAccess(authPath());
-    await persist();
+    result = await persist();
+  }
+  // The signed-out marker blocks accidental resurrection of an older backup
+  // when Windows denies file deletion. A fresh successful login clears it.
+  try {
+    await fs.unlink(signedOutPath());
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      await logAuthCacheState('LOGOUT_MARKER_CLEAR_FAILED');
+      throw Object.assign(new Error('No se pudo preparar la sesión persistente.'), {
+        code: 'AUTH_LOGOUT_MARKER_CLEAR_FAILED',
+      });
+    }
+  }
+  // A marker containing no credentials distinguishes first-run login from
+  // an unexpectedly vanished token cache in later launches.
+  try {
+    await fs.writeFile(priorSignInPath(), '{"hadSavedSession":true}', {
+      encoding: 'utf8', mode: 0o600,
+    });
+  } catch {
+    await logAuthCacheState('SESSION_MARKER_WRITE_FAILED');
   }
   accessToken = token;
   authMeta = meta || null;
-  await logAuthCacheState('SAVED_VERIFIED');
+  await logAuthCacheState(result.copies ? 'SAVED_WITH_RECOVERY' : 'SAVED_VERIFIED_NO_BACKUP');
 }
 
 async function loadAuth() {
+  if (await hasSignedOutMarker()) {
+    await logAuthCacheState('EXPLICIT_LOGOUT_MARKER');
+    return null;
+  }
   const tryRead = async (candidate) => {
     try {
       return await readEncryptedAuthSession(candidate, safeStorage);
@@ -195,28 +251,25 @@ async function loadAuth() {
       }
     }
   };
-  let restored = await tryRead(authPath());
-  let migrated = false;
-  // Only migrate when the canonical cache is missing. An expired/invalidated
-  // canonical token must NOT be replaced with a stale token elsewhere.
-  if (!restored.ok && ['MISSING', 'DECRYPT_OR_FILE_INVALID'].includes(restored.reason)) {
-    for (const oldPath of previousAuthPaths()) {
-      const old = await tryRead(oldPath);
-      if (old.ok) {
-        try {
-          await saveAuth(old.token, old.meta);
-          restored = old;
-          migrated = true;
-          await logAuthCacheState('MIGRATED_FROM_PREVIOUS_DATA_DIR');
-          // Never resurrect the same credentials from a previous directory.
-          await fs.unlink(oldPath).catch(() => null);
-          break;
-        } catch (error) {
-          await logAuthCacheState(error?.code || 'MIGRATION_SAVE_FAILED');
-          restored = { ok: false, reason: 'MIGRATION_SAVE_FAILED' };
-          break;
-        }
+  const restored = await recoverAuthCopies({
+    primary: authPath(),
+    backups: authBackupPaths(),
+    previous: previousAuthPaths(),
+    read: tryRead,
+  });
+  const migrated = Boolean(restored.ok && restored.source !== 'primary');
+  if (migrated) {
+    await logAuthCacheState(restored.source === 'backup'
+      ? 'RECOVERED_FROM_BACKUP' : 'MIGRATED_FROM_PREVIOUS_DATA_DIR');
+    try {
+      await saveAuth(restored.token, restored.meta);
+      if (restored.source === 'legacy' && restored.file) {
+        await fs.unlink(restored.file).catch(() => null);
       }
+    } catch (error) {
+      await logAuthCacheState(error?.code || 'RECOVERY_SAVE_FAILED');
+      // Keep the recovered token in memory; the server must still validate it
+      // before the catalog becomes accessible.
     }
   }
   if (!restored.ok) {
@@ -228,6 +281,21 @@ async function loadAuth() {
         code: 'AUTH_SECURE_STORAGE_UNAVAILABLE',
         message: 'Windows no permitió recuperar la sesión cifrada. Comprueba la protección de datos de este usuario.',
       };
+    } else if (reason !== 'MISSING') {
+      // Do not silently represent damaged/encrypted-unreadable auth storage
+      // as a fresh installation. The error contains no token or private path.
+      pendingAuthInvalidation = {
+        code: 'AUTH_CACHE_RECOVERY_FAILED',
+        message: 'No se pudo recuperar el acceso cifrado guardado. Comprueba las líneas AUTH_CACHE de startup.log.',
+      };
+    } else {
+      try {
+        await fs.access(priorSignInPath());
+        pendingAuthInvalidation = {
+          code: 'AUTH_CACHE_MISSING_AFTER_LOGIN',
+          message: 'No se encontró la sesión que antes estaba guardada. Revisa los códigos AUTH_CACHE de startup.log.',
+        };
+      } catch { /* Normal first launch: no token has ever been saved. */ }
     }
     return null;
   }
@@ -259,9 +327,17 @@ async function clearAuth() {
   authMeta = null;
   profileImageDataCache.clear();
   stopHeartbeat();
+  // Invalidate before touching any cached token; a failed file deletion must
+  // never resurrect a previously signed-out session, even when offline.
+  try {
+    await fs.mkdir(path.dirname(signedOutPath()), { recursive: true });
+    await fs.writeFile(signedOutPath(), '{"signedOut":true}', { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    await logAuthCacheState('LOGOUT_MARKER_WRITE_FAILED');
+  }
   // Logout/expiration invalidates all historical cache locations, including
   // the directories used before the Electron display name was standardized.
-  for (const file of [authPath(), ...previousAuthPaths()]) {
+  for (const file of new Set([authPath(), ...authBackupPaths(), ...previousAuthPaths()])) {
     try {
       await fs.unlink(file);
     } catch (error) {
