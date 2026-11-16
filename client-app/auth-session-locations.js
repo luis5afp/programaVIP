@@ -25,3 +25,7 @@ export function authBackupFiles(appDataDir, userDataDir) {
     path.join(userDataDir, 'auth-recovery.json'),
   ])).filter((candidate) => path.resolve(candidate).toLowerCase() !== path.resolve(canonical).toLowerCase());
 }
+
+export function signedOutMarkerFile(appDataDir) {
+  return path.join(path.dirname(canonicalAuthFile(appDataDir)), 'signed-out.json');
+}
