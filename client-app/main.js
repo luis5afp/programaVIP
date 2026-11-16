@@ -29,6 +29,10 @@ app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 let mainWindow = null;
 let browserWindow = null;
 let browserShellReady = false;
+let catalogContentReady = false;
+// This is populated ONLY after the server validates the bearer token.
+// Reuse the response in the embedded catalog instead of calling Neon twice.
+let serverVerifiedCatalog = null;
 let catalogView = null;
 let activeContentView = null;
 let activeProfileId = null;
@@ -362,6 +366,8 @@ async function removeLegacyLoginCredentials() {
 }
 
 async function clearAuth() {
+  serverVerifiedCatalog = null;
+  catalogContentReady = false;
   accessToken = null;
   authMeta = null;
   profileImageDataCache.clear();
@@ -1112,6 +1118,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 620,
     title: 'userFLOW',
+    show: false,
     backgroundColor: '#080b10',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -1121,11 +1128,24 @@ function createMainWindow() {
       devTools: false,
     },
   });
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  const authWindow = mainWindow;
+  // Only a missing/expired session or an offline retry should reveal the
+  // login/recovery window. A verified session goes straight to the catalog.
+  // Defensive fallback: never strand users on an invisible window if IPC
+  // or the renderer fails before it can request the login screen.
+  const revealFallback = setTimeout(() => {
+    if (mainWindow === authWindow && !authWindow.isDestroyed()
+      && !authWindow.isVisible() && !serverVerifiedCatalog) authWindow.show();
+  }, 10_000);
+  authWindow.on('closed', () => {
+    clearTimeout(revealFallback);
+    if (mainWindow === authWindow) mainWindow = null;
   });
-  void mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  return mainWindow;
+  authWindow.webContents.on('did-fail-load', () => {
+    if (!authWindow.isDestroyed()) authWindow.show();
+  });
+  void authWindow.loadFile(path.join(__dirname, 'index.html'));
+  return authWindow;
 }
 
 function isEmbeddedCatalogSender(sender) {
@@ -1136,16 +1156,26 @@ function isEmbeddedCatalogSender(sender) {
   }
 }
 
+// Show the workspace ONLY when the single online token check succeeded AND
+// the embedded catalog has painted the authorized profile list. The normal
+// startup never shows either of the two full-screen recovery messages.
+function revealVerifiedWorkspace() {
+  if (!accessToken || !serverVerifiedCatalog || !browserShellReady || !catalogContentReady
+    || !browserWindow || browserWindow.isDestroyed()) return;
+  const expiresAt = Date.parse(String(authMeta?.expiresAt || ''));
+  if (!Number.isFinite(expiresAt) || expiresAt <= estimatedServerNow(authMeta)) return;
+  browserWindow.show();
+  browserWindow.focus();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+}
+
 function enterWorkspace(sender) {
   if (isEmbeddedCatalogSender(sender)) return;
   setTimeout(() => {
-    if (!accessToken) return;
-    const sourceWindow = BrowserWindow.fromWebContents(sender);
-    const workspace = createBrowserWindow();
+    if (!accessToken || !serverVerifiedCatalog) return;
+    createBrowserWindow();
     showCatalogTab('home');
-    workspace.show();
-    workspace.focus();
-    if (sourceWindow && sourceWindow === mainWindow && !sourceWindow.isDestroyed()) sourceWindow.close();
+    revealVerifiedWorkspace();
   }, 0);
 }
 
@@ -1475,6 +1505,7 @@ function cleanupWorkspace(workspace, reason = 'profile_closed') {
 
 function createCatalogView() {
   if (catalogView && !catalogView.webContents.isDestroyed()) return catalogView;
+  catalogContentReady = false;
   catalogView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -1493,6 +1524,7 @@ function createCatalogView() {
 function createBrowserWindow() {
   if (browserWindow && !browserWindow.isDestroyed()) return browserWindow;
   browserShellReady = false;
+  catalogContentReady = false;
   activeContentView = null;
   browserWindow = new BrowserWindow({
     width: 1380,
@@ -1517,13 +1549,14 @@ function createBrowserWindow() {
     browserShellReady = true;
     sendBrowserState();
     layoutActiveContent();
-    if (!browserWindow?.isDestroyed()) browserWindow.show();
+    revealVerifiedWorkspace();
   });
   browserWindow.on('closed', () => {
     stopProfileDragMonitor();
     const workspaces = Array.from(profileTabs.values());
     browserWindow = null;
     browserShellReady = false;
+    catalogContentReady = false;
     activeProfileId = null;
     pendingCatalogTab = false;
     activeContentView = null;
@@ -2349,10 +2382,45 @@ for (const pendingUrl of Array.from(globalThis.__userflowPendingProtocolUrls || 
 }
 globalThis.__userflowPendingProtocolUrls = [];
 
+// The hidden login window only becomes visible after the renderer knows
+// there is no usable session (or that the server cannot currently be reached).
+ipcMain.handle('userflex:reveal-auth-window', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents
+    || serverVerifiedCatalog) return false;
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+});
+
+// This signal comes exclusively from the catalog WebContentsView AFTER its
+// renderer has built the server-authorized profile cards.
+ipcMain.handle('userflex:catalog-ready', (event) => {
+  if (!catalogView || catalogView.webContents.isDestroyed()
+    || event.sender !== catalogView.webContents
+    || !accessToken || !serverVerifiedCatalog) return false;
+  catalogContentReady = true;
+  revealVerifiedWorkspace();
+  return true;
+});
+
 ipcMain.handle('userflex:bootstrap', async (event, input = {}) => {
   try {
+    // The embedded view is a second renderer of the SAME already validated
+    // session, not a new sign-in. Reuse the live validated catalog, never a
+    // disk cache, and never let arbitrary renderer origins use this shortcut.
+    if (catalogView && event.sender === catalogView.webContents) {
+      const expiresAt = Date.parse(String(authMeta?.expiresAt || ''));
+      const valid = accessToken && serverVerifiedCatalog && Number.isFinite(expiresAt)
+        && expiresAt > estimatedServerNow(authMeta);
+      return valid
+        ? { authenticated: true, auth: authMeta, catalog: serverVerifiedCatalog }
+        : { authenticated: false };
+    }
     await removeLegacyLoginCredentials();
     if (!accessToken) await loadAuth();
+    // Warm the native window while the one mandatory server check runs.
+    // It stays hidden and has no profile contents until authorization.
+    if (accessToken) createBrowserWindow();
     if (!accessToken) {
       const pending = pendingAuthInvalidation;
       pendingAuthInvalidation = null;
@@ -2368,6 +2436,7 @@ ipcMain.handle('userflex:bootstrap', async (event, input = {}) => {
     // The server has validated this exact token and its expiry. Remote logos
     // and local marker reconciliation must not hold the login screen open.
     mergeValidationMeta(data);
+    serverVerifiedCatalog = data;
     scheduleInitialCatalogSync(data, 'bootstrap');
     startHeartbeat();
     enterWorkspace(event.sender);
@@ -2418,6 +2487,7 @@ ipcMain.handle('userflex:login', async (event, input) => {
     await saveAuth(result.accessToken, meta);
     const data = await catalog({ deferImages: true });
     mergeValidationMeta(data);
+    serverVerifiedCatalog = data;
     scheduleInitialCatalogSync(data, 'login');
     startHeartbeat();
     enterWorkspace(event.sender);
