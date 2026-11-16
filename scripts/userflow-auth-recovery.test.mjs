@@ -50,7 +50,28 @@ try {
   const corrupted = await recoverAuthCopies({primary, backups, encryption});
   assert.equal(corrupted.ok, true);
   assert.equal(corrupted.source, 'backup');
-  assert.equal(corrupted.originalReason, 'DECRYPT_OR_FILE_INVALID');
+  assert.equal(corrupted.originalReason, 'INVALID_JSON');
+
+  // Distinguish corrupt JSON from ciphertext loss, and ciphertext from a
+  // Windows safeStorage/DPAPI failure without leaking cipher or token values.
+  const cacheModule = await import('../client-app/auth-session-cache.js');
+  await writeFile(primary, JSON.stringify({version: 3, token: 'invalid!' }), 'utf8');
+  const invalidCipher = await cacheModule.readEncryptedAuthSession(primary, encryption);
+  assert.equal(invalidCipher.reason, 'INVALID_CIPHERTEXT');
+  await writeFile(primary, JSON.stringify({version: 3, token: 'QUJDREVGR0hJSktMTU5PUA==' }), 'utf8');
+  const brokenDpapi = await cacheModule.readEncryptedAuthSession(primary, {
+    isEncryptionAvailable: () => true,
+    decryptString: () => { throw new Error('Failed to decrypt (do not log exception text)'); },
+  });
+  assert.equal(brokenDpapi.reason, 'DECRYPT_FAILED');
+  const restoredFromDecryptionFailure = await recoverAuthCopies({
+    primary, backups, encryption,
+    read: async (file) => file === primary
+      ? { ok: false, reason: 'DECRYPT_FAILED' }
+      : reader(file),
+  });
+  assert.equal(restoredFromDecryptionFailure.ok, true);
+  assert.equal(restoredFromDecryptionFailure.source, 'backup');
 
   // A denied primary may be recovered from a readable encrypted backup.
   // The main process still validates the exact same token online.
@@ -83,6 +104,8 @@ try {
   assert.match(main, /if \(await hasSignedOutMarker\(\)\) \{/);
   assert.match(main, /if \(error\?\.code === 'ENOENT'\) return false;/);
   assert.match(main, /AUTH_CACHE_ACCESS_DENIED/);
+  assert.match(main, /AUTH_CACHE_DECRYPT_FAILED/);
+  assert.match(main, /READ_\\$\\{label\\}_\\$\\{result\\?\\.ok/);
   assert.match(main, /auth-diagnostics\.log/);
   assert.match(main, /await fs\.writeFile\(signedOutPath\(\), '\{"signedOut":true\}'/);
   assert.match(main, /new Set\(\[authPath\(\), \.\.\.authBackupPaths\(\), \.\.\.previousAuthPaths\(\)\]\)/);
