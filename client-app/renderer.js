@@ -1,3 +1,4 @@
+const embeddedCatalog = new URLSearchParams(window.location.search).get('embedded') === '1';
 const loadingView = document.getElementById('loading-view');
 const loadingMessage = document.getElementById('loading-message');
 const retryControls = document.getElementById('session-retry-controls');
@@ -482,6 +483,13 @@ function renderClient() {
   renderProfiles();
   show(clientView);
   applyQueuedProfileImages();
+  if (embeddedCatalog) {
+    // The native workspace window becomes visible only after its catalog
+    // renderer has prepared the profile cards, avoiding a second loading page.
+    // Hidden Electron windows may throttle requestAnimationFrame. The DOM is
+    // already populated, so notify main immediately without waiting for paint.
+    queueMicrotask(() => void window.userflex.catalogReady?.());
+  }
 }
 
 async function refreshCatalog() {
@@ -649,14 +657,17 @@ async function restoreSavedSession(retry = false) {
       // require credentials while the server has not rejected the session.
       loadingMessage.textContent = 'No se pudo verificar la conexión. Tu acceso guardado sigue disponible.';
       retryControls.classList.remove('hidden');
+      if (!embeddedCatalog) void window.userflex.revealAuthWindow?.();
       return;
     }
     if (result?.error?.message && !loginError.textContent) setError(loginError, result.error.message);
     setPasswordVisible(false);
     show(loginView);
+    if (!embeddedCatalog) void window.userflex.revealAuthWindow?.();
   } catch {
     loadingMessage.textContent = 'No se pudo confirmar la sesión. Reintenta sin ingresar tus credenciales.';
     retryControls.classList.remove('hidden');
+    if (!embeddedCatalog) void window.userflex.revealAuthWindow?.();
   } finally {
     restoringSession = false;
     retrySessionButton.disabled = false;
