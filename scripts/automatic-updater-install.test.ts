@@ -64,13 +64,18 @@ assert.equal(
 );
 assert.match(
   main,
-  /app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]{0,260}await loadAuth\(\);[\s\S]{0,160}createMainWindow\(\);/,
-  'restarted userFLOW must reload the saved client authentication before showing the main window',
+  /app\.whenReady\(\)\.then\(\(\) => \{[\s\S]{0,420}createMainWindow\(\);/,
+  'restarted userFLOW must show the login/loading window without blocking on disk reads',
 );
 assert.match(
   renderer,
-  /window\.userflex\.bootstrap\(\)[\s\S]{0,220}result\?\.authenticated[\s\S]{0,180}renderClient\(\)/,
+  /window\.userflex\.bootstrap\(\{ retry \}\)[\s\S]{0,220}result\?\.authenticated[\s\S]{0,180}renderClient\(\)/,
   'a valid saved session must reopen the authenticated client view without asking for credentials',
+);
+assert.match(
+  main,
+  /ipcMain\.handle\('userflex:bootstrap'[\s\S]*?if \(!accessToken\) await loadAuth\(\)/,
+  'the authenticated startup must still decrypt and validate saved token via IPC',
 );
 assert.doesNotMatch(
   startup,

@@ -51,7 +51,7 @@ try {
   const serverAuth = readFileSync(new URL('../cloudflare/lib/auth.ts', import.meta.url), 'utf8');
   assert.match(main, /serverClockOffsetMs: \(\(\) => \{/);
   assert.match(main, /estimatedServerNow\(authMeta\)/);
-  assert.match(main, /const data = await catalog\(\);[\s\S]*?return \{ authenticated: true/,
+  assert.match(main, /const data = await catalog\(\{[\s\S]*?quickVerify: input\?\.retry !== true[\s\S]*?deferImages: true[\s\S]*?\}\);[\s\S]*?return \{ authenticated: true/,
     'reopening must confirm the token online before opening any profiles');
   assert.match(worker, /serverTime: new Date\(\)\.toISOString\(\)/);
   assert.match(serverAuth, /createdAt: sessionCreatedAt,[\s\S]*serverTime: new Date\(\)\.toISOString\(\)/);
