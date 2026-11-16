@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileArchive, Pencil, PlayCircle, Plus, Puzzle, RefreshCw, Search, ShieldAlert, Upload } from 'lucide-react';
+import { CheckCircle2, Download, FileArchive, Pencil, PlayCircle, Plus, Puzzle, RefreshCw, Search, ShieldAlert, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { ExtensionValidationJob, ManagedExtension, ManagedExtensionScope, Profile, ProfileExtensionMembership } from '../types';
 import { Badge, Card, Empty, ErrorBanner, Field, Modal, PageHead, SuccessBanner } from '../components/ui';
@@ -47,6 +47,7 @@ export function ExtensionsView() {
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [testJob, setTestJob] = useState<ExtensionValidationJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -187,6 +188,40 @@ export function ExtensionsView() {
     }
   }
 
+  async function downloadZip(item: ManagedExtension) {
+    if (downloadingId !== null) return;
+    setDownloadingId(item.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      const zip = await api.extensions.downloadPackage(item.id);
+      const safeName = item.name.trim().normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^[-.]+|[-.]+$/g, '')
+        .slice(0, 70) || 'extension';
+      const safeVersion = item.version.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 30);
+      const filename = `${safeName}-v${safeVersion || '1'}.zip`;
+      const url = URL.createObjectURL(zip);
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+      setSuccess(`Descarga del ZIP de ${item.name} iniciada.`);
+    } catch (downloadError: any) {
+      setError(downloadError?.message || 'No se pudo descargar el ZIP de la extensión.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   async function runtimeTest(item: ManagedExtension) {
     try {
       setError(null);
@@ -280,6 +315,9 @@ export function ExtensionsView() {
                   )}
                 </div>
                 <div className="extension-admin-actions">
+                  <button className="button secondary small" onClick={() => void downloadZip(item)} disabled={downloadingId !== null} title={`Descargar ZIP de ${item.name}`}>
+                    <Download size={12} /> {downloadingId === item.id ? 'Descargando...' : 'Descargar ZIP'}
+                  </button>
                   <button className="button secondary small" onClick={() => void runtimeTest(item)} disabled={testingId !== null || item.validation_status === 'incompatible'}>
                     {testingId === item.id ? <RefreshCw size={12} /> : <PlayCircle size={12} />}
                     {testingId === item.id ? 'Probando...' : 'Probar en userFLOW'}

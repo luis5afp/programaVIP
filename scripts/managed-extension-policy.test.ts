@@ -187,4 +187,22 @@ assert.match(
   'extension preparation must run inside the launch cleanup guard',
 );
 
+// Admin-only ZIP download is read-only, returns the original R2 package,
+ // rejects corrupted storage and remains separate from client permissions.
+const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8');
+assert.match(worker, /if \(packageMatch && method === 'GET'\) \{/,
+  'Admin can download a stored extension ZIP using its extension ID');
+assert.match(worker, /await extensionRow\(env, extensionId\)/);
+assert.match(worker, /await readPackage\(env, extension\.package_path\)/);
+assert.match(worker, /await digestBytes\(bytes\)/,
+  'Admin downloads must verify stored ZIP SHA-256');
+assert.match(worker, /Content-Disposition.*attachment; filename=/,
+  'Admin downloads must return a downloadable ZIP attachment');
+assert.match(worker, /Cache-Control': 'private, no-store'/,
+  'private extension ZIPs must never be publicly cached');
+assert.match(view, /void downloadZip\(item\)/);
+assert.match(view, /Descargar ZIP/);
+assert.match(apiSource, /downloadPackage: async \(id: string\): Promise<Blob>/);
+assert.match(apiSource, /credentials: 'include'/,
+  'download request must carry authenticated admin session cookie');
 console.log('Managed extension permission policy: OK');

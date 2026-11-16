@@ -712,6 +712,31 @@ export async function adminExtensionRoutes(request: Request, env: Env, admin: Ad
   }
 
   const packageMatch = path.match(/^\/api\/extensions\/([0-9a-f-]{36})\/package$/i);
+  if (packageMatch && method === 'GET') {
+    // This route is reached only after worker.ts requires a logged-in Admin.
+    // Download the exact ZIP stored in R2, without changing status, profile
+    // assignments or re-running any extension code.
+    const extensionId = uuid(packageMatch[1], 'extensionId');
+    const extension = await extensionRow(env, extensionId);
+    const bytes = await readPackage(env, extension.package_path);
+    if (bytes.byteLength !== Number(extension.package_size)
+      || await digestBytes(bytes) !== String(extension.package_sha256).toLowerCase()) {
+      throw new HttpError(502, 'EXTENSION_PACKAGE_INTEGRITY',
+        'El ZIP almacenado no coincide con el paquete registrado. No se descargó el archivo.');
+    }
+    return new Response(bytes, {
+      status: 200,
+      headers: new Headers({
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="userflex-extension-${extensionId}.zip"`,
+        'Content-Length': String(bytes.byteLength),
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Userflex-Extension-SHA256': extension.package_sha256,
+      }),
+    });
+  }
+
   if (packageMatch && method === 'POST') {
     const extensionId = uuid(packageMatch[1], 'extensionId');
     const current = await extensionRow(env, extensionId);
