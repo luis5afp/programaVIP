@@ -5,6 +5,9 @@ const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'ut
 const renderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
 const preload = readFileSync(new URL('../client-app/preload.cjs', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../client-app/index.html', import.meta.url), 'utf8');
+const updater = readFileSync(new URL('../client-app/bootstrap.js', import.meta.url), 'utf8');
+const packageJson = JSON.parse(readFileSync(new URL('../client-app/package.json', import.meta.url), 'utf8'));
+const startupHandoff = await import('../client-app/startup-window-handoff.js');
 const finalizer = readFileSync(new URL('../client-app/build/finalize-client-ui.mjs', import.meta.url), 'utf8');
 
 const at = (start, end) => {
@@ -81,4 +84,25 @@ assert.doesNotMatch(renderer, /requestAnimationFrame\(\(\) => void window\.userf
   'a hidden Electron window must not wait for requestAnimationFrame to signal catalog readiness');
 assert.match(renderer, /window\.userflex\.revealAuthWindow\?\.\(\)/);
 assert.match(html, /id="loading-view"/, 'offline retries must remain available');
-console.log('userFLOW fast secure direct catalog startup (single online check, hidden handoff, offline recovery): OK');
+// A hidden Electron login window must NEVER make the already visible splash
+// disappear. The splash retires only when a destination window is shown.
+const startup = updater.slice(updater.indexOf('async function startMain()'),
+  updater.indexOf('function validateManifest('));
+assert.match(startup, /await import\('\.\/main\.js'\)/);
+assert.match(startup, /await waitForMainWindow\(\)/);
+assert.doesNotMatch(startup, /splashWindow\.close\(\)/,
+  'creating hidden login must not dismiss the currently visible startup window');
+assert.match(updater, /registerStartupWindowHandoff\(\(\) =>/);
+assert.match(updater, /splashWindow === splash && !splash\.isDestroyed\(\)/);
+assert.match(main, /browserWindow\.show\(\);\s*browserWindow\.focus\(\);\s*completeStartupWindowHandoff\(\)/);
+assert.match(main, /mainWindow\.show\(\);\s*mainWindow\.focus\(\);\s*completeStartupWindowHandoff\(\)/);
+assert.match(main, /authWindow\.show\(\);\s*completeStartupWindowHandoff\(\)/);
+assert.ok(packageJson.build.files.includes('startup-window-handoff.js'),
+  'handoff module must be packaged in Windows installer');
+let handoffCount = 0;
+assert.equal(startupHandoff.completeStartupWindowHandoff(), false);
+startupHandoff.registerStartupWindowHandoff(() => { handoffCount += 1; });
+assert.equal(startupHandoff.completeStartupWindowHandoff(), true);
+assert.equal(startupHandoff.completeStartupWindowHandoff(), false);
+assert.equal(handoffCount, 1, 'startup can only complete its visible handoff once');
+console.log('userFLOW fast secure startup and continuous visible window handoff: OK');

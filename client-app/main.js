@@ -11,6 +11,7 @@ import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
 import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile, priorSignInMarkerFile } from './auth-session-locations.js';
 import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
+import { completeStartupWindowHandoff } from './startup-window-handoff.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1135,14 +1136,20 @@ function createMainWindow() {
   // or the renderer fails before it can request the login screen.
   const revealFallback = setTimeout(() => {
     if (mainWindow === authWindow && !authWindow.isDestroyed()
-      && !authWindow.isVisible() && !serverVerifiedCatalog) authWindow.show();
+      && !authWindow.isVisible() && !serverVerifiedCatalog) {
+      authWindow.show();
+      completeStartupWindowHandoff();
+    }
   }, 10_000);
   authWindow.on('closed', () => {
     clearTimeout(revealFallback);
     if (mainWindow === authWindow) mainWindow = null;
   });
   authWindow.webContents.on('did-fail-load', () => {
-    if (!authWindow.isDestroyed()) authWindow.show();
+    if (!authWindow.isDestroyed()) {
+      authWindow.show();
+      completeStartupWindowHandoff();
+    }
   });
   void authWindow.loadFile(path.join(__dirname, 'index.html'));
   return authWindow;
@@ -1166,6 +1173,7 @@ function revealVerifiedWorkspace() {
   if (!Number.isFinite(expiresAt) || expiresAt <= estimatedServerNow(authMeta)) return;
   browserWindow.show();
   browserWindow.focus();
+  completeStartupWindowHandoff();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
 }
 
@@ -1185,6 +1193,7 @@ function enterWorkspace(sender) {
         || browserWindow.isDestroyed() || browserWindow.isVisible()) return;
       originalWindow.show();
       originalWindow.focus();
+      completeStartupWindowHandoff();
     }, 4_000);
   }, 0);
 }
@@ -2402,6 +2411,7 @@ ipcMain.handle('userflex:reveal-auth-window', (event) => {
     || serverVerifiedCatalog) return false;
   mainWindow.show();
   mainWindow.focus();
+  completeStartupWindowHandoff();
   return true;
 });
 

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, net } from 'electron';
 import { PUBLIC_RELEASES_API, selectVerifiedGithubRelease, updaterErrorReason } from './updater-release-fallback.js';
+import { registerStartupWindowHandoff } from './startup-window-handoff.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -176,17 +177,14 @@ async function waitForMainWindow() {
 async function startMain() {
   if (mainStarted) return;
   mainStarted = true;
-  pushStatus({ phase: 'ready', message: `v${app.getVersion()} · Actualizado`, percent: null });
-  await wait(180);
+  pushStatus({ phase: 'ready', message: 'Abriendo userFLOW…', percent: null });
 
-  // Keep the splash alive while main.js initializes. Closing the splash first
-  // can emit window-all-closed after main.js has installed its normal quit
-  // handler, which makes Electron exit before the login window is created.
+  // Creating a hidden login window is NOT a completed handoff. Keep the splash
+  // visibly open while Electron decrypts and the server validates the token.
+  // main.js calls completeStartupWindowHandoff only after showing an actual
+  // authorized catalog or an actionable login/retry screen.
   await import('./main.js');
   await waitForMainWindow();
-
-  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-  splashWindow = null;
 }
 
 function validateManifest(value) {
@@ -595,4 +593,13 @@ async function checkUpdatesAndContinue() {
 }
 
 createSplash();
+registerStartupWindowHandoff(() => {
+  const splash = splashWindow;
+  if (!splash || splash.isDestroyed()) return;
+  // Present the destination first, then retire the splash on the next frame.
+  // This avoids Windows briefly having no visible userFLOW window.
+  setTimeout(() => {
+    if (splashWindow === splash && !splash.isDestroyed()) splash.close();
+  }, 70);
+});
 await checkUpdatesAndContinue();
