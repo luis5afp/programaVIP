@@ -1176,6 +1176,16 @@ function enterWorkspace(sender) {
     createBrowserWindow();
     showCatalogTab('home');
     revealVerifiedWorkspace();
+    // If an embedded renderer unexpectedly fails to signal readiness, leave
+    // the verified launcher usable instead of trapping the user invisibly.
+    const originalWindow = mainWindow;
+    setTimeout(() => {
+      if (!accessToken || !serverVerifiedCatalog || !originalWindow
+        || originalWindow.isDestroyed() || !browserWindow
+        || browserWindow.isDestroyed() || browserWindow.isVisible()) return;
+      originalWindow.show();
+      originalWindow.focus();
+    }, 4_000);
   }, 0);
 }
 
