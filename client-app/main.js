@@ -178,8 +178,8 @@ async function getDeviceKey() {
 
 async function logAuthCacheState(code) {
   // Only a diagnostic code: never write token, credentials or file contents.
-  // The historical startup.log itself can have an ACL that denies reading or
-  // appending. Fall back to a separate Windows-user diagnostics file.
+  // A historical startup.log may deny reading even when writing still
+  // succeeds. Independently write a readable per-user auth-diagnostics.log.
   const line = `[${new Date().toISOString()}] AUTH_CACHE ${String(code || 'UNKNOWN').replace(/[^A-Z0-9_]/gi, '').slice(0, 48)}\n`;
   const files = [
     path.join(app.getPath('userData'), 'startup.log'),
@@ -189,7 +189,6 @@ async function logAuthCacheState(code) {
     try {
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.appendFile(file, line, 'utf8');
-      return;
     } catch { /* Diagnostic failure cannot authorize or terminate a session. */ }
   }
 }
@@ -259,18 +258,27 @@ async function loadAuth() {
     return null;
   }
   const tryRead = async (candidate) => {
+    const label = candidate === authPath() ? 'PRIMARY'
+      : candidate === authBackupPaths()[0] ? 'BACKUP_CANONICAL'
+      : authBackupPaths().includes(candidate) ? 'BACKUP_USERDATA' : 'LEGACY';
+    let result;
     try {
-      return await readEncryptedAuthSession(candidate, safeStorage);
+      result = await readEncryptedAuthSession(candidate, safeStorage);
     } catch (error) {
-      if (!isLocalPermissionError(error)) return { ok: false, reason: 'LOAD_FAILED' };
-      await repairLocalPathAccess(path.dirname(candidate));
-      await repairLocalPathAccess(candidate);
-      try {
-        return await readEncryptedAuthSession(candidate, safeStorage);
-      } catch {
-        return { ok: false, reason: 'ACCESS_DENIED' };
+      if (!isLocalPermissionError(error)) {
+        result = { ok: false, reason: 'LOAD_FAILED' };
+      } else {
+        await repairLocalPathAccess(path.dirname(candidate));
+        await repairLocalPathAccess(candidate);
+        try {
+          result = await readEncryptedAuthSession(candidate, safeStorage);
+        } catch {
+          result = { ok: false, reason: 'ACCESS_DENIED' };
+        }
       }
     }
+    await logAuthCacheState(`READ_${label}_${result?.ok ? 'OK' : result?.reason || 'UNKNOWN'}`);
+    return result;
   };
   const restored = await recoverAuthCopies({
     primary: authPath(),
@@ -307,12 +315,17 @@ async function loadAuth() {
         code: 'AUTH_CACHE_ACCESS_DENIED',
         message: 'Windows denegó la lectura de la sesión guardada o sus respaldos. Revisa los permisos de AppData; no borres los archivos cifrados.',
       };
+    } else if (reason === 'DECRYPT_FAILED') {
+      pendingAuthInvalidation = {
+        code: 'AUTH_CACHE_DECRYPT_FAILED',
+        message: 'Windows no pudo descifrar el token guardado. Las copias siguen intactas. Comprueba auth-diagnostics.log para identificar el archivo afectado.',
+      };
     } else if (reason !== 'MISSING') {
       // Do not silently represent damaged/encrypted-unreadable auth storage
       // as a fresh installation. The error contains no token or private path.
       pendingAuthInvalidation = {
         code: 'AUTH_CACHE_RECOVERY_FAILED',
-        message: 'No se pudo recuperar el acceso cifrado guardado. Comprueba las líneas AUTH_CACHE de startup.log.',
+        message: 'No se pudo recuperar la sesión guardada. Revisa los códigos AUTH_CACHE en auth-diagnostics.log de la carpeta userFLEX Client.',
       };
     } else {
       try {
