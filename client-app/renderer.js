@@ -486,7 +486,9 @@ function renderClient() {
   if (embeddedCatalog) {
     // The native workspace window becomes visible only after its catalog
     // renderer has prepared the profile cards, avoiding a second loading page.
-    requestAnimationFrame(() => void window.userflex.catalogReady?.());
+    // Hidden Electron windows may throttle requestAnimationFrame. The DOM is
+    // already populated, so notify main immediately without waiting for paint.
+    queueMicrotask(() => void window.userflex.catalogReady?.());
   }
 }
 
