@@ -39,7 +39,7 @@ try {
   );
   await writeFile(file, '{invalid', 'utf8');
   assert.equal((await readEncryptedAuthSession(file, fakeStorage)).reason,
-    'DECRYPT_OR_FILE_INVALID', 'corrupted cache must fail closed');
+    'INVALID_JSON', 'malformed cache JSON must fail closed without masking decrypt errors');
 
   const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
   const renderer = readFileSync(new URL('../client-app/renderer.js', import.meta.url), 'utf8');
