@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
-import { canonicalAuthFile, previousAuthFiles, authBackupFiles } from './auth-session-locations.js';
+import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile } from './auth-session-locations.js';
 import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
 
 const execFileAsync = promisify(execFile);
@@ -73,6 +73,19 @@ function previousAuthPaths() {
 
 function authBackupPaths() {
   return authBackupFiles(app.getPath('appData'), app.getPath('userData'));
+}
+
+function signedOutPath() {
+  return signedOutMarkerFile(app.getPath('appData'));
+}
+
+async function hasSignedOutMarker() {
+  try {
+    await fs.access(signedOutPath());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function loginCredentialsPath() {
@@ -189,12 +202,28 @@ async function saveAuth(token, meta) {
     await repairLocalPathAccess(authPath());
     result = await persist();
   }
+  // The signed-out marker blocks accidental resurrection of an older backup
+  // when Windows denies file deletion. A fresh successful login clears it.
+  try {
+    await fs.unlink(signedOutPath());
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      await logAuthCacheState('LOGOUT_MARKER_CLEAR_FAILED');
+      throw Object.assign(new Error('No se pudo preparar la sesión persistente.'), {
+        code: 'AUTH_LOGOUT_MARKER_CLEAR_FAILED',
+      });
+    }
+  }
   accessToken = token;
   authMeta = meta || null;
   await logAuthCacheState(result.copies ? 'SAVED_WITH_RECOVERY' : 'SAVED_VERIFIED_NO_BACKUP');
 }
 
 async function loadAuth() {
+  if (await hasSignedOutMarker()) {
+    await logAuthCacheState('EXPLICIT_LOGOUT_MARKER');
+    return null;
+  }
   const tryRead = async (candidate) => {
     try {
       return await readEncryptedAuthSession(candidate, safeStorage);
@@ -277,6 +306,14 @@ async function clearAuth() {
   authMeta = null;
   profileImageDataCache.clear();
   stopHeartbeat();
+  // Invalidate before touching any cached token; a failed file deletion must
+  // never resurrect a previously signed-out session, even when offline.
+  try {
+    await fs.mkdir(path.dirname(signedOutPath()), { recursive: true });
+    await fs.writeFile(signedOutPath(), '{"signedOut":true}', { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    await logAuthCacheState('LOGOUT_MARKER_WRITE_FAILED');
+  }
   // Logout/expiration invalidates all historical cache locations, including
   // the directories used before the Electron display name was standardized.
   for (const file of new Set([authPath(), ...authBackupPaths(), ...previousAuthPaths()])) {
