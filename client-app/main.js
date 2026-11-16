@@ -87,8 +87,11 @@ async function hasSignedOutMarker() {
   try {
     await fs.access(signedOutPath());
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // An unreadable sign-out marker must never be interpreted as absent.
+    // Fail closed instead of allowing an old recovery copy to revive logout.
+    if (error?.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -174,14 +177,20 @@ async function getDeviceKey() {
 }
 
 async function logAuthCacheState(code) {
-  // Diagnostic marker only. Never write tokens, names, email, passwords or
-  // complete file paths. Existing startup.log helps identify the real cause.
-  try {
-    await fs.appendFile(
-      path.join(app.getPath('userData'), 'startup.log'),
-      `[${new Date().toISOString()}] AUTH_CACHE ${String(code || 'UNKNOWN').replace(/[^A-Z0-9_]/gi, '').slice(0, 48)}\n`,
-    );
-  } catch {}
+  // Only a diagnostic code: never write token, credentials or file contents.
+  // A historical startup.log may deny reading even when writing still
+  // succeeds. Independently write a readable per-user auth-diagnostics.log.
+  const line = `[${new Date().toISOString()}] AUTH_CACHE ${String(code || 'UNKNOWN').replace(/[^A-Z0-9_]/gi, '').slice(0, 48)}\n`;
+  const files = [
+    path.join(app.getPath('userData'), 'startup.log'),
+    path.join(app.getPath('appData'), 'userFLEX Client', 'auth-diagnostics.log'),
+  ];
+  for (const file of new Set(files)) {
+    try {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.appendFile(file, line, 'utf8');
+    } catch { /* Diagnostic failure cannot authorize or terminate a session. */ }
+  }
 }
 
 async function saveAuth(token, meta) {
@@ -233,23 +242,43 @@ async function saveAuth(token, meta) {
 }
 
 async function loadAuth() {
-  if (await hasSignedOutMarker()) {
-    await logAuthCacheState('EXPLICIT_LOGOUT_MARKER');
+  try {
+    if (await hasSignedOutMarker()) {
+      await logAuthCacheState('EXPLICIT_LOGOUT_MARKER');
+      return null;
+    }
+  } catch (error) {
+    // Do not trust any saved token while the explicit-logout marker cannot
+    // be checked. There is no need to change ACLs broadly or delete files.
+    await logAuthCacheState('SIGNOUT_MARKER_ACCESS_DENIED');
+    pendingAuthInvalidation = {
+      code: 'AUTH_SIGNOUT_MARKER_INACCESSIBLE',
+      message: 'Windows no permitió comprobar el estado de cierre de sesión. Revisa los permisos de la carpeta userFLEX Client.',
+    };
     return null;
   }
   const tryRead = async (candidate) => {
+    const label = candidate === authPath() ? 'PRIMARY'
+      : candidate === authBackupPaths()[0] ? 'BACKUP_CANONICAL'
+      : authBackupPaths().includes(candidate) ? 'BACKUP_USERDATA' : 'LEGACY';
+    let result;
     try {
-      return await readEncryptedAuthSession(candidate, safeStorage);
+      result = await readEncryptedAuthSession(candidate, safeStorage);
     } catch (error) {
-      if (!isLocalPermissionError(error)) return { ok: false, reason: 'LOAD_FAILED' };
-      await repairLocalPathAccess(path.dirname(candidate));
-      await repairLocalPathAccess(candidate);
-      try {
-        return await readEncryptedAuthSession(candidate, safeStorage);
-      } catch {
-        return { ok: false, reason: 'ACCESS_DENIED' };
+      if (!isLocalPermissionError(error)) {
+        result = { ok: false, reason: 'LOAD_FAILED' };
+      } else {
+        await repairLocalPathAccess(path.dirname(candidate));
+        await repairLocalPathAccess(candidate);
+        try {
+          result = await readEncryptedAuthSession(candidate, safeStorage);
+        } catch {
+          result = { ok: false, reason: 'ACCESS_DENIED' };
+        }
       }
     }
+    await logAuthCacheState(`READ_${label}_${result?.ok ? 'OK' : result?.reason || 'UNKNOWN'}`);
+    return result;
   };
   const restored = await recoverAuthCopies({
     primary: authPath(),
@@ -281,12 +310,22 @@ async function loadAuth() {
         code: 'AUTH_SECURE_STORAGE_UNAVAILABLE',
         message: 'Windows no permitió recuperar la sesión cifrada. Comprueba la protección de datos de este usuario.',
       };
+    } else if (reason === 'ACCESS_DENIED') {
+      pendingAuthInvalidation = {
+        code: 'AUTH_CACHE_ACCESS_DENIED',
+        message: 'Windows denegó la lectura de la sesión guardada o sus respaldos. Revisa los permisos de AppData; no borres los archivos cifrados.',
+      };
+    } else if (reason === 'DECRYPT_FAILED') {
+      pendingAuthInvalidation = {
+        code: 'AUTH_CACHE_DECRYPT_FAILED',
+        message: 'Windows no pudo descifrar el token guardado. Las copias siguen intactas. Comprueba auth-diagnostics.log para identificar el archivo afectado.',
+      };
     } else if (reason !== 'MISSING') {
       // Do not silently represent damaged/encrypted-unreadable auth storage
       // as a fresh installation. The error contains no token or private path.
       pendingAuthInvalidation = {
         code: 'AUTH_CACHE_RECOVERY_FAILED',
-        message: 'No se pudo recuperar el acceso cifrado guardado. Comprueba las líneas AUTH_CACHE de startup.log.',
+        message: 'No se pudo recuperar la sesión guardada. Revisa los códigos AUTH_CACHE en auth-diagnostics.log de la carpeta userFLEX Client.',
       };
     } else {
       try {

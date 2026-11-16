@@ -27,7 +27,13 @@ export async function recoverAuthCopies({ primary, backups = [], previous = [], 
   const reader = read || ((file) => readEncryptedAuthSession(file, encryption));
   const first = await reader(primary);
   if (first?.ok) return { ...first, source: 'primary', originalReason: null };
-  const recoverable = ['MISSING', 'DECRYPT_OR_FILE_INVALID', 'INVALID_TOKEN', 'INVALID_DATES'];
+  // A permission error on the primary cache must not hide a separately
+  // readable, encrypted backup. The session still needs server validation.
+  const recoverable = [
+    'MISSING', 'DECRYPT_OR_FILE_INVALID', 'INVALID_JSON', 'INVALID_CIPHERTEXT',
+    'DECRYPT_FAILED', 'READ_FAILED', 'INVALID_TOKEN', 'INVALID_DATES',
+    'ACCESS_DENIED', 'LOAD_FAILED',
+  ];
   if (!recoverable.includes(String(first?.reason || ''))) {
     return { ...first, source: null, originalReason: first?.reason || 'UNKNOWN' };
   }
@@ -35,10 +41,26 @@ export async function recoverAuthCopies({ primary, backups = [], previous = [], 
     ...Array.from(new Set(backups)).map((file) => ({ file, source: 'backup' })),
     ...Array.from(new Set(previous)).map((file) => ({ file, source: 'legacy' })),
   ];
+  let accessDenied = first?.reason === 'ACCESS_DENIED';
   for (const { file, source } of candidates) {
     if (file === primary) continue;
-    const restored = await reader(file);
+    let restored;
+    try {
+      restored = await reader(file);
+    } catch (error) {
+      if (!['EPERM', 'EACCES'].includes(String(error?.code || ''))) throw error;
+      restored = { ok: false, reason: 'ACCESS_DENIED' };
+    }
     if (restored?.ok) return { ...restored, source, originalReason: first?.reason || 'UNKNOWN', file };
+    if (restored?.reason === 'ACCESS_DENIED') accessDenied = true;
   }
-  return { ...first, source: null, originalReason: first?.reason || 'UNKNOWN' };
+  // If any cache could not be read, don't call it a missing cache. In
+  // particular, a previous successful login with a locked backup should
+  // produce an actionable permission error, not a fresh-login prompt.
+  return {
+    ...first,
+    reason: accessDenied ? 'ACCESS_DENIED' : first?.reason,
+    source: null,
+    originalReason: first?.reason || 'UNKNOWN',
+  };
 }

@@ -73,35 +73,51 @@ export async function saveEncryptedAuthSession(file, token, meta, encryption) {
 
 export async function readEncryptedAuthSession(file, encryption, now = Date.now()) {
   if (!encryption?.isEncryptionAvailable?.()) return { ok: false, reason: 'ENCRYPTION_UNAVAILABLE' };
-  let data;
+  // Keep diagnoses separate without ever logging JSON contents, encrypted
+  // token bytes, passwords, account identifiers or OS error stack traces.
+  let raw;
   try {
-    data = JSON.parse(await fs.readFile(file, 'utf8'));
-    const token = encryption.decryptString(Buffer.from(data?.token || '', 'base64'));
-    if (!TOKEN_PATTERN.test(token)) return { ok: false, reason: 'INVALID_TOKEN' };
-    const meta = data?.meta && typeof data.meta === 'object' ? data.meta : {};
-    const expiresAt = Date.parse(String(meta.expiresAt || data?.expiresAt || ''));
-    const createdAt = Date.parse(String(meta.createdAt || data?.createdAt || ''));
-    if (Number.isFinite(createdAt) && Number.isFinite(expiresAt)
-      && (expiresAt <= createdAt || expiresAt - createdAt > SESSION_MAX_AGE_MS + 1_000)) {
-      return { ok: false, reason: 'INVALID_DATES' };
-    }
-    // An apparently elapsed expiry is *not* enough to delete a token:
-    // Windows time might differ from server time. Always ask the server
-    // whether this exact token is still valid before allowing access.
-    const locallyExpired = Number.isFinite(expiresAt) && expiresAt <= estimatedServerNow(meta, now);
-    // Do not silently renew missing dates. Server catalog fills them
-    // from the original session row during online verification.
-    if (Number.isFinite(expiresAt)) meta.expiresAt = new Date(expiresAt).toISOString();
-    if (Number.isFinite(createdAt)) meta.createdAt = new Date(createdAt).toISOString();
-    return {
-      ok: true, token, meta,
-      legacyExpiry: !Number.isFinite(expiresAt),
-      legacyCreatedAt: !Number.isFinite(createdAt),
-      locallyExpired,
-    };
+    raw = await fs.readFile(file, 'utf8');
   } catch (error) {
     if (error?.code === 'ENOENT') return { ok: false, reason: 'MISSING' };
     if (['EPERM', 'EACCES'].includes(String(error?.code))) throw error;
-    return { ok: false, reason: 'DECRYPT_OR_FILE_INVALID' };
+    return { ok: false, reason: 'READ_FAILED' };
   }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: 'INVALID_JSON' };
+  }
+  const ciphertext = data?.token;
+  // base64 validation catches a truncated/edited cache before DPAPI decrypt.
+  if (typeof ciphertext !== 'string' || ciphertext.length < 16
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(ciphertext)) {
+    return { ok: false, reason: 'INVALID_CIPHERTEXT' };
+  }
+  let token;
+  try {
+    token = encryption.decryptString(Buffer.from(ciphertext, 'base64'));
+  } catch {
+    return { ok: false, reason: 'DECRYPT_FAILED' };
+  }
+  if (!TOKEN_PATTERN.test(token)) return { ok: false, reason: 'INVALID_TOKEN' };
+  const meta = data?.meta && typeof data.meta === 'object' ? data.meta : {};
+  const expiresAt = Date.parse(String(meta.expiresAt || data?.expiresAt || ''));
+  const createdAt = Date.parse(String(meta.createdAt || data?.createdAt || ''));
+  if (Number.isFinite(createdAt) && Number.isFinite(expiresAt)
+    && (expiresAt <= createdAt || expiresAt - createdAt > SESSION_MAX_AGE_MS + 1_000)) {
+    return { ok: false, reason: 'INVALID_DATES' };
+  }
+  // An apparently elapsed expiry is not enough to reject a token: Windows
+  // may differ from server time. Never authorize without online validation.
+  const locallyExpired = Number.isFinite(expiresAt) && expiresAt <= estimatedServerNow(meta, now);
+  if (Number.isFinite(expiresAt)) meta.expiresAt = new Date(expiresAt).toISOString();
+  if (Number.isFinite(createdAt)) meta.createdAt = new Date(createdAt).toISOString();
+  return {
+    ok: true, token, meta,
+    legacyExpiry: !Number.isFinite(expiresAt),
+    legacyCreatedAt: !Number.isFinite(createdAt),
+    locallyExpired,
+  };
 }
