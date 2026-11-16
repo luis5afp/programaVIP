@@ -105,7 +105,7 @@ try {
   assert.match(main, /if \(error\?\.code === 'ENOENT'\) return false;/);
   assert.match(main, /AUTH_CACHE_ACCESS_DENIED/);
   assert.match(main, /AUTH_CACHE_DECRYPT_FAILED/);
-  assert.match(main, /READ_\\$\\{label\\}_\\$\\{result\\?\\.ok/);
+  assert.match(main, /READ_\$\{label\}_\$\{result\?\.ok/);
   assert.match(main, /auth-diagnostics\.log/);
   assert.match(main, /await fs\.writeFile\(signedOutPath\(\), '\{"signedOut":true\}'/);
   assert.match(main, /new Set\(\[authPath\(\), \.\.\.authBackupPaths\(\), \.\.\.previousAuthPaths\(\)\]\)/);
