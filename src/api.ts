@@ -395,6 +395,11 @@ export const api = {
         `/api/profiles/${profileId}/managed-credentials`,
         { method: 'POST', body: JSON.stringify({ loginUsername, password: password || '' }) },
       ),
+    revealCredentials: (profileId: string, adminPassword: string, signal: AbortSignal) =>
+      request<{ ok: true; login_username: string; password: string }>(
+        `/api/profiles/${profileId}/managed-credentials/reveal`,
+        { method: 'POST', body: JSON.stringify({ adminPassword }), signal, cache: 'no-store' },
+      ),
     clearCredentials: (profileId: string) =>
       request<{ ok: true; profile_id: string; has_credentials: false }>(
         `/api/profiles/${profileId}/managed-credentials`,

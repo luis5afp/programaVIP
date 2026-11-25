@@ -355,7 +355,7 @@ function launchCustomProtocol(launchUrl: string) {
   anchor.remove();
 }
 
-export function ProfilesView() {
+export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSavedPassword?: boolean } = {}) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileLoadStatus, setProfileLoadStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
@@ -400,6 +400,88 @@ export function ProfilesView() {
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [showLoginUsername, setShowLoginUsername] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginPasswordDraft, setLoginPasswordDraft] = useState('');
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
+  const [revealRequested, setRevealRequested] = useState(false);
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const ownerPasswordInput = useRef<HTMLInputElement>(null);
+  const loginUsernameInput = useRef<HTMLInputElement>(null);
+  const revealRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => () => revealRequest.current?.abort(), []);
+
+  function hideSavedPassword() {
+    if (revealedPassword !== null && loginPasswordDraft === revealedPassword) setLoginPasswordDraft('');
+    revealRequest.current?.abort();
+    revealRequest.current = null;
+    if (ownerPasswordInput.current) ownerPasswordInput.current.value = '';
+    setRevealedPassword(null);
+    setRevealRequested(false);
+    setRevealBusy(false);
+    setRevealError(null);
+    setShowLoginPassword(false);
+  }
+
+  function toggleLoginPassword() {
+    if (showLoginPassword || revealRequested) {
+      hideSavedPassword();
+      return;
+    }
+    if (loginPasswordDraft || !currentState?.has_credentials || !current) {
+      setShowLoginPassword(true);
+      return;
+    }
+    if (!canRevealSavedPassword) {
+      setRevealError('Solo el propietario puede consultar la contraseña guardada.');
+      return;
+    }
+    if (loginUsernameInput.current?.value.trim().toLocaleLowerCase() !== String(currentState.login_username || '').trim().toLocaleLowerCase()) {
+      setRevealError('El correo o usuario fue cambiado. Escribe la contraseña de la nueva cuenta.');
+      return;
+    }
+    setRevealError(null);
+    setRevealRequested(true);
+  }
+
+  async function revealSavedPassword() {
+    if (!current || !canRevealSavedPassword || revealBusy) return;
+    const password = ownerPasswordInput.current?.value || '';
+    if (!password) {
+      setRevealError('Confirma tu contraseña de administrador.');
+      return;
+    }
+    if (ownerPasswordInput.current) ownerPasswordInput.current.value = '';
+    const controller = new AbortController();
+    revealRequest.current?.abort();
+    revealRequest.current = controller;
+    setRevealBusy(true);
+    setRevealError(null);
+    try {
+      const result = await api.profileSessions.revealCredentials(current.id, password, controller.signal);
+      if (revealRequest.current !== controller || controller.signal.aborted) return;
+      if (result.login_username.trim().toLocaleLowerCase() !== loginUsernameInput.current?.value.trim().toLocaleLowerCase()) {
+        throw new Error('Las credenciales cambiaron. Cierra y vuelve a abrir el perfil.');
+      }
+      setRevealedPassword(result.password);
+      setLoginPasswordDraft(result.password);
+      setShowLoginPassword(true);
+      setRevealRequested(false);
+    } catch (err: any) {
+      if (revealRequest.current === controller && !controller.signal.aborted) {
+        setRevealError(err?.message || 'No se pudo consultar la contraseña guardada.');
+      }
+    } finally {
+      if (revealRequest.current === controller) {
+        revealRequest.current = null;
+        setRevealBusy(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    hideSavedPassword();
+  }, [authStrategy, editor, canRevealSavedPassword]);
   const [profileUrl, setProfileUrl] = useState('');
   const [cookieFile, setCookieFile] = useState<File | null>(null);
   const [cookieInspection, setCookieInspection] = useState<CookieImportInspection | null>(null);
@@ -608,7 +690,8 @@ export function ProfilesView() {
     }
     setSelectedExtensionIds([...memberships]);
     setShowLoginUsername(false);
-    setShowLoginPassword(false);
+    hideSavedPassword();
+    setLoginPasswordDraft('');
     setEditor(value);
     setError(null);
     setSuccess(null);
@@ -631,7 +714,8 @@ export function ProfilesView() {
     setSelectedPlanIds([]);
     setSelectedExtensionIds([]);
     setShowLoginUsername(false);
-    setShowLoginPassword(false);
+    hideSavedPassword();
+    setLoginPasswordDraft('');
     setEditor(null);
   }
 
@@ -747,11 +831,14 @@ export function ProfilesView() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (revealBusy) return;
     const form = new FormData(event.currentTarget);
     const label = String(form.get('label') || '').trim();
     const proxyId = String(form.get('proxyId') || '') || null;
     const loginUsername = String(form.get('loginUsername') || '').trim();
-    const loginPassword = String(form.get('loginPassword') || '');
+    const enteredPassword = String(form.get('loginPassword') || '');
+    // Revealing a stored password is not a credential change.
+    const loginPassword = enteredPassword === revealedPassword ? '' : enteredPassword;
     const currentState = editor && editor !== 'new' ? stateFor(editor.id) : null;
     const previousLoginUsername = String(currentState?.login_username || '').trim();
     const usernameChanged = Boolean(
@@ -1015,6 +1102,8 @@ export function ProfilesView() {
       setError(null);
       setSuccess(null);
       await api.profileSessions.clearCredentials(profile.id);
+      hideSavedPassword();
+      setLoginPasswordDraft('');
       setSuccess('Credenciales de autofill eliminadas correctamente.');
       await load();
     } catch (clearError: any) {
@@ -1697,7 +1786,7 @@ export function ProfilesView() {
             <>
               {error && <div role="alert" style={{ flex: '1 1 100%', color: '#b91c1c', fontSize: 12, marginBottom: 8, whiteSpace: 'normal' }}>{error}</div>}
               <button className="button secondary" onClick={closeEditor} disabled={saving}>Cancelar</button>
-              <button className="button primary" form="profile-form" type="submit" disabled={saving}>
+              <button className="button primary" form="profile-form" type="submit" disabled={saving || revealBusy}>
                 {saving ? 'Guardando...' : 'Guardar y cerrar'}
               </button>
             </>
@@ -2133,6 +2222,11 @@ export function ProfilesView() {
                     <input
                       className="input credential-input"
                       name="loginUsername"
+                      ref={loginUsernameInput}
+                      onChange={() => {
+                        hideSavedPassword();
+                        if (revealedPassword !== null) setLoginPasswordDraft('');
+                      }}
                       type={showLoginUsername ? 'text' : 'password'}
                       autoComplete="off"
                       defaultValue={currentState?.login_username || ''}
@@ -2161,6 +2255,11 @@ export function ProfilesView() {
                     <input
                       className="input credential-input"
                       name="loginPassword"
+                      value={loginPasswordDraft}
+                      onChange={(event) => {
+                        if (revealRequested) hideSavedPassword();
+                        setLoginPasswordDraft(event.target.value);
+                      }}
                       type={showLoginPassword ? 'text' : 'password'}
                       autoComplete="new-password"
                       required={(authStrategy === 'credential-autofill' || authStrategy === 'hybrid') && !currentState?.has_credentials}
@@ -2169,13 +2268,27 @@ export function ProfilesView() {
                     <button
                       type="button"
                       className="credential-visibility-toggle"
-                      onClick={() => setShowLoginPassword((value) => !value)}
-                      aria-label={showLoginPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
-                      title={showLoginPassword ? 'Ocultar' : 'Ver'}
+                      onClick={toggleLoginPassword}
+                      aria-label={showLoginPassword || revealRequested ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      title={showLoginPassword || revealRequested ? 'Ocultar' : 'Ver'}
                     >
-                      {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showLoginPassword || revealRequested ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
+                  {revealedPassword !== null && <small>Contraseña guardada: puedes editarla directamente. Solo se actualizará al guardar si cambias su valor.</small>}
+                  {revealRequested && (
+                    <div style={{ marginTop: 8 }}>
+                      <label>
+                        Confirma tu contraseña de administrador para ver la contraseña guardada.
+                        <input ref={ownerPasswordInput} className="input" type="password" autoComplete="current-password"
+                          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); if (!revealBusy) void revealSavedPassword(); } }} />
+                      </label>
+                      <button className="button" type="button" disabled={revealBusy} onClick={() => void revealSavedPassword()}>
+                        {revealBusy ? 'Verificando…' : 'Confirmar y mostrar'}
+                      </button>
+                    </div>
+                  )}
+                  {revealError && <div role="alert">{revealError}</div>}
                 </Field>
                 {current && currentState?.has_credentials && authStrategy === 'cookie-snapshot' && (
                   <div className="span-2">
