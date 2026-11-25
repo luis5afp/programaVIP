@@ -431,17 +431,23 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
         if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
       };
       for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle?.addEventListener(name, endDrag);
-      new ResizeObserver(() => {
+      const clampPanel = () => {
+        if (!wrap.isConnected) return;
         const bounds = wrap.getBoundingClientRect();
         if (bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight) {
           movePanel(bounds.left, bounds.top);
         }
-      }).observe(wrap);
-      window.addEventListener('resize', () => {
-        if (!wrap.isConnected) return;
-        const bounds = wrap.getBoundingClientRect();
-        movePanel(bounds.left, bounds.top);
+      };
+      const sizeObserver = new ResizeObserver(clampPanel);
+      sizeObserver.observe(wrap);
+      window.addEventListener('resize', clampPanel);
+      const detachObserver = new MutationObserver(() => {
+        if (wrap.isConnected) return;
+        sizeObserver.disconnect();
+        detachObserver.disconnect();
+        window.removeEventListener('resize', clampPanel);
       });
+      detachObserver.observe(document.documentElement, { childList: true });
     const button=wrap.querySelector('#userflex-session-save');
     const message=wrap.querySelector('#userflex-session-message');
     button?.addEventListener('click',async(event)=>{
@@ -726,8 +732,6 @@ async function recoverOpenAiRouteError(entry, profileUrl, log = console) {
     if (!openAiRouteErrorText(`${diagnostic?.title || ''}\n${diagnostic?.body || ''}`)) return false;
 
     entry.openAiRouteRecoveryAttempts = Number(entry.openAiRouteRecoveryAttempts || 0) + 1;
-    entry.openAiAuthFlowSeen = false;
-    entry.openAiInitialInspectionDone = false;
     log.warn?.(
       `Session Manager OpenAI route recovery ${entry.openAiRouteRecoveryAttempts}/2: detected Route Error 500; reloading ChatGPT without cache/service worker.`,
     );
@@ -1346,8 +1350,6 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
       authWatchTimer: null,
       savedCloseTimer: null,
       authWatchBusy: false,
-      openAiAuthFlowSeen: false,
-      openAiInitialInspectionDone: false,
       openAiAutomationActivated: false,
       openAiAutomationPromise: null,
       openAiRouteRecoveryAttempts: 0,
@@ -1444,8 +1446,6 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
               const states = await devtoolsPageStates(debugPort);
               const authStates = states.filter((state) => isOpenAiAuthFlowUrl(state.url));
               if (authStates.length > 0) {
-                entry.openAiAuthFlowSeen = true;
-            
                 const challengeActive = authStates.some(isOpenAiChallengeState);
                 const manualVerificationActive = authStates.some(isOpenAiManualVerificationState);
                 if (challengeActive || manualVerificationActive) {
@@ -1476,9 +1476,7 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
               }
 
               const appActive = states.some((state) => isOpenAiAppUrl(state.url));
-              if (!appActive) {
-                            return null;
-              }
+              if (!appActive) return null;
 
               const routeRecovered = await recoverOpenAiRouteError(entry, profile.url, log);
               if (routeRecovered) return null;
@@ -1494,14 +1492,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
                 });
               }
 
-              // Before the user enters OpenAI auth, inspect the landing page only once.
-              // If it is not already authenticated, remain detached until the auth flow
-              // has been observed and the browser returns to chatgpt.com.
-              if (!entry.openAiAuthFlowSeen && entry.openAiInitialInspectionDone) return null;
             }
 
             // The watcher only maintains the permitted login UI; the user decides when to save.
-            entry.openAiInitialInspectionDone = true;
             return null;
           };
 

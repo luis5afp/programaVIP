@@ -109,7 +109,10 @@ assert.match(engine, /manualSaveRequired: !background/, 'interactive captures mu
 const savePipeline = engine.slice(engine.indexOf('const saveCapture = async'), engine.indexOf('const control = await startControlServer'));
 assert.ok(savePipeline.indexOf('await onComplete') < savePipeline.indexOf('entry.savedResult = result'));
 assert.ok(savePipeline.indexOf('entry.savedResult = result') < savePipeline.indexOf("close('capture_saved')"));
-assert.match(savePipeline, /No confirmó|no confirmó el guardado/);
+assert.match(savePipeline, /no confirmó el guardado/);
+const watcher = engine.slice(engine.indexOf('entry.authWatchTimer = setInterval'), engine.indexOf('entry.authWatchTimer.unref'));
+assert.doesNotMatch(watcher, /\bsaveCapture\s*\(/, 'authentication watcher cannot trigger a save');
+assert.match(captureState, /!event\.isTrusted \|\| saveButton\.disabled/);
 for (const overlay of [engine, captureState]) {
   assert.match(overlay, /setPointerCapture\(event\.pointerId\)/);
   assert.match(overlay, /pointermove/);
@@ -119,7 +122,7 @@ for (const overlay of [engine, captureState]) {
 }
 assert.match(engine, /authenticated,\s*\}\);/, 'capture completion must include the authentication result');
 assert.match(engine, /inspectCaptureSession\(activeDebugPort, profile\.url, \{ navigateIfMissing: false \}\)/);
-assert.match(engine, /Guardar ahora/, 'Chromium must expose one fallback save button');
+assert.match(engine, /Guardar ahora/, 'Chromium must expose a manual save button');
 
 assert.match(captureState, /options\?\.navigateIfMissing === false/);
 assert.match(captureState, /meaningfulContent/);

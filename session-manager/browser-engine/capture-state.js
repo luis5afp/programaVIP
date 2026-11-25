@@ -552,7 +552,7 @@ export async function installCaptureAutomation({
             font:600 12px/1.25 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           }
           .title { font-weight:800; color:#c4b5fd; margin-bottom:7px; cursor:grab; touch-action:none; user-select:none; }
-           .title:active { cursor:grabbing; }
+          .title:active { cursor:grabbing; }
           .row { display:flex; gap:6px; flex-wrap:wrap; }
           button {
             appearance:none; border:0; border-radius:7px; padding:6px 9px;
@@ -602,17 +602,23 @@ export async function installCaptureAutomation({
         if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
       };
       for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle?.addEventListener(name, endDrag);
-      new ResizeObserver(() => {
+      const clampPanel = () => {
+        if (!host.isConnected) return;
         const bounds = host.getBoundingClientRect();
         if (bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight) {
           movePanel(bounds.left, bounds.top);
         }
-      }).observe(host);
-      window.addEventListener('resize', () => {
-        if (!host.isConnected) return;
-        const bounds = host.getBoundingClientRect();
-        movePanel(bounds.left, bounds.top);
+      };
+      const sizeObserver = new ResizeObserver(clampPanel);
+      sizeObserver.observe(host);
+      window.addEventListener('resize', clampPanel);
+      const detachObserver = new MutationObserver(() => {
+        if (host.isConnected) return;
+        sizeObserver.disconnect();
+        detachObserver.disconnect();
+        window.removeEventListener('resize', clampPanel);
       });
+      detachObserver.observe(document.documentElement, { childList: true });
       const message = shadow.querySelector('.msg');
       shadow.querySelector('[data-kind="username"]')?.addEventListener('click', (event) => {
         event.preventDefault();
