@@ -116,14 +116,22 @@ try {
   });
   session = await worker.createCDPSession();
   await session.send('Runtime.enable');
+  let lastWindowState = '';
   const inspect = async () => {
     const response = await session.send('Runtime.evaluate', {
-      expression: 'chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
+      expression: 'chrome.windows.getAll({populate:true,windowTypes:["normal","popup","app","panel","devtools"]}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url || t.pendingUrl || "")})))',
       awaitPromise:true, returnByValue:true
     });
-    return response?.result?.value;
+    if (response?.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description || response.exceptionDetails.text);
+    const items = response?.result?.value;
+    if (!Array.isArray(items)) throw new Error('Browser Guard returned no native window list');
+    if (JSON.stringify(items) !== lastWindowState) {
+      lastWindowState = JSON.stringify(items);
+      console.log('EDGE_NATIVE_TABS_STATE=' + lastWindowState);
+    }
+    return items;
   };
-  await home.evaluate(() => document.querySelector('a').click());
+  await home.click('a');
   const secondary = await until(async () => (await browser.pages()).find(p => p.url().includes('/secondary')));
   await until(async () => (await secondary.evaluate(
     () => document.documentElement.dataset.ex1Loaded)) === 'yes', 10000);

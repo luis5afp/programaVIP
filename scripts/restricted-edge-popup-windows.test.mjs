@@ -126,10 +126,9 @@ try {
     target.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(target.url())), 20_000);
   const session = await worker.createCDPSession();
   await session.send('Runtime.enable');
-  await home.evaluate(() => {
-    const link = document.querySelector('a[target="_blank"]');
-    link.click();
-  });
+  // Use an actual input event rather than an untrusted DOM click: Edge
+  // selects different window handling paths for synthetic popup requests.
+  await home.click('a[target="_blank"]');
   const second = await waitFor(async () => {
     const pages = await browser.pages();
     return pages.find((page) => page.url().includes('/secondary'));
@@ -146,22 +145,29 @@ try {
   // "normal" exposes the Edge extensions toolbar and means restricted mode
   // is still leaking. The mandatory Browser Guard must convert it to popup.
   try {
+    let lastWindows = null;
     const types = await waitFor(async () => {
       const reply = await session.send('Runtime.evaluate', {
-        expression: 'chrome.windows.getAll({populate:true}).then(ws => ws.map(w => ({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
+        expression: 'chrome.windows.getAll({populate:true,windowTypes:["normal","popup","app","panel","devtools"]}).then(ws => ws.map(w => ({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url || t.pendingUrl || "")})))',
         awaitPromise: true,
         returnByValue: true,
       });
+      if (reply?.exceptionDetails) throw new Error('Browser Guard window inspection failed: ' + (reply.exceptionDetails.exception?.description || reply.exceptionDetails.text));
       const items = reply?.result?.value;
-      if (!Array.isArray(items)) return null;
+      if (!Array.isArray(items)) throw new Error('Browser Guard returned no native window list');
+      if (JSON.stringify(items) !== JSON.stringify(lastWindows)) {
+        console.log('EDGE_NATIVE_WINDOW_STATE=' + JSON.stringify(items));
+        lastWindows = items;
+      }
       if (items.some((w) => w.type === 'normal')) return null;
       const appWindows = items.filter((w) => ['popup','app'].includes(w.type));
       // Wait for the secondary URL to finish appearing in chrome.tabs, not
       // merely for two native windows to exist. The same assertions follow.
-      return appWindows.length >= 2
+      return appWindows.length === 2 && items.length === 2
+        && appWindows.some((w) => (w.urls || []).some((url) => url?.includes('/index')))
         && appWindows.some((w) => (w.urls || []).some((url) => url?.includes('/secondary')))
         ? items : null;
-    }, 12_000);
+    }, 20_000);
     assert.equal(types.length, 2, 'one original window and exactly one controlled secondary window');
     assert.ok(types.every((window) => window.type !== 'normal'),
       'restricted profiles must not leave normal Edge windows with extension buttons');
