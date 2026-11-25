@@ -4,6 +4,7 @@ import { mkdtemp, cp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawn, execFile } from 'node:child_process';
 import path from 'node:path';
+import { inspectFixtureWindows } from './edge-test-window-inspection.mjs';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
 import { startRestrictedTabbedGuard } from '../client-app/browser-engine/restricted-window-guard.js';
 
@@ -118,13 +119,7 @@ try {
   await session.send('Runtime.enable');
   let lastWindowState = '';
   const inspect = async () => {
-    const response = await session.send('Runtime.evaluate', {
-      expression: 'chrome.windows.getAll({populate:true,windowTypes:["normal","popup","app","panel","devtools"]}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url || t.pendingUrl || "")})))',
-      awaitPromise:true, returnByValue:true
-    });
-    if (response?.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description || response.exceptionDetails.text);
-    const items = response?.result?.value;
-    if (!Array.isArray(items)) throw new Error('Browser Guard returned no native window list');
+    const items = await inspectFixtureWindows(browser, session, base);
     if (JSON.stringify(items) !== lastWindowState) {
       lastWindowState = JSON.stringify(items);
       console.log('EDGE_NATIVE_TABS_STATE=' + lastWindowState);

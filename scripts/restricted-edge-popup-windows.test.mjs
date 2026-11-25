@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, mkdir, rm, readFile, cp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { inspectFixtureWindows } from './edge-test-window-inspection.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
 import { prepareRestrictedManagedExtensions } from '../client-app/browser-engine/restricted-extension-actions.js';
@@ -147,32 +148,27 @@ try {
   try {
     let lastWindows = null;
     const types = await waitFor(async () => {
-      const reply = await session.send('Runtime.evaluate', {
-        expression: 'chrome.windows.getAll({populate:true,windowTypes:["normal","popup","app","panel","devtools"]}).then(ws => ws.map(w => ({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url || t.pendingUrl || "")})))',
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      if (reply?.exceptionDetails) throw new Error('Browser Guard window inspection failed: ' + (reply.exceptionDetails.exception?.description || reply.exceptionDetails.text));
-      const items = reply?.result?.value;
-      if (!Array.isArray(items)) throw new Error('Browser Guard returned no native window list');
+      const items = await inspectFixtureWindows(browser, session, base);
       if (JSON.stringify(items) !== JSON.stringify(lastWindows)) {
         console.log('EDGE_NATIVE_WINDOW_STATE=' + JSON.stringify(items));
         lastWindows = items;
       }
       if (items.some((w) => w.type === 'normal')) return null;
       const appWindows = items.filter((w) => ['popup','app'].includes(w.type));
-      // Wait for the secondary URL to finish appearing in chrome.tabs, not
-      // merely for two native windows to exist. The same assertions follow.
+      // Both fixture URLs must survive the conversion in separate protected windows.
       return appWindows.length === 2 && items.length === 2
-        && appWindows.some((w) => (w.urls || []).some((url) => url?.includes('/index')))
-        && appWindows.some((w) => (w.urls || []).some((url) => url?.includes('/secondary')))
+        && appWindows.some(w => w.urls.includes('/index') && !w.urls.includes('/secondary'))
+        && appWindows.some(w => w.urls.includes('/secondary') && !w.urls.includes('/index'))
         ? items : null;
     }, 20_000);
     assert.equal(types.length, 2, 'one original window and exactly one controlled secondary window');
     assert.ok(types.every((window) => window.type !== 'normal'),
       'restricted profiles must not leave normal Edge windows with extension buttons');
-    assert.ok(types.some((w) => (w.urls||[]).some((url) => url?.includes('/secondary'))),
-      'secondary page must be reachable in a toolbar-free popup/app window');
+    assert.ok(types.some(w => w.urls.includes('/secondary')), 'secondary page must be reachable in a toolbar-free popup/app window');
+    const finalSecond = (await browser.pages()).find(page => page.url() === base + '/secondary');
+    assert.ok(finalSecond, 'secondary page must survive conversion');
+    assert.equal(await finalSecond.evaluate(() => document.cookie.includes('sameProfileTest=passed')), true);
+    await waitFor(async () => (await finalSecond.evaluate(() => document.documentElement.dataset.userflowManagedTest)) === 'running');
   } finally {
     await session.detach().catch(() => null);
   }
