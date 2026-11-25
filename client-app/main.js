@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen } from 'electron';
+import { app, BrowserWindow, WebContentsView, ipcMain, safeStorage, screen, session } from 'electron';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
 import { sessionAccessStatus } from './browser-engine/session-access-status.js';
+import { integratedManualEligible, createIntegratedManualController } from './browser-engine/integrated-manual.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
 import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile, priorSignInMarkerFile } from './auth-session-locations.js';
 import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
@@ -56,6 +57,7 @@ const pendingUsageCloseRequests = new Set();
 const profileImageDataCache = new Map();
 let quitAfterUsageFlush = false;
 let kaizenBrowserEngine = null;
+const integratedManual = createIntegratedManualController({BrowserWindow,session,randomUUID:()=>crypto.randomUUID(),onClosed:closeWorkspaceUsage});
 let initialCatalogSyncPromise = null;
 const FAST_SESSION_VERIFY_TIMEOUT_MS = 6_000;
 
@@ -917,6 +919,7 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   const previousRevision = authMeta?.client?.configRevision || null;
   const nextRevision = configRevisionFrom(payload);
   const configChanged = Boolean(previousRevision && nextRevision && previousRevision !== nextRevision);
+  if (configChanged) integratedManual.closeAll('configuration_changed');
   mergeValidationMeta(payload);
 
   // Resolve the client id from the authoritative authenticated metadata after
@@ -1209,6 +1212,7 @@ async function returnToLogin(message = null, code = null, options = {}) {
   // Keep at least one Electron window alive during the transition back to
   // login. On Windows, closing the workspace while it is the only window emits
   // window-all-closed and can terminate the whole app before login is recreated.
+  integratedManual.closeAll('logout');
   await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
   await clearAuth();
@@ -1572,6 +1576,7 @@ function createBrowserWindow() {
     revealVerifiedWorkspace();
   });
   browserWindow.on('closed', () => {
+    integratedManual.closeAll('workspace_closed');
     stopProfileDragMonitor();
     const workspaces = Array.from(profileTabs.values());
     browserWindow = null;
@@ -1667,6 +1672,7 @@ function closeProfileTab(profileId) {
 }
 
 function closePrivateBrowser() {
+  integratedManual.closeAll('workspace_closed');
   stopProfileDragMonitor();
   const workspaces = Array.from(profileTabs.values());
   profileTabs.clear();
@@ -2067,6 +2073,12 @@ async function openProfile(profileId) {
 
   try {
     const managedExtensions = await prepareManagedExtensionsForProfile(profile);
+    if (!accessToken || authTransitionInFlight || heartbeatFailClosed || quitAfterUsageFlush) {
+      throw new UserflexError('La sesión de userFLOW no está disponible.', 'CLIENT_UNAUTHENTICATED', 401);
+    }
+    if (integratedManualEligible(launch)) {
+      return await integratedManual.open(launch, usage);
+    }
     const clientId = authMeta?.client?.id || 'client';
     const engine = getKaizenBrowserEngine();
     let result = await engine.launch({
@@ -2680,6 +2692,7 @@ app.on('before-quit', (event) => {
   if (quitAfterUsageFlush) return;
   event.preventDefault();
   quitAfterUsageFlush = true;
+  integratedManual.closeAll('app_exit');
   for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
   void getKaizenBrowserEngine().closeAll('app_exit')
     .catch(() => null)

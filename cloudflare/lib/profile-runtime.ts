@@ -141,6 +141,32 @@ export function runtimeForProfile(profile: any): ProfileRuntime {
   };
 }
 
+// Selection is per authorized launch, not a persistent migration of existing profiles.
+export function integratedManualLaunchEngine(input: {
+  runtime: ProfileRuntime;
+  url: string;
+  allowExternalBrowsing: boolean;
+  browserExtensionsAccess: string;
+  directUnlocked: boolean;
+  nativeProxyCompatible?: boolean;
+  extensionCount: number;
+  contentRuleCount: number;
+  sessionMaterialIncluded: boolean;
+  credentialIncluded: boolean;
+}): 'electron-integrated-manual' | 'kaizen-external' {
+  let url: URL;
+  try { url = new URL(input.url); } catch { return 'kaizen-external'; }
+  const r = input.runtime;
+  return url.protocol === 'https:' && !url.username && !url.password
+    && r.browserEngine === 'chrome-native'
+    && r.authStrategy === 'manual' && r.storageStrategy === 'local-persistent'
+    && r.extensionStrategy === 'guard-only' && !r.deviceLocalAuth
+    && input.allowExternalBrowsing && input.browserExtensionsAccess === 'full'
+    && (input.directUnlocked || input.nativeProxyCompatible === true) && input.extensionCount === 0 && input.contentRuleCount === 0
+    && !input.sessionMaterialIncluded && !input.credentialIncluded
+    ? 'electron-integrated-manual' : 'kaizen-external';
+}
+
 export function snapshotAuthentication(runtime: ProfileRuntime) {
   return runtime.authStrategy === 'cookie-snapshot' || runtime.authStrategy === 'hybrid';
 }

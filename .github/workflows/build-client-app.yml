@@ -126,6 +126,9 @@ jobs:
           node --check build/vmp-sign.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify isolated integrated manual browser policy
+        run: node ../scripts/integrated-manual.test.mjs
+
       - name: Verify launcher themes and launch feedback
         run: node ../scripts/userflow-launcher-themes.test.mjs
 
@@ -169,6 +172,10 @@ jobs:
       - name: Verify encrypted token survives closing and reopening Electron (Windows)
         if: github.event_name == 'pull_request'
         run: node ../scripts/userflow-auth-restart-windows.test.mjs
+
+      - name: Verify native Electron session isolation and proxy configuration (Windows)
+        if: github.event_name == 'pull_request'
+        run: node ../scripts/integrated-native-session-windows.test.mjs
 
       - name: Verify restricted Edge popup navigation in real Windows Edge
         if: github.event_name == 'pull_request'
