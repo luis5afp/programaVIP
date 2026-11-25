@@ -2337,8 +2337,8 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
             <div style={{ padding: 12, border: '1px solid #c7d2fe', background: '#eef2ff', borderRadius: 10 }}>
               <strong>Captura segura de sesión</strong>
               <div className="help" style={{ marginTop: 5 }}>
-                En sitios normales userFLEX puede guardar automáticamente. Si aparece CAPTCHA/Turnstile, completa la verificación humana
-                sin automatización y, cuando ya estés dentro de la cuenta, pulsa <b>Guardar sesión ahora</b> desde este panel.
+                La captura es manual. Completa el acceso, incluida cualquier verificación humana. Cuando estés dentro de la cuenta,
+                pulsa <b>Guardar ahora</b> en el panel flotante de Chromium o <b>Guardar sesión ahora</b> desde aquí. El panel flotante se puede mover arrastrando su título.
               </div>
             </div>
             {captureSaveMessage && (

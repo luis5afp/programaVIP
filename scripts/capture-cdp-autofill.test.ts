@@ -117,7 +117,7 @@ assert.match(safeAttachSource, /no extension, Puppeteer, CDP attachment, or remo
 assert.doesNotMatch(safeAttachSource, /connectCaptureBrowser|installCaptureAutomation|navigateCaptureHome/);
 assert.match(
   engine,
-  /if \(!background && !challengeSafeCapture\)[\s\S]{0,120}autoSaveTimer/,
+  /if \(!background && !challengeSafeCapture && openAiCapture\)[\s\S]{0,120}authWatchTimer/,
   'challenge-safe captures must not run the automatic Puppeteer inspection loop',
 );
 assert.match(
