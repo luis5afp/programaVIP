@@ -1,0 +1,31 @@
+name: userFLOW LAB Windows
+on:
+  pull_request:
+    paths:
+      - 'experimental/userflow-integrated/**'
+      - '.github/workflows/userflow-integrated-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: experimental/userflow-integrated
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npm run smoke
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: userFLOW-LAB-0.1.0-Windows
+          path: experimental/userflow-integrated/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7

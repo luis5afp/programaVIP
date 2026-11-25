@@ -1,0 +1,32 @@
+{
+  "name": "userflow-integrated-lab",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "node --test fixture.test.cjs",
+    "dist:win": "electron-builder --win portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.1.0",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.userflex.integrated.lab",
+    "productName": "userFLOW LAB",
+    "artifactName": "userFLOW-LAB-0.1.0-portable.exe",
+    "files": [
+      "main.cjs",
+      "fixture.cjs",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable"
+    }
+  }
+}
