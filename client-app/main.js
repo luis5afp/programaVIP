@@ -57,7 +57,6 @@ const pendingUsageCloseRequests = new Set();
 const profileImageDataCache = new Map();
 let quitAfterUsageFlush = false;
 let kaizenBrowserEngine = null;
-const integratedManualEnabled = process.argv.includes('--integrated-manual');
 const integratedManual = createIntegratedManualController({BrowserWindow,session,randomUUID:()=>crypto.randomUUID(),onClosed:closeWorkspaceUsage});
 let initialCatalogSyncPromise = null;
 const FAST_SESSION_VERIFY_TIMEOUT_MS = 6_000;
@@ -2077,8 +2076,8 @@ async function openProfile(profileId) {
     if (!accessToken || authTransitionInFlight || heartbeatFailClosed || quitAfterUsageFlush) {
       throw new UserflexError('La sesión de userFLOW no está disponible.', 'CLIENT_UNAUTHENTICATED', 401);
     }
-    if (integratedManualEligible(launch, integratedManualEnabled)) {
-      return await integratedManual.open(launch, usage, integratedManualEnabled);
+    if (integratedManualEligible(launch)) {
+      return await integratedManual.open(launch, usage);
     }
     const clientId = authMeta?.client?.id || 'client';
     const engine = getKaizenBrowserEngine();

@@ -1,11 +1,12 @@
-// Integrated Chromium is opt-in and only for server-authorized, manual
+// Integrated Chromium is selected automatically by the server for authorized manual
 // access without managed session, credential, extension, proxy or content policy.
-export function integratedManualEligible(launch, enabled) {
-  if (enabled !== true || !launch?.profile || !launch?.client) return false;
+export function integratedManualEligible(launch) {
+  if (launch?.profile?.launchEngine !== 'electron-integrated-manual' || !launch?.client) return false;
   const {profile,client,connection,sessionDelivery,credentialDelivery}=launch;
   let url;
   try {url=new URL(profile.url);} catch {return false;}
   return url.protocol==='https:' && !url.username && !url.password
+    && profile.runtime?.browserEngine==='chrome-native'
     && profile.runtime?.authStrategy==='manual'
     && profile.runtime?.extensionStrategy==='guard-only'
     && profile.runtime?.storageStrategy==='local-persistent'
@@ -34,8 +35,8 @@ export function createIntegratedManualController({BrowserWindow, session, random
     if (!entry.window.isDestroyed()) entry.window.destroy();
   }
   function closeAll(reason) {for(const id of [...active.keys()])close(id,reason);}
-  async function open(launch, usage, enabled) {
-    if (!integratedManualEligible(launch,enabled)) throw new Error('Perfil no autorizado para navegador integrado.');
+  async function open(launch, usage) {
+    if (!integratedManualEligible(launch)) throw new Error('Perfil no autorizado para navegador integrado.');
     const {profile}=launch;
     close(profile.id,'profile_reopened');
     const origin=new URL(profile.url).origin;

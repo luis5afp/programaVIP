@@ -8,6 +8,7 @@ import { managedContentRulesForProfiles } from './content-rules';
 import {
   credentialAuthentication,
   effectiveProfileCategory,
+  integratedManualLaunchEngine,
   proxyRuntimeUsable,
   runtimeForProfile,
   selectNetworkPolicy,
@@ -400,6 +401,16 @@ export async function clientLaunch(
     }
   }
 
+  const launchEngine = integratedManualLaunchEngine({
+    runtime, url: profile.url,
+    allowExternalBrowsing: id.client.allow_external_browsing === true,
+    browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access),
+    directUnlocked: connection.mode === 'direct' && connection.locked === false && !connection.proxy,
+    extensionCount: managedExtensions.length,
+    contentRuleCount: managedContentRules.length,
+    sessionMaterialIncluded: sessionDelivery.materialIncluded === true,
+    credentialIncluded: Boolean(credentialDelivery),
+  });
   const usage = await openProfileUsage(request, env, id, { id: profile.id, name: profile.name, url: profile.url });
 
   await audit(env, request, 'client', id.clientId, 'profile.launch', 'profile', profileId, {
@@ -438,6 +449,7 @@ export async function clientLaunch(
       runtime,
       extensions: managedExtensions,
       contentRules: managedContentRules,
+      launchEngine,
     },
     connection,
     sessionDelivery,
