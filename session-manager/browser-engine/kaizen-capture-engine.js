@@ -1248,6 +1248,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           await prepareChallengeSafeReadback();
         }
         const authenticated = await confirmAuthenticatedSession();
+        if (!authenticated) {
+          throw new Error('No se pudo confirmar que la cuenta esté abierta. Completa el inicio de sesión y vuelve a pulsar Guardar ahora. No se reemplazó la sesión guardada.');
+        }
         const captured = await capturePortableSession({
           debugPort: entry.debugPort,
           profile,

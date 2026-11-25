@@ -584,8 +584,8 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
           );
           setSuccess(
             verified
-              ? 'Sesión guardada y verificada correctamente. Session Keeper quedó registrado para mantenerla automáticamente.'
-              : 'Sesión guardada correctamente. Session Keeper quedó registrado y completará la verificación automática.',
+              ? 'Sesión guardada y verificada correctamente. Comprueba su funcionamiento con Abrir como cliente.'
+              : 'Se guardaron datos de sesión, pero no se confirmó el acceso. Realiza una nueva captura o comprueba el perfil antes de utilizarlo.',
           );
           setCaptureRetryReady(false);
           setCaptureLaunch(null);

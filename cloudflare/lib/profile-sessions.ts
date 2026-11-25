@@ -1336,7 +1336,7 @@ async function captureJob(env: Env, rawToken: string, phase: 'bootstrap' | 'comp
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ status: 'expired' }),
     });
-    throw new HttpError(401, 'CAPTURE_TOKEN_EXPIRED');
+    throw new HttpError(401, 'CAPTURE_TOKEN_EXPIRED', 'El enlace de captura venció. Genera una nueva captura desde el panel administrativo.');
   }
 
   if (phase === 'bootstrap') {
@@ -1701,6 +1701,9 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
     const profile = await profileRow(env, job.profile_id);
     const publicIp = optional(body.publicIp, 64);
     const authenticated = body.authenticated === true;
+    if (!authenticated) {
+      throw new HttpError(409, 'CAPTURE_AUTH_NOT_CONFIRMED', 'No se confirmó el inicio de sesión. La captura anterior se conserva. Completa el acceso y vuelve a guardar.');
+    }
     const now = new Date().toISOString();
     const stored = await storeSessionSnapshot(env, profile, body.material, {
       publicIp,
