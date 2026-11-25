@@ -506,8 +506,18 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
       : 'Chrome nativo se validará en el equipo que ejecute userFLOW.',
   );
 
-  const credentials = await credentialRow(env, profile.id);
-  if (credentialAuthentication(runtime)) {
+  let credentials: any = null;
+  let credentialReadFailed = false;
+  try {
+    credentials = await credentialRow(env, profile.id);
+  } catch (error) {
+    credentialReadFailed = true;
+    console.error('Profile validation credential read failed', profile.id, error instanceof HttpError ? error.code : 'UNEXPECTED');
+    add('credentials', 'Credenciales', 'fail', 'El servidor no pudo consultar la configuración de credenciales. No se modificó ningún dato.');
+  }
+  if (credentialReadFailed) {
+    // Keep the failed check; do not report the credentials as missing or ready.
+  } else if (credentialAuthentication(runtime)) {
     add(
       'credentials',
       runtime.authStrategy === 'hybrid' ? 'Autofill + credenciales' : 'Credenciales',
@@ -532,14 +542,25 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
   }
 
   let material: any = null;
-  const session = await sessionRow(env, profile.id);
+  let session: any = null;
+  let snapshotReadFailed = false;
   if (snapshotAuthentication(runtime)) {
-    if (!session || session.status !== 'ready' || !session.material_ciphertext || !session.material_iv) {
+    try {
+      session = await sessionRow(env, profile.id);
+    } catch (error) {
+      snapshotReadFailed = true;
+      console.error('Profile validation snapshot read failed', profile.id, error instanceof HttpError ? error.code : 'UNEXPECTED');
+      add('snapshot', 'Snapshot de sesión', 'fail', 'El servidor no pudo consultar el snapshot almacenado. No se modificó la sesión.');
+    }
+    if (snapshotReadFailed) {
+      // Do not confuse a failed database read with a missing snapshot.
+    } else if (!session || session.status !== 'ready' || !session.material_ciphertext || !session.material_iv) {
       add('snapshot', 'Snapshot de sesión', 'fail', 'No hay una sesión capturada lista.');
     } else {
       try {
         const raw = await decryptProxy(env, session.material_ciphertext, session.material_iv);
         material = JSON.parse(raw);
+        validateCapturedMaterial(profile, material);
         const importedJson = material?.source?.type === 'json-cookie-import';
         const runtimeValidated = Boolean(session.last_validated_at);
         add(
@@ -547,11 +568,16 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
           'Snapshot de sesión',
           runtimeValidated ? 'pass' : 'warn',
           runtimeValidated
-            ? `${importedJson ? 'Cookies JSON' : 'Sesión'} v${Number(session.session_version || 0)} verificadas en userFLOW.`
+            ? `${importedJson ? 'Cookies JSON' : 'Sesión'} v${Number(session.session_version || 0)} con comprobación de acceso registrada. Prueba en userFLOW para confirmar el acceso desde el equipo cliente.`
             : `${importedJson ? 'Cookies JSON' : 'Sesión'} v${Number(session.session_version || 0)} guardadas. Falta una comprobación real en userFLOW para confirmar que la web sigue autenticada.`,
         );
-      } catch {
-        add('snapshot', 'Snapshot de sesión', 'fail', 'El material cifrado de sesión no se pudo leer.');
+      } catch (error) {
+        material = null;
+        const detail = error instanceof HttpError
+          ? error.message
+          : 'El material cifrado de sesión no se pudo leer.';
+        console.error('Profile validation snapshot integrity failed', profile.id, error instanceof HttpError ? error.code : 'UNEXPECTED');
+        add('snapshot', 'Snapshot de sesión', 'fail', detail);
       }
     }
   } else {
@@ -609,8 +635,15 @@ async function configurationValidation(env: Env, profile: any, clientId: string 
     }
   } catch {}
 
-  let network: any = await profileValidationNetwork(env, profile, clientId);
+  let network: any;
   let networkLiveError: string | null = null;
+  try {
+    network = await profileValidationNetwork(env, profile, clientId);
+  } catch (error) {
+    console.error('Profile validation network configuration failed', profile.id, error instanceof HttpError ? error.code : 'UNEXPECTED');
+    network = { mode: 'unavailable', locked: true, source: 'direct', proxy: null, ready: false };
+    networkLiveError = 'No se pudo consultar la configuración de red. La prueba permanece bloqueada.';
+  }
   if (network.proxy) {
     try {
       const checkedProxy = await liveValidateCaptureProxy(env, network.proxy);

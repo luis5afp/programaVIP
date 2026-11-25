@@ -96,6 +96,24 @@ assert.match(unknown, /Motivo:/);
 assert.match(unknown, /Qué hacer:/);
 assert.doesNotMatch(unknown, /TERRIBLY_CONFUSING|SELECT/);
 
+const validation = friendlyApiError({
+  path: '/api/profiles/1234/validation',
+  method: 'POST',
+  status: 500,
+  code: 'INTERNAL_ERROR',
+  requestId: 'example-validation-ref',
+});
+assert.match(validation, /No se pudo validar la configuración del perfil/);
+assert.doesNotMatch(validation, /guardar el perfil|si los cambios se guardaron/);
+assert.match(validation, /Referencia para soporte/);
+const profiles = source('src/views/ProfilesView.tsx');
+assert.match(profiles, /async function openValidation[\s\S]{0,350}setError\(null\)/);
+const sessions = source('cloudflare/lib/profile-sessions.ts');
+assert.match(sessions, /Profile validation snapshot read failed/);
+assert.match(sessions, /Profile validation credential read failed/);
+assert.match(sessions, /Profile validation network configuration failed/);
+assert.match(sessions, /material = JSON.parse\(raw\);\s*validateCapturedMaterial\(profile, material\)/);
+
 assert.match(client, /friendlyApiError\(\{/);
 assert.match(clientView, /setError\(createError\?\.message/);
 assert.doesNotMatch(clientView, /Código: \$\{code\}/);

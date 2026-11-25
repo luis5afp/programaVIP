@@ -165,6 +165,8 @@ function actionLabel(method: string, path: string): string {
   if (target === '/api/clients' && verb === 'POST') return 'crear el cliente';
   if (target === '/api/auth/login') return 'iniciar sesión';
   if (target === '/api/auth/session') return 'verificar tu sesión';
+  if (/^\/api\/profiles\/[^/]+\/validation$/.test(target)) return 'validar la configuración del perfil';
+  if (/^\/api\/profiles\/[^/]+\/client-test$/.test(target)) return 'iniciar la prueba del perfil en userFLOW';
   if (target.endsWith('/credentials')) return 'guardar las credenciales';
   if (target.includes('upload') || target.includes('package') || target.includes('image')) {
     return isList ? 'descargar el archivo' : 'subir el archivo';
@@ -195,7 +197,8 @@ export function friendlyApiError(details: ApiFailureDetails): string {
   const explicit = safeUserExplanation(details.serverMessage);
 
   const isUnexpected = code === 'INTERNAL_ERROR' || details.status >= 500 && !known;
-  const isUnknownResult = details.method.toUpperCase() !== 'GET' && details.method.toUpperCase() !== 'HEAD';
+  const readOnlyValidation = /^\/api\/profiles\/[^/]+\/validation$/.test(details.path.split('?')[0].toLowerCase());
+  const isUnknownResult = !readOnlyValidation && details.method.toUpperCase() !== 'GET' && details.method.toUpperCase() !== 'HEAD';
   const fallbackCause = isUnexpected
     ? 'El servidor encontró un fallo inesperado. El motivo exacto necesita revisarse en los registros.'
     : details.status === 403

@@ -1116,6 +1116,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
   async function openValidation(profile: Profile) {
     const eligible = validationClientsFor(profile.id);
     const defaultClientId = profile.network_strategy === 'assigned-proxy' ? (eligible[0]?.id || '') : '';
+    setError(null);
     setValidationProfile(profile);
     setValidationClientId(defaultClientId);
     setValidationResult(null);
@@ -1136,6 +1137,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
     try {
       setValidationBusy(true);
       setError(null);
+      setValidationResult(null);
       const response = await api.profileSessions.validate(validationProfile.id, clientId || null);
       setValidationResult(response.validation);
     } catch (validationError: any) {
@@ -1621,6 +1623,20 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                     Configurar autofill
                   </button>
                 )}
+              </div>
+            )}
+
+            {(validationProfile.auth_strategy === 'cookie-snapshot'
+              || validationProfile.auth_strategy === 'hybrid'
+              || validationProfile.session_mode === 'managed-first-party'
+              || (stateFor(validationProfile.id)?.version || 0) > 0) && (
+              <div style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 12 }}>
+                <strong>Snapshot registrado en el servidor</strong>
+                <div className="help" style={{ marginTop: 6 }}>
+                  {(stateFor(validationProfile.id)?.version || 0) > 0
+                    ? `Versión v${stateFor(validationProfile.id)?.version} · ${stateFor(validationProfile.id)?.captured_at ? new Date(stateFor(validationProfile.id)!.captured_at!).toLocaleString() : 'fecha no disponible'}. La versión registrada por sí sola no confirma el acceso del cliente.`
+                    : 'No se ha recibido una versión de snapshot para este perfil en la lista actual. Valida la configuración para comprobar su estado.'}
+                </div>
               </div>
             )}
 
