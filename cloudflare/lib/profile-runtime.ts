@@ -148,6 +148,7 @@ export function integratedManualLaunchEngine(input: {
   allowExternalBrowsing: boolean;
   browserExtensionsAccess: string;
   directUnlocked: boolean;
+  nativeProxyCompatible?: boolean;
   extensionCount: number;
   contentRuleCount: number;
   sessionMaterialIncluded: boolean;
@@ -161,7 +162,7 @@ export function integratedManualLaunchEngine(input: {
     && r.authStrategy === 'manual' && r.storageStrategy === 'local-persistent'
     && r.extensionStrategy === 'guard-only' && !r.deviceLocalAuth
     && input.allowExternalBrowsing && input.browserExtensionsAccess === 'full'
-    && input.directUnlocked && input.extensionCount === 0 && input.contentRuleCount === 0
+    && (input.directUnlocked || input.nativeProxyCompatible === true) && input.extensionCount === 0 && input.contentRuleCount === 0
     && !input.sessionMaterialIncluded && !input.credentialIncluded
     ? 'electron-integrated-manual' : 'kaizen-external';
 }

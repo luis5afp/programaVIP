@@ -1,5 +1,17 @@
 // Integrated Chromium is selected automatically by the server for authorized manual
-// access without managed session, credential, extension, proxy or content policy.
+// access without managed sessions, credentials, mandatory extensions or content rules.
+// Native proxy support is deliberately limited to validated, unauthenticated proxies.
+export function nativeProxyConfig(connection) {
+  if (connection?.mode === 'direct' && connection.locked === false && !connection.proxy) return {mode:'direct'};
+  const p=connection?.proxy;
+  if (connection?.mode !== 'proxy' || connection.locked !== false || !p
+      || !['http','socks5'].includes(p.type) || p.validationStatus !== 'valid'
+      || !/^[a-z0-9.-]+$/i.test(String(p.host || ''))
+      || !Number.isInteger(Number(p.port)) || Number(p.port)<1 || Number(p.port)>65535
+      || p.username || p.password) return null;
+  return {mode:'fixed_servers',proxyRules:p.type+'://'+p.host+':'+Number(p.port),proxyBypassRules:'<-loopback>'};
+}
+
 export function integratedManualEligible(launch) {
   if (launch?.profile?.launchEngine !== 'electron-integrated-manual' || !launch?.client) return false;
   const {profile,client,connection,sessionDelivery,credentialDelivery}=launch;
@@ -12,7 +24,7 @@ export function integratedManualEligible(launch) {
     && profile.runtime?.storageStrategy==='local-persistent'
     && profile.runtime?.deviceLocalAuth!==true
     && client.allowExternalBrowsing===true && client.browserExtensionsAccess==='full'
-    && connection?.mode==='direct' && connection.locked===false && !connection.proxy
+    && nativeProxyConfig(connection)!==null
     && sessionDelivery?.materialIncluded===false && !sessionDelivery.material
     && !credentialDelivery
     && Array.isArray(profile.extensions) && profile.extensions.length===0
@@ -59,10 +71,17 @@ export function createIntegratedManualController({BrowserWindow, session, random
     window.on('closed',()=>{
       if(active.get(profile.id)===entry)active.delete(profile.id);
       void Promise.resolve(onClosed(usage,entry.reason)).catch(()=>null);
+      void isolated.closeAllConnections().catch(()=>null);
       void isolated.clearStorageData().catch(()=>null);
       void isolated.clearCache().catch(()=>null);
     });
     try {
+      // Configure before navigation; a failed proxy configuration is never
+      // retried via a direct connection.
+      const config=nativeProxyConfig(launch.connection);
+      await isolated.setProxy(config);
+      await isolated.closeAllConnections();
+      if(window.isDestroyed()||active.get(profile.id)!==entry)throw new Error('La apertura fue cancelada.');
       await window.loadURL(profile.url);
       if(window.isDestroyed()||active.get(profile.id)!==entry)throw new Error('La apertura fue cancelada.');
       window.show();

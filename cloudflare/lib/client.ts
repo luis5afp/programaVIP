@@ -406,6 +406,13 @@ export async function clientLaunch(
     allowExternalBrowsing: id.client.allow_external_browsing === true,
     browserExtensionsAccess: browserExtensionsAccess(id.client.browser_extensions_access),
     directUnlocked: connection.mode === 'direct' && connection.locked === false && !connection.proxy,
+    // Only validated, unauthenticated HTTP/SOCKS5 proxies in this first release.
+    nativeProxyCompatible: connection.mode === 'proxy' && connection.locked === false
+      && ['http', 'socks5'].includes(connection.proxy?.type)
+      && connection.proxy?.validationStatus === 'valid'
+      && /^[a-z0-9.-]+$/i.test(String(connection.proxy?.host || ''))
+      && Number.isInteger(Number(connection.proxy?.port)) && Number(connection.proxy?.port) > 0 && Number(connection.proxy?.port) <= 65535
+      && !connection.proxy?.username && !connection.proxy?.password,
     extensionCount: managedExtensions.length,
     contentRuleCount: managedContentRules.length,
     sessionMaterialIncluded: sessionDelivery.materialIncluded === true,

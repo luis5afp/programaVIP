@@ -185,3 +185,6 @@ console.log('Profile runtime matrix: OK');
 const engineInput = {runtime:manual,url:'https://example.test/',allowExternalBrowsing:true,browserExtensionsAccess:'full',directUnlocked:true,extensionCount:0,contentRuleCount:0,sessionMaterialIncluded:false,credentialIncluded:false};
 assert.equal(integratedManualLaunchEngine(engineInput),'electron-integrated-manual');
 for (const patch of [{runtime:snapshot},{runtime:{...manual,browserEngine:'nstchrome' as const}},{allowExternalBrowsing:false},{browserExtensionsAccess:'restricted'},{directUnlocked:false},{extensionCount:1},{contentRuleCount:1},{sessionMaterialIncluded:true},{credentialIncluded:true},{url:'http://example.test/'}]) assert.equal(integratedManualLaunchEngine({...engineInput,...patch}),'kaizen-external');
+
+assert.equal(integratedManualLaunchEngine({...engineInput,directUnlocked:false,nativeProxyCompatible:true}),'electron-integrated-manual');
+assert.equal(integratedManualLaunchEngine({...engineInput,runtime:snapshot,directUnlocked:false,nativeProxyCompatible:true}),'kaizen-external');
