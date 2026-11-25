@@ -751,6 +751,12 @@ function safeValidationResult(value: any) {
   } : null;
   const inspection = value?.inspection && typeof value.inspection === 'object' ? {
     currentUrl: safeDiagnosticUrl(value.inspection.currentUrl),
+    inspectionComplete: value.inspection.inspectionComplete === true,
+    documentReady: value.inspection.documentReady === true,
+    meaningfulContent: value.inspection.meaningfulContent === true,
+    logoutActionVisible: value.inspection.logoutActionVisible === true,
+    explicitLoginActionVisible: value.inspection.explicitLoginActionVisible === true,
+    loginActionVisible: value.inspection.loginActionVisible === true,
     loginLikeUrl: value.inspection.loginLikeUrl === true,
     usernameFieldVisible: value.inspection.usernameFieldVisible === true,
     passwordFieldVisible: value.inspection.passwordFieldVisible === true,
@@ -762,9 +768,20 @@ function safeValidationResult(value: any) {
       ? value.inspection.humanVerificationProvider.slice(0, 80)
       : null,
   } : null;
+  const reportedOutcome = typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null;
+  const positiveAccessEvidence = value?.accessStatus === 'authenticated'
+    && inspection?.inspectionComplete === true
+    && inspection?.documentReady === true
+    && inspection?.meaningfulContent === true
+    && inspection?.logoutActionVisible === true
+    && inspection?.loginLikeUrl !== true
+    && inspection?.loginActionVisible !== true
+    && inspection?.passwordFieldVisible !== true
+    && inspection?.humanVerificationVisible !== true
+    && Boolean(inspection?.currentUrl);
   return {
     ok: value?.ok === true,
-    outcome: typeof value?.outcome === 'string' ? value.outcome.slice(0, 120) : null,
+    outcome: reportedOutcome === 'snapshot-authenticated' && !positiveAccessEvidence ? 'snapshot-access-unconfirmed' : reportedOutcome,
     browser: typeof value?.browser === 'string' ? value.browser.slice(0, 160) : null,
     profileState: typeof value?.profileState === 'string' ? value.profileState.slice(0, 80) : null,
     network: typeof value?.network === 'string' ? value.network.slice(0, 80) : null,
@@ -773,6 +790,8 @@ function safeValidationResult(value: any) {
     clientVersion: typeof value?.clientVersion === 'string' ? value.clientVersion.slice(0, 32) : null,
     errorCode: typeof value?.errorCode === 'string' ? value.errorCode.slice(0, 120) : null,
     launchStage: typeof value?.launchStage === 'string' ? value.launchStage.slice(0, 80) : null,
+    httpStatus: Number.isInteger(value?.httpStatus) && value.httpStatus >= 400 && value.httpStatus <= 599 ? value.httpStatus : null,
+    requestId: typeof value?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(value.requestId) ? value.requestId : null,
     launchDiagnostics: value?.launchDiagnostics && typeof value.launchDiagnostics === 'object' ? {
       browser: typeof value.launchDiagnostics.browser === 'string' ? value.launchDiagnostics.browser.slice(0, 80) : null,
       executable: typeof value.launchDiagnostics.executable === 'string' ? value.launchDiagnostics.executable.slice(0, 260) : null,
@@ -1604,8 +1623,8 @@ export async function publicSessionManagerRoutes(request: Request, env: Env): Pr
       'hybrid-autofill-ready',
       'hybrid-login-not-detected',
     ].includes(sessionOutcome);
-    if (sessionChecked && sessionOutcome === 'snapshot-authenticated') {
-      await db(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready`, {
+    if (sessionChecked && sessionOutcome === 'snapshot-authenticated' && result.sessionVersion > 0) {
+      await db(env, `userflex_profile_sessions?profile_id=eq.${job.profile_id}&status=eq.ready&session_version=eq.${result.sessionVersion}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({

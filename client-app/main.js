@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { createKaizenBrowserEngine } from './browser-engine/kaizen-engine.js';
+import { sessionAccessStatus } from './browser-engine/session-access-status.js';
 import { saveEncryptedAuthSession, readEncryptedAuthSession, estimatedServerNow } from './auth-session-cache.js';
 import { canonicalAuthFile, previousAuthFiles, authBackupFiles, signedOutMarkerFile, priorSignInMarkerFile } from './auth-session-locations.js';
 import { persistRecoverableAuth, recoverAuthCopies } from './auth-session-store.js';
@@ -2020,6 +2021,11 @@ async function reportSessionHealth(profileId, authenticated, result = null, opti
     body: {
       authenticated: authenticated === true,
       confirmedFailure: options.confirmedFailure === true,
+      accessStatus: options.accessStatus || 'unconfirmed',
+      cookiesInstalled: result?.restore?.cookiesInstalled,
+      cookiesRejected: result?.restore?.cookiesRejected,
+      indexedDbRestored: result?.restore?.indexedDbRestored,
+      indexedDbTotal: result?.restore?.indexedDbTotal,
       sessionVersion: Number(options.sessionVersion ?? result?.sessionVersion ?? 0),
       source: String(options.source || result?.profileState || ''),
       reason: typeof options.reason === 'string' ? options.reason : undefined,
@@ -2078,6 +2084,7 @@ async function openProfile(profileId) {
     const sessionRecovered = false;
     const fallbackRecovered = false;
     let activeDelivery = delivery;
+    let accessStatus = null;
 
     // STREAMING keeps device-bound browser storage local, while managed cookies
     // can still be restored from the administrator snapshot. This inspection
@@ -2107,25 +2114,26 @@ async function openProfile(profileId) {
         });
       }
 
-      // A login-looking page can be transient while a service redirects or
-      // hydrates. Confirm it repeatedly before reporting an access warning.
-      // The server keeps the stored snapshot and never revokes it automatically.
-      for (let attempt = 0; attempt < 2 && inspectionNeedsLogin(inspection); attempt += 1) {
+      // Distinguish an authenticated page, an explicit login request, and an
+      // inconclusive inspection. Never equate lack of login fields with access.
+      accessStatus = sessionAccessStatus(inspection, profile.url, inspectionNeedsLogin(inspection));
+      let previousStatus = accessStatus;
+      for (let attempt = 0; attempt < 2 && ['login-required', 'unconfirmed'].includes(accessStatus); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
-        inspection = await engine.inspect(clientId, profile.id).catch(() => inspection);
+        inspection = await engine.inspect(clientId, profile.id).catch(() => null);
+        previousStatus = accessStatus;
+        accessStatus = sessionAccessStatus(inspection, profile.url, inspectionNeedsLogin(inspection));
       }
-
-      if (inspection) {
-        const accessFailed = inspectionNeedsLogin(inspection);
-        await reportSessionHealth(profile.id, !accessFailed, result, {
-          confirmedFailure: accessFailed,
-          sessionVersion: accessFailed ? centralSessionVersion : Number(result?.sessionVersion || activeDelivery?.version || 0),
-          source: accessFailed ? 'confirmed-client-access-failure' : String(result?.profileState || ''),
-          reason: accessFailed
-            ? 'userFLOW confirmó repetidamente que la web volvió a pedir inicio de sesión y no pudo recuperar el acceso.'
-            : undefined,
-        });
-      }
+      const accessFailed = accessStatus === 'login-required' && previousStatus === 'login-required';
+      await reportSessionHealth(profile.id, accessStatus === 'authenticated', result, {
+        accessStatus,
+        confirmedFailure: accessFailed,
+        sessionVersion: centralSessionVersion,
+        source: accessFailed ? 'confirmed-client-access-failure' : String(result?.profileState || ''),
+        reason: accessFailed
+          ? 'El servicio solicita iniciar sesión de nuevo. La sesión almacenada se conserva; el usuario debe completar el acceso autorizado.'
+          : undefined,
+      });
     }
 
     if (!inspection && result?.scriptDiagnostics?.credentialHelper === true) {
@@ -2141,6 +2149,7 @@ async function openProfile(profileId) {
       sessionRecovered,
       fallbackRecovered,
       inspection,
+      accessStatus,
       launchWarning: result?.launchWarning || null,
     };
   } catch (error) {
@@ -2156,6 +2165,7 @@ async function handleClientTestProtocol(rawUrl) {
   let token = '';
   let testClientId = null;
   let profileId = null;
+  let testStage = 'validate-link';
   try {
     const parsed = new URL(String(rawUrl || ''));
     if (parsed.protocol !== 'userflow-client:' || parsed.hostname !== 'profile-test') {
@@ -2170,6 +2180,7 @@ async function handleClientTestProtocol(rawUrl) {
       throw new UserflexError('El ticket de prueba no es válido.', 'CLIENT_TEST_TOKEN_INVALID');
     }
 
+    testStage = 'server-bootstrap';
     const bootstrap = await apiRequest('/api/client-test/bootstrap', {
       method: 'POST',
       token: false,
@@ -2183,8 +2194,10 @@ async function handleClientTestProtocol(rawUrl) {
     }
 
     testClientId = `validation_${bootstrap.job.id}`;
+    testStage = 'prepare-extensions';
     const managedExtensions = await prepareManagedExtensions(profile?.extensions || [], { token: false });
     const engine = getKaizenBrowserEngine();
+    testStage = 'browser-launch';
     const result = await engine.launch({
       clientId: testClientId,
       profile,
@@ -2199,11 +2212,20 @@ async function handleClientTestProtocol(rawUrl) {
     // FLOW and other device-bound providers can spend a few seconds completing
     // redirects/hydration after the browser is visible. Match the real client
     // behavior by allowing the page to settle before classifying the session.
+    testStage = 'inspect-access';
     let inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
     if (profile?.runtime?.deviceLocalAuth === true) {
       for (let attempt = 0; attempt < 3 && inspectionNeedsLogin(inspection); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1800 : 2500));
-        inspection = await engine.inspect(testClientId, profile.id).catch(() => inspection);
+        inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
+      }
+    }
+    let accessStatus = sessionAccessStatus(inspection, profile.url, inspectionNeedsLogin(inspection));
+    if (snapshotManagedProfile(profile)) {
+      for (let attempt = 0; attempt < 2 && ['login-required', 'unconfirmed'].includes(accessStatus); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
+        accessStatus = sessionAccessStatus(inspection, profile.url, inspectionNeedsLogin(inspection));
       }
     }
 
@@ -2215,8 +2237,7 @@ async function handleClientTestProtocol(rawUrl) {
     );
     const snapshotLooksAuthenticated = Boolean(
       result?.restore
-      && inspection
-      && !inspectionNeedsLogin(inspection),
+      && accessStatus === 'authenticated',
     );
 
     let outcome = 'browser-launched';
@@ -2224,6 +2245,10 @@ async function handleClientTestProtocol(rawUrl) {
       outcome = 'human-verification-required';
     } else if (authStrategy === 'credential-autofill') {
       outcome = helperReady ? 'autofill-ready' : 'autofill-fields-not-detected';
+    } else if (snapshotManagedProfile(profile) && accessStatus === 'provider-restricted') {
+      outcome = 'provider-access-restricted';
+    } else if (snapshotManagedProfile(profile) && accessStatus === 'unconfirmed') {
+      outcome = 'snapshot-access-unconfirmed';
     } else if (authStrategy === 'cookie-snapshot') {
       outcome = snapshotLooksAuthenticated
         ? 'snapshot-authenticated'
@@ -2240,6 +2265,7 @@ async function handleClientTestProtocol(rawUrl) {
       ...result,
       ok: true,
       outcome,
+      accessStatus,
       clientVersion: app.getVersion(),
       inspection,
       testParity: {
@@ -2249,6 +2275,7 @@ async function handleClientTestProtocol(rawUrl) {
         contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules.length : 0,
       },
     };
+    testStage = 'report-result';
     await apiRequest('/api/client-test/report', {
       method: 'POST',
       token: false,
@@ -2270,7 +2297,9 @@ async function handleClientTestProtocol(rawUrl) {
             runtime: null,
             clientVersion: app.getVersion(),
             errorCode: typeof error?.code === 'string' ? error.code : null,
-            launchStage: typeof error?.launchStage === 'string' ? error.launchStage : null,
+            launchStage: typeof error?.launchStage === 'string' ? error.launchStage : testStage,
+            httpStatus: Number.isInteger(error?.status) ? error.status : null,
+            requestId: typeof error?.requestId === 'string' ? error.requestId : null,
             launchDiagnostics: error?.launchDiagnostics && typeof error.launchDiagnostics === 'object'
               ? error.launchDiagnostics
               : null,

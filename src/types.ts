@@ -276,6 +276,8 @@ export interface ProfileValidationJob {
     clientVersion?: string | null;
     errorCode?: string | null;
     launchStage?: string | null;
+    httpStatus?: number | null;
+    requestId?: string | null;
     launchDiagnostics?: {
       browser?: string | null;
       executable?: string | null;

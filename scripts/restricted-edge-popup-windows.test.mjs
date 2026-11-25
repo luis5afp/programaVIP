@@ -3,13 +3,10 @@ import { createServer } from 'node:http';
 import { mkdtemp, mkdir, rm, readFile, cp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { inspectFixtureWindows } from './edge-test-window-inspection.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
 import { prepareRestrictedManagedExtensions } from '../client-app/browser-engine/restricted-extension-actions.js';
-import {
-  startRestrictedWindowGuard,
-  restrictedAppWindowArgs,
-} from '../client-app/browser-engine/restricted-window-guard.js';
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 async function waitFor(check, timeoutMs = 18_000) {
@@ -65,7 +62,6 @@ const httpServer = createServer((req, res) => {
 await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
 let child = null;
 let browser = null;
-let guard = null;
 try {
   await mkdir(userDataDir, { recursive: true });
   await cp(new URL('../client-app/browser-engine/extension', import.meta.url), browserGuardDir, {recursive: true});
@@ -124,31 +120,16 @@ try {
     const pages = await browser.pages();
     return pages.find((page) => page.url().includes('/index'));
   });
-  let appWindowLaunches = 0;
-  guard = await startRestrictedWindowGuard({
-    connectBrowser: connectKaizenBrowser,
-    debugPort: port,
-    initialUrl: `${base}/index`,
-    settleMs: 200,
-    launchAppWindow: async (url) => {
-      appWindowLaunches += 1;
-      await new Promise((resolve, reject) => {
-        const second = spawn(edgeExe, restrictedAppWindowArgs({ userDataDir, url }), {
-          stdio: 'ignore', windowsHide: false,
-        });
-        second.once('error', reject);
-        second.once('spawn', () => {
-          second.unref();
-          resolve();
-        });
-      });
-    },
-  });
-  await home.evaluate(() => {
-    const link = document.querySelector('a[target="_blank"]');
-    link.click();
-  });
-  await waitFor(() => guard.routedCount >= 1);
+  // Exercise the native Browser Guard in isolation. The legacy CDP app
+  // router is covered independently by restricted-edge-popup-guard.test.mjs.
+  // Running both controllers on the same target races two window conversions.
+  const worker = await waitFor(() => browser.targets().find((target) =>
+    target.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(target.url())), 20_000);
+  const session = await worker.createCDPSession();
+  await session.send('Runtime.enable');
+  // Use an actual input event rather than an untrusted DOM click: Edge
+  // selects different window handling paths for synthetic popup requests.
+  await home.click('a[target="_blank"]');
   const second = await waitFor(async () => {
     const pages = await browser.pages();
     return pages.find((page) => page.url().includes('/secondary'));
@@ -159,38 +140,40 @@ try {
   )) === 'running', 12_000);
   const hasCookie = await second.evaluate(() => document.cookie.includes('sameProfileTest=passed'));
   assert.equal(hasCookie, true, 'second app window shares real browser cookies');
-  assert.equal(appWindowLaunches, 1, 'one original popup yields exactly one controlled app window');
   assert.equal(home.isClosed(), false, 'first app window stays available');
 
   // Unlike a mere successful navigation, inspect the native window types:
   // "normal" exposes the Edge extensions toolbar and means restricted mode
   // is still leaking. The mandatory Browser Guard must convert it to popup.
-  const worker = await waitFor(() => browser.targets().find((target) =>
-    target.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(target.url())), 15_000);
-  const session = await worker.createCDPSession();
   try {
-    await session.send('Runtime.enable');
+    let lastWindows = null;
     const types = await waitFor(async () => {
-      const reply = await session.send('Runtime.evaluate', {
-        expression: 'chrome.windows.getAll({populate:true}).then(ws => ws.map(w => ({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      const items = reply?.result?.value;
-      if (!Array.isArray(items)) return null;
+      const items = await inspectFixtureWindows(browser, session, base);
+      if (JSON.stringify(items) !== JSON.stringify(lastWindows)) {
+        console.log('EDGE_NATIVE_WINDOW_STATE=' + JSON.stringify(items));
+        lastWindows = items;
+      }
       if (items.some((w) => w.type === 'normal')) return null;
-      return items.filter((w) => ['popup','app'].includes(w.type)).length >= 2 ? items : null;
-    }, 12_000);
+      const appWindows = items.filter((w) => ['popup','app'].includes(w.type));
+      // Both fixture URLs must survive the conversion in separate protected windows.
+      return appWindows.length === 2 && items.length === 2
+        && appWindows.some(w => w.urls.includes('/index') && !w.urls.includes('/secondary'))
+        && appWindows.some(w => w.urls.includes('/secondary') && !w.urls.includes('/index'))
+        ? items : null;
+    }, 20_000);
+    assert.equal(types.length, 2, 'one original window and exactly one controlled secondary window');
     assert.ok(types.every((window) => window.type !== 'normal'),
       'restricted profiles must not leave normal Edge windows with extension buttons');
-    assert.ok(types.some((w) => (w.urls||[]).some((url) => url?.includes('/secondary'))),
-      'secondary page must be reachable in a toolbar-free popup/app window');
+    assert.ok(types.some(w => w.urls.includes('/secondary')), 'secondary page must be reachable in a toolbar-free popup/app window');
+    const finalSecond = (await browser.pages()).find(page => page.url() === base + '/secondary');
+    assert.ok(finalSecond, 'secondary page must survive conversion');
+    assert.equal(await finalSecond.evaluate(() => document.cookie.includes('sameProfileTest=passed')), true);
+    await waitFor(async () => (await finalSecond.evaluate(() => document.documentElement.dataset.userflowManagedTest)) === 'running');
   } finally {
     await session.detach().catch(() => null);
   }
   console.log('Restricted Edge windows, native window types and shared session: OK');
 } finally {
-  await guard?.close().catch(() => null);
   await browser?.disconnect().catch(() => null);
   await killTree(child?.pid);
   await new Promise((resolve) => httpServer.close(() => resolve()));

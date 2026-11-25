@@ -4,6 +4,7 @@ import { mkdtemp, cp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawn, execFile } from 'node:child_process';
 import path from 'node:path';
+import { inspectFixtureWindows } from './edge-test-window-inspection.mjs';
 import { connectKaizenBrowser } from '../client-app/browser-engine/session-state.js';
 import { startRestrictedTabbedGuard } from '../client-app/browser-engine/restricted-window-guard.js';
 
@@ -94,21 +95,38 @@ try {
     const pages = await browser.pages();
     return pages.find((p) => p.url().includes('/index'));
   });
-  const worker = await until(() => browser.targets().find((t) =>
-    t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
+  // Two installed extensions have a background.js worker. Select the
+  // Browser Guard by manifest name, not target enumeration order.
+  const worker = await until(async () => {
+    for (const target of browser.targets().filter((t) =>
+      t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url()))) {
+      const probe = await target.createCDPSession().catch(() => null);
+      if (!probe) continue;
+      try {
+        const reply = await probe.send('Runtime.evaluate', {
+          expression: 'chrome.runtime.getManifest().name',
+          returnByValue: true
+        });
+        if (reply?.result?.value === 'userFLEX Browser Guard') return target;
+      } catch {} finally { await probe.detach().catch(() => null); }
+    }
+    return null;
+  }, 20000);
   const navigationGuard = await startRestrictedTabbedGuard({
     browser, debugPort: port,
   });
   session = await worker.createCDPSession();
   await session.send('Runtime.enable');
+  let lastWindowState = '';
   const inspect = async () => {
-    const response = await session.send('Runtime.evaluate', {
-      expression: 'chrome.windows.getAll({populate:true}).then(ws=>ws.map(w=>({id:w.id,type:w.type,urls:(w.tabs||[]).map(t=>t.url)})))',
-      awaitPromise:true, returnByValue:true
-    });
-    return response?.result?.value;
+    const items = await inspectFixtureWindows(browser, session, base);
+    if (JSON.stringify(items) !== lastWindowState) {
+      lastWindowState = JSON.stringify(items);
+      console.log('EDGE_NATIVE_TABS_STATE=' + lastWindowState);
+    }
+    return items;
   };
-  await home.evaluate(() => document.querySelector('a').click());
+  await home.click('a');
   const secondary = await until(async () => (await browser.pages()).find(p => p.url().includes('/secondary')));
   await until(async () => (await secondary.evaluate(
     () => document.documentElement.dataset.ex1Loaded)) === 'yes', 10000);

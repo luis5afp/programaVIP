@@ -1722,6 +1722,12 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                     <div><b>userFLOW:</b> {String(validationJob.result.clientVersion || 'versión no reportada')}</div>
                     <div><b>Navegador:</b> {String(validationJob.result.browser || validationJob.result.launchDiagnostics?.browser || 'desconocido')}</div>
                     <div><b>Estado:</b> {String(validationJob.result.profileState || 'desconocido')}</div>
+                    {validationJob.result.outcome === 'snapshot-access-unconfirmed' && (
+                      <div className="help">La sesión fue entregada, pero no hay evidencia suficiente de autenticación. Comprueba el acceso en la ventana de prueba. No se ha marcado el snapshot como verificado.</div>
+                    )}
+                    {validationJob.result.outcome === 'provider-access-restricted' && (
+                      <div className="help">El servicio aplica una restricción de acceso. Utiliza un método de inicio de sesión autorizado por el proveedor.</div>
+                    )}
                     {validationJob.result.outcome === 'human-verification-required' && (
                       <div style={{ padding: 10, border: '1px solid #f59e0b', background: '#fffbeb', borderRadius: 8 }}>
                         <b>Verificación humana requerida.</b>{' '}
@@ -1730,6 +1736,8 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                     )}
                     {validationJob.result.launchStage && <div><b>Etapa:</b> {String(validationJob.result.launchStage)}</div>}
                     {validationJob.result.errorCode && <div><b>Código:</b> {String(validationJob.result.errorCode)}</div>}
+                    {validationJob.result.httpStatus && <div><b>HTTP:</b> {validationJob.result.httpStatus}</div>}
+                    {validationJob.result.requestId && <div><b>Referencia de solicitud:</b> {validationJob.result.requestId}</div>}
                     {validationJob.result.launchDiagnostics && (
                       <>
                         <div>
