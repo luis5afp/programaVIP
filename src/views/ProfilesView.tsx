@@ -412,6 +412,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
   useEffect(() => () => revealRequest.current?.abort(), []);
 
   function hideSavedPassword() {
+    if (revealedPassword !== null && loginPasswordDraft === revealedPassword) setLoginPasswordDraft('');
     revealRequest.current?.abort();
     revealRequest.current = null;
     if (ownerPasswordInput.current) ownerPasswordInput.current.value = '';
@@ -463,6 +464,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
         throw new Error('Las credenciales cambiaron. Cierra y vuelve a abrir el perfil.');
       }
       setRevealedPassword(result.password);
+      setLoginPasswordDraft(result.password);
       setShowLoginPassword(true);
       setRevealRequested(false);
     } catch (err: any) {
@@ -829,11 +831,14 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (revealBusy) return;
     const form = new FormData(event.currentTarget);
     const label = String(form.get('label') || '').trim();
     const proxyId = String(form.get('proxyId') || '') || null;
     const loginUsername = String(form.get('loginUsername') || '').trim();
-    const loginPassword = String(form.get('loginPassword') || '');
+    const enteredPassword = String(form.get('loginPassword') || '');
+    // Revealing a stored password is not a credential change.
+    const loginPassword = enteredPassword === revealedPassword ? '' : enteredPassword;
     const currentState = editor && editor !== 'new' ? stateFor(editor.id) : null;
     const previousLoginUsername = String(currentState?.login_username || '').trim();
     const usernameChanged = Boolean(
@@ -1097,6 +1102,8 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
       setError(null);
       setSuccess(null);
       await api.profileSessions.clearCredentials(profile.id);
+      hideSavedPassword();
+      setLoginPasswordDraft('');
       setSuccess('Credenciales de autofill eliminadas correctamente.');
       await load();
     } catch (clearError: any) {
@@ -1779,7 +1786,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
             <>
               {error && <div role="alert" style={{ flex: '1 1 100%', color: '#b91c1c', fontSize: 12, marginBottom: 8, whiteSpace: 'normal' }}>{error}</div>}
               <button className="button secondary" onClick={closeEditor} disabled={saving}>Cancelar</button>
-              <button className="button primary" form="profile-form" type="submit" disabled={saving}>
+              <button className="button primary" form="profile-form" type="submit" disabled={saving || revealBusy}>
                 {saving ? 'Guardando...' : 'Guardar y cerrar'}
               </button>
             </>
@@ -2216,7 +2223,10 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                       className="input credential-input"
                       name="loginUsername"
                       ref={loginUsernameInput}
-                      onChange={hideSavedPassword}
+                      onChange={() => {
+                        hideSavedPassword();
+                        if (revealedPassword !== null) setLoginPasswordDraft('');
+                      }}
                       type={showLoginUsername ? 'text' : 'password'}
                       autoComplete="off"
                       defaultValue={currentState?.login_username || ''}
@@ -2244,10 +2254,12 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                   <div className="credential-input-wrap">
                     <input
                       className="input credential-input"
-                      name={revealedPassword === null ? 'loginPassword' : undefined}
-                      value={revealedPassword ?? loginPasswordDraft}
-                      readOnly={revealedPassword !== null}
-                      onChange={(event) => setLoginPasswordDraft(event.target.value)}
+                      name="loginPassword"
+                      value={loginPasswordDraft}
+                      onChange={(event) => {
+                        if (revealRequested) hideSavedPassword();
+                        setLoginPasswordDraft(event.target.value);
+                      }}
                       type={showLoginPassword ? 'text' : 'password'}
                       autoComplete="new-password"
                       required={(authStrategy === 'credential-autofill' || authStrategy === 'hybrid') && !currentState?.has_credentials}
@@ -2263,7 +2275,7 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                       {showLoginPassword || revealRequested ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
-                  {revealedPassword !== null && <small>Contraseña guardada (solo lectura). Ocúltala para escribir una nueva.</small>}
+                  {revealedPassword !== null && <small>Contraseña guardada: puedes editarla directamente. Solo se actualizará al guardar si cambias su valor.</small>}
                   {revealRequested && (
                     <div style={{ marginTop: 8 }}>
                       <label>

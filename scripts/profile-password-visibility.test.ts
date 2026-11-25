@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const read = (path: string) => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+const editor = read('src/views/ProfilesView.tsx');
+const server = read('cloudflare/lib/profile-sessions.ts');
+const auth = read('cloudflare/lib/auth.ts');
+const worker = read('cloudflare/worker.ts');
+const core = read('cloudflare/lib/core.ts');
+const api = read('src/api.ts');
+
+assert.match(editor, /setRevealedPassword\(result\.password\);\s*setLoginPasswordDraft\(result\.password\)/);
+assert.match(editor, /name="loginPassword"\s+value=\{loginPasswordDraft\}/);
+assert.doesNotMatch(editor, /readOnly=\{revealedPassword/);
+assert.match(editor, /enteredPassword === revealedPassword \? '' : enteredPassword/);
+assert.match(editor, /revealedPassword !== null && loginPasswordDraft === revealedPassword\) setLoginPasswordDraft\(''\)/);
+assert.match(editor, /function closeEditor\(\)[\s\S]*?hideSavedPassword\(\);\s*setLoginPasswordDraft\(''\)/);
+assert.match(editor, /revealRequest\.current !== controller \|\| controller\.signal\.aborted/);
+assert.match(editor, /onChange=\{\(\) => \{\s*hideSavedPassword\(\);\s*if \(revealedPassword !== null\) setLoginPasswordDraft\(''\)/);
+assert.match(api, /method: 'POST', body: JSON\.stringify\(\{ adminPassword \}\), signal, cache: 'no-store'/);
+const start = server.indexOf('const revealMatch =');
+const end = server.indexOf('const credentialsMatch =', start);
+const reveal = server.slice(start, end);
+assert.match(reveal, /admin\.role !== 'owner'/);
+assert.ok(reveal.indexOf('await confirmOwnerPassword') < reveal.indexOf('await decryptProxy'));
+assert.match(reveal, /await audit\(env, request, 'admin', admin\.userId, 'profile\.credentials\.reveal', 'profile', profileId\);/);
+assert.match(auth, /loginGuard\(env, request, 'profile-credential-reveal', admin\.userId\)/);
+assert.match(auth, /await verifyAdminPassword\(env, users\[0\], password\)/);
+assert.ok(worker.indexOf('const admin = await requireAdmin') < worker.indexOf('await adminProfileSessionRoutes'));
+assert.ok(worker.indexOf('requireSameOriginWrite(request);') < worker.indexOf('await adminProfileSessionRoutes'));
+assert.match(core, /headers\.set\('Cache-Control', 'no-store'\)/);
+const update = server.slice(end, server.indexOf("if (credentialsMatch && method === 'DELETE')", end));
+const same = update.indexOf("text(password, 'password', 1024) === await decryptProxy");
+assert.ok(same >= 0 && same < update.indexOf('await encryptProxy'));
+assert.match(update.slice(same, update.indexOf('let passwordFields')), /session_invalidated: false/);
+console.log('Saved profile password visibility, editing, and no-op guard: OK');

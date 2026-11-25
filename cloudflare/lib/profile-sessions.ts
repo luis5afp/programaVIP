@@ -963,6 +963,20 @@ export async function adminProfileSessionRoutes(
       );
     }
 
+    // A retyped identical password must not rotate the credential or invalidate
+    // the stored snapshot, even after the editor hides the original value.
+    if (existing && !usernameChanged && password &&
+        text(password, 'password', 1024) === await decryptProxy(env, existing.password_ciphertext, existing.password_iv)) {
+      return json({
+        ok: true,
+        profile_id: profileId,
+        login_username: existing.login_username,
+        has_credentials: true,
+        session_invalidated: false,
+        identity_replaced: false,
+      });
+    }
+
     let passwordFields: any = {};
     if (password) {
       const encrypted = await encryptProxy(env, text(password, 'password', 1024));
