@@ -8,7 +8,8 @@ export async function inspectFixtureWindows(browser, workerSession, fixtureOrigi
   if (reply?.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description || reply.exceptionDetails.text);
   if (!Array.isArray(reply?.result?.value)) throw new Error('Browser Guard returned no native window list');
   const windows = reply.result.value.map(w => ({...w, urls:[]}));
-  const root = await browser.createBrowserCDPSession();
+  // Puppeteer 24 exposes the browser CDP session through its root target.
+  const root = await browser.target().createCDPSession();
   try {
     const {targetInfos} = await root.send('Target.getTargets');
     for (const target of targetInfos) {
