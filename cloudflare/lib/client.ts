@@ -585,8 +585,10 @@ export async function clientSessionHealth(
   }
 
   const body = await bodyJson(request);
-  const authenticated = body.authenticated === true;
-  const confirmedFailure = body.confirmedFailure === true;
+  const knownAccessStatuses = ['authenticated', 'login-required', 'unconfirmed', 'verification-required', 'provider-restricted'];
+  const accessStatus = knownAccessStatuses.includes(body.accessStatus) ? body.accessStatus : 'legacy-unconfirmed';
+  const authenticated = body.authenticated === true && accessStatus === 'authenticated';
+  const confirmedFailure = body.confirmedFailure === true && (accessStatus === 'login-required' || accessStatus === 'legacy-unconfirmed');
   const reportedVersion = Math.max(0, Number(body.sessionVersion || 0));
   const source = typeof body.source === 'string' ? body.source.slice(0, 64) : '';
   const reason = typeof body.reason === 'string'
@@ -604,6 +606,19 @@ export async function clientSessionHealth(
     && reportedVersion > 0
     && reportedVersion === currentVersion;
   const warning = !authenticated && confirmedFailure && sameCentralGeneration;
+  const safeCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 100_000 ? value : null;
+  await audit(env, request, 'client', id.clientId, 'profile.session_check', 'profile', profileId, {
+    deviceId: id.deviceId,
+    sessionVersion: reportedVersion,
+    currentVersion,
+    accessStatus,
+    authenticated,
+    confirmedFailure,
+    cookiesInstalled: safeCount(body.cookiesInstalled),
+    cookiesRejected: safeCount(body.cookiesRejected),
+    indexedDbRestored: safeCount(body.indexedDbRestored),
+    indexedDbTotal: safeCount(body.indexedDbTotal),
+  }).catch(() => null);
 
   // Stored cookies/snapshots are persistent administrator assets. A client-side
   // access check may raise a warning, but it must never revoke, disable or stop

@@ -288,6 +288,12 @@ async function launchProfile(profile, card) {
         );
       }
 
+      if (!result?.launchWarning && result?.accessStatus === 'login-required') {
+        setError(catalogError, 'Se recibió la sesión, pero el sitio requiere iniciar sesión de nuevo. Completa el acceso con una cuenta autorizada.');
+      } else if (!result?.launchWarning && result?.accessStatus === 'unconfirmed') {
+        setError(catalogError, 'Se abrió el perfil, pero no se pudo confirmar la autenticación. Comprueba el acceso en el navegador.');
+      }
+
       if (result?.inspection?.humanVerificationVisible === true) {
         const provider = String(result.inspection.humanVerificationProvider || 'del sitio');
         setError(

@@ -1151,6 +1151,11 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
           ).replace(/\s+/g, ' ').trim().toLowerCase();
           return /(?:^|\b)(log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)(?:\b|$)/.test(label);
         });
+      const authActionLabels = Array.from(document.querySelectorAll('a,button,[role="button"]'))
+        .filter(visible)
+        .map((element) => String(element.getAttribute('aria-label') || element.textContent || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim().toLowerCase());
+      const explicitLoginActionVisible = authActionLabels.some((label) => /^(?:log in|login|sign in|signin|iniciar sesi[oó]n|acceder|entrar)$/.test(label));
+      const logoutActionVisible = authActionLabels.some((label) => /^(?:log out|logout|sign out|signout|cerrar sesi[oó]n)$/.test(label));
       const href = location.href;
       const currentHost = String(location.hostname || '').toLowerCase();
       const streamingTestHarness = streamingProfile
@@ -1209,6 +1214,11 @@ export async function inspectRuntimeProfile({ debugPort, profileUrl, extensionSt
       );
       return {
         currentUrl: href,
+        inspectionComplete: true,
+        documentReady: document.readyState === 'complete' || document.readyState === 'interactive',
+        meaningfulContent: pageText.length >= 24,
+        explicitLoginActionVisible,
+        logoutActionVisible,
         loginLikeUrl: flowSignedOut
           || /(?:\/|^)(login|signin|sign-in|auth|servicelogin)(?:\/|\?|#|$)/i.test(location.pathname + location.search),
         flowSignedOut,

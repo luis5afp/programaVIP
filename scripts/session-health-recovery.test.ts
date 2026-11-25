@@ -1,5 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { sessionAccessStatus } from '../client-app/browser-engine/session-access-status.js';
+
+const target = 'https://syntx.ai/es';
+const visible = { inspectionComplete: true, documentReady: true, meaningfulContent: true, currentUrl: target };
+assert.equal(sessionAccessStatus(null, target), 'unconfirmed');
+assert.equal(sessionAccessStatus({ currentUrl: target }, target), 'unconfirmed');
+assert.equal(sessionAccessStatus({ ...visible, currentUrl: 'about:blank' }, target), 'unconfirmed');
+assert.equal(sessionAccessStatus({ ...visible, humanVerificationVisible: true }, target), 'verification-required');
+assert.equal(sessionAccessStatus({ ...visible, streamingAccessRestriction: true }, target), 'provider-restricted');
+assert.equal(sessionAccessStatus({ ...visible, explicitLoginActionVisible: true }, target), 'login-required');
+assert.equal(sessionAccessStatus({ ...visible }, target), 'unconfirmed');
+assert.equal(sessionAccessStatus({ ...visible, logoutActionVisible: true }, target), 'authenticated');
+assert.equal(sessionAccessStatus({ ...visible, logoutActionVisible: true }, target, true), 'login-required');
+assert.equal(sessionAccessStatus({ ...visible, logoutActionVisible: true, currentUrl: 'https://other.example/' }, target), 'unconfirmed');
 
 const main = readFileSync(new URL('../client-app/main.js', import.meta.url), 'utf8');
 const engine = readFileSync(new URL('../client-app/browser-engine/kaizen-engine.js', import.meta.url), 'utf8');
