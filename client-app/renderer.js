@@ -49,7 +49,7 @@ const AVAILABLE_THEMES = new Set(['claro', 'gris', 'noche']);
 function getSavedLauncherTheme() {
   try {
     const stored = window.localStorage.getItem(THEME_KEY);
-    return AVAILABLE_THEMES.has(stored) ? stored : 'gris';
+    return AVAILABLE_THEMES.has(stored) ? stored : 'noche';
   } catch {
     return 'gris';
   }

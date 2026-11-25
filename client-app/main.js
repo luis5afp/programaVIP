@@ -1124,7 +1124,7 @@ function createMainWindow() {
     minHeight: 620,
     title: 'userFLOW',
     show: false,
-    backgroundColor: '#080b10',
+    backgroundColor: '#09090b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1557,9 +1557,9 @@ function createBrowserWindow() {
     minHeight: 680,
     title: 'userFLOW',
     show: false,
-    backgroundColor: '#090c12',
+    backgroundColor: '#09090b',
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0c1018', symbolColor: '#cbd5e1', height: 47 },
+    titleBarOverlay: { color: '#09090b', symbolColor: '#e4e4e7', height: 47 },
     webPreferences: {
       preload: path.join(__dirname, 'browser-preload.cjs'),
       contextIsolation: true,
@@ -1869,9 +1869,9 @@ function createDetachedProfileWindow(workspace, point = null) {
     minHeight: 560,
     title: `userFLOW · ${profileLabel(workspace.profile)}`,
     show: false,
-    backgroundColor: '#090c12',
+    backgroundColor: '#09090b',
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0c1018', symbolColor: '#cbd5e1', height: 47 },
+    titleBarOverlay: { color: '#09090b', symbolColor: '#e4e4e7', height: 47 },
     webPreferences: {
       preload: path.join(__dirname, 'profile-preload.cjs'),
       contextIsolation: true,
