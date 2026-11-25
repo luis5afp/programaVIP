@@ -103,11 +103,22 @@ assert.match(adminStyles, /object-position:center/, 'Admin profile logos must st
 assert.match(engine, /entry\.savedResult/);
 assert.match(engine, /entry\.savePromise/);
 assert.match(engine, /close\('capture_saved'\)/, 'Chromium must close after successful save');
-assert.match(engine, /entry\.stableAuthChecks < 2/, 'automatic save requires stable authentication twice');
-assert.match(engine, /confirmAuthenticatedSession/, 'manual fallback save must attempt authentication verification');
-assert.match(engine, /saveCapture\(\{ authenticated: true \}\)/, 'autosave must pass its stable authentication proof into the save pipeline');
+assert.doesNotMatch(engine, /saveCapture\(\{ authenticated: true \}\)|autoSaveTimer/, 'interactive capture must never save automatically');
+assert.match(engine, /confirmAuthenticatedSession/, 'manual save must attempt authentication verification');
+assert.match(engine, /manualSaveRequired: !background/, 'interactive captures must explicitly require manual save');
+const savePipeline = engine.slice(engine.indexOf('const saveCapture = async'), engine.indexOf('const control = await startControlServer'));
+assert.ok(savePipeline.indexOf('await onComplete') < savePipeline.indexOf('entry.savedResult = result'));
+assert.ok(savePipeline.indexOf('entry.savedResult = result') < savePipeline.indexOf("close('capture_saved')"));
+assert.match(savePipeline, /No confirmó|no confirmó el guardado/);
+for (const overlay of [engine, captureState]) {
+  assert.match(overlay, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(overlay, /pointermove/);
+  assert.match(overlay, /Math\.min\(x, innerWidth - bounds\.width\)/);
+  assert.match(overlay, /Guardado manual/);
+  assert.doesNotMatch(overlay, /Guardado automático activo/);
+}
 assert.match(engine, /authenticated,\s*\}\);/, 'capture completion must include the authentication result');
-assert.match(engine, /inspectCaptureSession\(debugPort, profile\.url, \{ navigateIfMissing: false \}\)/);
+assert.match(engine, /inspectCaptureSession\(activeDebugPort, profile\.url, \{ navigateIfMissing: false \}\)/);
 assert.match(engine, /Guardar ahora/, 'Chromium must expose one fallback save button');
 
 assert.match(captureState, /options\?\.navigateIfMissing === false/);
@@ -120,4 +131,4 @@ assert.match(captureState, /netflixAuthCookies/, 'Netflix verification must requ
 assert.match(captureState, /netflixAppPath/, 'Netflix verification must confirm an authenticated app path');
 assert.match(engine, /closeBrowserGracefully/, 'saved captures must attempt a graceful Chromium shutdown before force-kill');
 
-console.log('Automatic single-shot session save regression: OK');
+console.log('Manual single-shot session save regression: OK');

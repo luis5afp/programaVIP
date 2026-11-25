@@ -409,7 +409,7 @@ function showReadyWindow(message = null) {
           <li>Vuelve al panel userFLEX.</li>
           <li>Pulsa <b>Cargar sesión</b> en el perfil.</li>
           <li>Se abrirá el navegador externo con el perfil aislado.</li>
-          <li>Completa el acceso. userFLEX guardará automáticamente; si Chromium no se cierra, pulsa <b>Guardar ahora</b>.</li>
+          <li>Completa el acceso y pulsa <b>Guardar ahora</b>. Chromium se cerrará únicamente cuando el servidor confirme el guardado.</li>
         </ol>
         <p style="margin-bottom:0;color:#64748b;font-size:13px">La nueva captura incluye cookies, Local Storage, Session Storage e IndexedDB y se envía cifrada al servidor userFLEX.</p>
       </div>

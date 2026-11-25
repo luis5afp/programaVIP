@@ -545,13 +545,14 @@ export async function installCaptureAutomation({
         <style>
           :host { all: initial; }
           .wrap {
-            min-width:260px; max-width:340px; padding:10px 12px;
+            box-sizing:border-box; width:min(340px, calc(100vw - 24px)); max-width:340px; padding:10px 12px;
             border:1px solid rgba(99,102,241,.5); border-radius:12px;
             background:rgba(15,23,42,.96); color:#fff;
             box-shadow:0 12px 34px rgba(0,0,0,.35);
             font:600 12px/1.25 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           }
-          .title { font-weight:800; color:#c4b5fd; margin-bottom:7px; }
+          .title { font-weight:800; color:#c4b5fd; margin-bottom:7px; cursor:grab; touch-action:none; user-select:none; }
+           .title:active { cursor:grabbing; }
           .row { display:flex; gap:6px; flex-wrap:wrap; }
           button {
             appearance:none; border:0; border-radius:7px; padding:6px 9px;
@@ -562,16 +563,56 @@ export async function installCaptureAutomation({
           .msg { margin-top:7px; color:#cbd5e1; font-weight:500; max-width:310px; }
         </style>
         <div class="wrap">
-          <div class="title">userFLEX · Captura</div>
+          <div class="title" title="Arrastra para mover el panel">⠿ userFLEX · Captura</div>
           <div class="row">
             <button type="button" data-kind="username" class="secondary">Email</button>
             <button type="button" data-kind="password" class="secondary">Password</button>
             <button type="button" data-kind="save">Guardar ahora</button>
           </div>
-          <div class="msg">Guardado automático activo. Completa cualquier 2FA/CAPTCHA; si Chromium no se cierra, pulsa Guardar ahora.</div>
+          <div class="msg">Guardado manual. Completa el acceso y pulsa Guardar ahora. El navegador se cerrará al confirmar el guardado.</div>
         </div>
       `;
       document.documentElement.appendChild(host);
+      const handle = shadow.querySelector('.title');
+      let drag = null;
+      const movePanel = (x, y) => {
+        const bounds = host.getBoundingClientRect();
+        host.style.left = Math.max(0, Math.min(x, innerWidth - bounds.width)) + 'px';
+        host.style.top = Math.max(0, Math.min(y, innerHeight - bounds.height)) + 'px';
+        host.style.right = 'auto';
+        host.style.bottom = 'auto';
+      };
+      handle?.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || drag) return;
+        const bounds = host.getBoundingClientRect();
+        drag = { id: event.pointerId, x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+        handle.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      handle?.addEventListener('pointermove', (event) => {
+        if (!drag || event.pointerId !== drag.id) return;
+        movePanel(event.clientX - drag.x, event.clientY - drag.y);
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      const endDrag = (event) => {
+        if (drag?.id !== event.pointerId) return;
+        drag = null;
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      };
+      for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle?.addEventListener(name, endDrag);
+      new ResizeObserver(() => {
+        const bounds = host.getBoundingClientRect();
+        if (bounds.left < 0 || bounds.top < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight) {
+          movePanel(bounds.left, bounds.top);
+        }
+      }).observe(host);
+      window.addEventListener('resize', () => {
+        if (!host.isConnected) return;
+        const bounds = host.getBoundingClientRect();
+        movePanel(bounds.left, bounds.top);
+      });
       const message = shadow.querySelector('.msg');
       shadow.querySelector('[data-kind="username"]')?.addEventListener('click', (event) => {
         event.preventDefault();
@@ -591,6 +632,7 @@ export async function installCaptureAutomation({
       saveButton?.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (!event.isTrusted || saveButton.disabled) return;
         void save(saveButton, message);
       });
       return host;
