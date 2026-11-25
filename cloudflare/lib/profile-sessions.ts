@@ -757,6 +757,8 @@ function safeValidationResult(value: any) {
     clientVersion: typeof value?.clientVersion === 'string' ? value.clientVersion.slice(0, 32) : null,
     errorCode: typeof value?.errorCode === 'string' ? value.errorCode.slice(0, 120) : null,
     launchStage: typeof value?.launchStage === 'string' ? value.launchStage.slice(0, 80) : null,
+    httpStatus: Number.isInteger(value?.httpStatus) && value.httpStatus >= 400 && value.httpStatus <= 599 ? value.httpStatus : null,
+    requestId: typeof value?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(value.requestId) ? value.requestId : null,
     launchDiagnostics: value?.launchDiagnostics && typeof value.launchDiagnostics === 'object' ? {
       browser: typeof value.launchDiagnostics.browser === 'string' ? value.launchDiagnostics.browser.slice(0, 80) : null,
       executable: typeof value.launchDiagnostics.executable === 'string' ? value.launchDiagnostics.executable.slice(0, 260) : null,

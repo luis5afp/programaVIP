@@ -1720,6 +1720,8 @@ export function ProfilesView({ canRevealSavedPassword = false }: { canRevealSave
                     )}
                     {validationJob.result.launchStage && <div><b>Etapa:</b> {String(validationJob.result.launchStage)}</div>}
                     {validationJob.result.errorCode && <div><b>Código:</b> {String(validationJob.result.errorCode)}</div>}
+                    {validationJob.result.httpStatus && <div><b>HTTP:</b> {validationJob.result.httpStatus}</div>}
+                    {validationJob.result.requestId && <div><b>Referencia de solicitud:</b> {validationJob.result.requestId}</div>}
                     {validationJob.result.launchDiagnostics && (
                       <>
                         <div>

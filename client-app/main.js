@@ -2165,6 +2165,7 @@ async function handleClientTestProtocol(rawUrl) {
   let token = '';
   let testClientId = null;
   let profileId = null;
+  let testStage = 'validate-link';
   try {
     const parsed = new URL(String(rawUrl || ''));
     if (parsed.protocol !== 'userflow-client:' || parsed.hostname !== 'profile-test') {
@@ -2179,6 +2180,7 @@ async function handleClientTestProtocol(rawUrl) {
       throw new UserflexError('El ticket de prueba no es válido.', 'CLIENT_TEST_TOKEN_INVALID');
     }
 
+    testStage = 'server-bootstrap';
     const bootstrap = await apiRequest('/api/client-test/bootstrap', {
       method: 'POST',
       token: false,
@@ -2192,8 +2194,10 @@ async function handleClientTestProtocol(rawUrl) {
     }
 
     testClientId = `validation_${bootstrap.job.id}`;
+    testStage = 'prepare-extensions';
     const managedExtensions = await prepareManagedExtensions(profile?.extensions || [], { token: false });
     const engine = getKaizenBrowserEngine();
+    testStage = 'browser-launch';
     const result = await engine.launch({
       clientId: testClientId,
       profile,
@@ -2208,7 +2212,14 @@ async function handleClientTestProtocol(rawUrl) {
     // FLOW and other device-bound providers can spend a few seconds completing
     // redirects/hydration after the browser is visible. Match the real client
     // behavior by allowing the page to settle before classifying the session.
+    testStage = 'inspect-access';
     let inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
+    if (profile?.runtime?.deviceLocalAuth === true) {
+      for (let attempt = 0; attempt < 3 && inspectionNeedsLogin(inspection); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1800 : 2500));
+        inspection = await engine.inspect(testClientId, profile.id).catch(() => null);
+      }
+    }
     let accessStatus = sessionAccessStatus(inspection, profile.url, inspectionNeedsLogin(inspection));
     if (snapshotManagedProfile(profile)) {
       for (let attempt = 0; attempt < 2 && ['login-required', 'unconfirmed'].includes(accessStatus); attempt += 1) {
@@ -2264,6 +2275,7 @@ async function handleClientTestProtocol(rawUrl) {
         contentRules: Array.isArray(profile?.contentRules) ? profile.contentRules.length : 0,
       },
     };
+    testStage = 'report-result';
     await apiRequest('/api/client-test/report', {
       method: 'POST',
       token: false,
@@ -2285,7 +2297,9 @@ async function handleClientTestProtocol(rawUrl) {
             runtime: null,
             clientVersion: app.getVersion(),
             errorCode: typeof error?.code === 'string' ? error.code : null,
-            launchStage: typeof error?.launchStage === 'string' ? error.launchStage : null,
+            launchStage: typeof error?.launchStage === 'string' ? error.launchStage : testStage,
+            httpStatus: Number.isInteger(error?.status) ? error.status : null,
+            requestId: typeof error?.requestId === 'string' ? error.requestId : null,
             launchDiagnostics: error?.launchDiagnostics && typeof error.launchDiagnostics === 'object'
               ? error.launchDiagnostics
               : null,
