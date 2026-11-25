@@ -187,6 +187,20 @@ export async function requireAdmin(request: Request, env: Env): Promise<AdminIde
   };
 }
 
+export async function confirmOwnerPassword(request: Request, env: Env, admin: AdminIdentity, password: unknown) {
+  if (admin.role !== 'owner') throw new HttpError(403, 'OWNER_REQUIRED', 'Solo el propietario puede consultar credenciales guardadas.');
+  const guard = await loginGuard(env, request, 'profile-credential-reveal', admin.userId);
+  if (typeof password !== 'string' || !password || password.length > 512) {
+    throw new HttpError(400, 'OWNER_PASSWORD_REQUIRED', 'Confirma tu contraseña de administrador.');
+  }
+  const users = await db(env, `vsixteen_users?select=id,password_hash,enabled&id=eq.${admin.userId}&enabled=eq.true&limit=1`);
+  if (!users?.[0] || !(await verifyAdminPassword(env, users[0], password))) {
+    await audit(env, request, 'admin', admin.userId, 'profile.credentials.reveal_denied', 'admin_user', admin.userId);
+    throw new HttpError(403, 'OWNER_PASSWORD_INVALID', 'La contraseña de administrador es incorrecta.');
+  }
+  await resetGuard(env, guard);
+}
+
 async function directAdminLogin(request: Request, env: Env, user: any, password: string, guard: string) {
   if (user.enabled !== true) {
     await audit(env, request, 'system', user.id, 'admin.login_failed', 'admin_user', user.id, { reason: 'ACCOUNT_DISABLED' }).catch(() => null);

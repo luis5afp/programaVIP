@@ -106,7 +106,7 @@ export default function App() {
   switch (view) {
     case 'clients': content = <ClientsView onHistory={(client) => { setHistorySearch(client.name); setActivityTab('history'); setView('activity'); }} />; break;
     case 'plans': content = <PlansView />; break;
-    case 'profiles': content = <ProfilesView />; break;
+    case 'profiles': content = <ProfilesView canRevealSavedPassword={session.role === 'owner'} />; break;
     case 'extensions': content = <ExtensionsView />; break;
     case 'content-rules': content = <ContentRulesView />; break;
     case 'proxies': content = <ProxiesView />; break;

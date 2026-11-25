@@ -1,4 +1,4 @@
-import type { AdminIdentity } from './auth';
+import { confirmOwnerPassword, type AdminIdentity } from './auth';
 import { touchProfileClients } from './client-revalidation';
 import {
   credentialAuthentication,
@@ -925,6 +925,20 @@ export async function adminProfileSessionRoutes(
       requested,
     });
     return json({ ok: true, requested });
+  }
+
+  const revealMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/managed-credentials\/reveal$/i);
+  if (revealMatch && method === 'POST') {
+    if (admin.role !== 'owner') throw new HttpError(403, 'OWNER_REQUIRED', 'Solo el propietario puede consultar credenciales guardadas.');
+    const profileId = uuid(revealMatch[1], 'profileId');
+    const body = await bodyJson(request, 4096);
+    await confirmOwnerPassword(request, env, admin, body.adminPassword);
+    await profileRow(env, profileId);
+    const credential = await credentialRow(env, profileId);
+    if (!credential) throw new HttpError(404, 'CREDENTIALS_NOT_FOUND', 'No hay credenciales guardadas para este perfil.');
+    const password = await decryptProxy(env, credential.password_ciphertext, credential.password_iv);
+    await audit(env, request, 'admin', admin.userId, 'profile.credentials.reveal', 'profile', profileId);
+    return json({ ok: true, login_username: credential.login_username, password });
   }
 
   const credentialsMatch = path.match(/^\/api\/profiles\/([0-9a-f-]{36})\/managed-credentials$/i);
