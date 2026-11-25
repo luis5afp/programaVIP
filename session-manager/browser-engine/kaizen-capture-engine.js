@@ -1155,11 +1155,18 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
     const confirmAuthenticatedSession = async () => {
       const activeDebugPort = Number(entry?.debugPort || 0);
       if (!activeDebugPort) return false;
-      const first = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
-      if (first?.authenticated !== true) return false;
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      const second = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
-      return second?.authenticated === true;
+      // Manual save must observe a stable, authorized browser session.
+      // Do not navigate, perform login, or retry a failed authentication check.
+      let previousUrl = null;
+      for (let sample = 0; sample < 3; sample += 1) {
+        if (sample > 0) await new Promise((resolve) => setTimeout(resolve, 2500));
+        if (active !== entry || Number(entry?.debugPort || 0) !== activeDebugPort) return false;
+        const inspection = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+        if (inspection?.authenticated !== true || inspection.targetOriginMatched !== true || inspection.readyState === 'loading' || !inspection.href) return false;
+        if (previousUrl !== null && previousUrl !== inspection.href) return false;
+        previousUrl = inspection.href;
+      }
+      return true;
     };
 
     const prepareChallengeSafeReadback = async () => {
@@ -1256,6 +1263,11 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
           profile,
           networkMode: proxy ? 'proxy' : 'direct',
         });
+        // A navigation or sign-out during collection must not replace the
+        // previous generation with an unconfirmed capture.
+        if (active !== entry || !(await confirmAuthenticatedSession())) {
+          throw new Error('El acceso cambió durante la captura. No se reemplazó la sesión guardada. Comprueba la cuenta y vuelve a pulsar Guardar ahora.');
+        }
         const publicIp = proxy ? (entry.publicIp || verifiedPublicIp || proxy.publicIp || null) : null;
         const completed = await onComplete({
           material: captured.material,

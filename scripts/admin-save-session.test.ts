@@ -129,6 +129,16 @@ for (const overlay of [engine, captureState]) {
 assert.match(engine, /authenticated,\s*\}\);/, 'capture completion must include the authentication result');
 assert.match(engine, /inspectCaptureSession\(activeDebugPort, profile\.url, \{ navigateIfMissing: false \}\)/);
 assert.match(engine, /Guardar ahora/, 'Chromium must expose a manual save button');
+const confirmation = engine.slice(engine.indexOf('const confirmAuthenticatedSession'), engine.indexOf('const prepareChallengeSafeReadback'));
+assert.match(confirmation, /sample < 3/);
+assert.match(confirmation, /setTimeout\(resolve, 2500\)/);
+assert.match(confirmation, /inspection\?\.authenticated !== true/);
+assert.match(confirmation, /previousUrl !== null && previousUrl !== inspection.href/);
+assert.match(confirmation, /active !== entry/);
+assert.doesNotMatch(confirmation, /saveCapture\(|\.goto\(/);
+assert.ok(savePipeline.indexOf('await capturePortableSession') < savePipeline.indexOf('!(await confirmAuthenticatedSession())'));
+assert.ok(savePipeline.indexOf('!(await confirmAuthenticatedSession())') < savePipeline.indexOf('await onComplete'));
+
 
 assert.match(captureState, /options\?\.navigateIfMissing === false/);
 assert.match(captureState, /meaningfulContent/);
