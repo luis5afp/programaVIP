@@ -2073,13 +2073,13 @@ async function openProfile(profileId) {
   };
 
   try {
+    const managedExtensions = await prepareManagedExtensionsForProfile(profile);
     if (!accessToken || authTransitionInFlight || heartbeatFailClosed || quitAfterUsageFlush) {
       throw new UserflexError('La sesión de userFLOW no está disponible.', 'CLIENT_UNAUTHENTICATED', 401);
     }
     if (integratedManualEligible(launch, integratedManualEnabled)) {
       return await integratedManual.open(launch, usage, integratedManualEnabled);
     }
-    const managedExtensions = await prepareManagedExtensionsForProfile(profile);
     const clientId = authMeta?.client?.id || 'client';
     const engine = getKaizenBrowserEngine();
     let result = await engine.launch({
