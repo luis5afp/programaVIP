@@ -110,6 +110,12 @@ const savePipeline = engine.slice(engine.indexOf('const saveCapture = async'), e
 assert.ok(savePipeline.indexOf('await onComplete') < savePipeline.indexOf('entry.savedResult = result'));
 assert.ok(savePipeline.indexOf('entry.savedResult = result') < savePipeline.indexOf("close('capture_saved')"));
 assert.match(savePipeline, /no confirmó el guardado/);
+assert.ok(savePipeline.indexOf('if (!authenticated)') > savePipeline.indexOf('await confirmAuthenticatedSession()'));
+assert.ok(savePipeline.indexOf('if (!authenticated)') < savePipeline.indexOf('await capturePortableSession'));
+assert.match(savePipeline, /No se reemplazó la sesión guardada/);
+const completion = worker.slice(worker.indexOf("if (path === '/api/session-manager/complete'"), worker.indexOf("if (path === '/api/session-keeper/realtime'"));
+assert.match(completion, /if \(!authenticated\)[\s\S]{0,120}CAPTURE_AUTH_NOT_CONFIRMED/);
+assert.ok(completion.indexOf('CAPTURE_AUTH_NOT_CONFIRMED') < completion.indexOf('await storeSessionSnapshot'), 'failed login verification must not overwrite a stored session');
 const watcher = engine.slice(engine.indexOf('entry.authWatchTimer = setInterval'), engine.indexOf('entry.authWatchTimer.unref'));
 assert.doesNotMatch(watcher, /\bsaveCapture\s*\(/, 'authentication watcher cannot trigger a save');
 assert.match(captureState, /!event\.isTrusted \|\| saveButton\.disabled/);
