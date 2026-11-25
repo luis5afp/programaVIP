@@ -94,8 +94,23 @@ try {
     const pages = await browser.pages();
     return pages.find((p) => p.url().includes('/index'));
   });
-  const worker = await until(() => browser.targets().find((t) =>
-    t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url())), 15000);
+  // Two installed extensions have a background.js worker. Select the
+  // Browser Guard by manifest name, not target enumeration order.
+  const worker = await until(async () => {
+    for (const target of browser.targets().filter((t) =>
+      t.type() === 'service_worker' && /chrome-extension:\/\/.+\/background\.js/.test(t.url()))) {
+      const probe = await target.createCDPSession().catch(() => null);
+      if (!probe) continue;
+      try {
+        const reply = await probe.send('Runtime.evaluate', {
+          expression: 'chrome.runtime.getManifest().name',
+          returnByValue: true
+        });
+        if (reply?.result?.value === 'userFLEX Browser Guard') return target;
+      } catch {} finally { await probe.detach().catch(() => null); }
+    }
+    return null;
+  }, 20000);
   const navigationGuard = await startRestrictedTabbedGuard({
     browser, debugPort: port,
   });

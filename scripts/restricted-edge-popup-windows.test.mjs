@@ -179,7 +179,12 @@ try {
       const items = reply?.result?.value;
       if (!Array.isArray(items)) return null;
       if (items.some((w) => w.type === 'normal')) return null;
-      return items.filter((w) => ['popup','app'].includes(w.type)).length >= 2 ? items : null;
+      const appWindows = items.filter((w) => ['popup','app'].includes(w.type));
+      // Wait for the secondary URL to finish appearing in chrome.tabs, not
+      // merely for two native windows to exist. The same assertions follow.
+      return appWindows.length >= 2
+        && appWindows.some((w) => (w.urls || []).some((url) => url?.includes('/secondary')))
+        ? items : null;
     }, 12_000);
     assert.ok(types.every((window) => window.type !== 'normal'),
       'restricted profiles must not leave normal Edge windows with extension buttons');
