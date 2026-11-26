@@ -73,7 +73,8 @@ assert.match(workspace, /!browserShellReady \|\| !catalogContentReady/);
 assert.match(workspace, /catalogContentReady/);
 assert.match(workspace, /browserWindow\.show\(\)/);
 assert.match(workspace, /mainWindow\.close\(\)/);
-assert.match(main, /show: false,[\s\S]*backgroundColor: '#080b10'/,
+const authWindowFactory = at('function createMainWindow()', 'const authWindow = mainWindow;');
+assert.match(authWindowFactory, /new BrowserWindow\(\{[\s\S]*?show: false,\s*backgroundColor: '#09090b'/,
   'auth UI must remain hidden while a saved session is being checked');
 assert.match(main, /ipcMain\.handle\('userflex:reveal-auth-window'/);
 assert.match(main, /ipcMain\.handle\('userflex:catalog-ready'/);
