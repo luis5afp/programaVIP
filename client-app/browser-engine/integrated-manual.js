@@ -80,8 +80,13 @@ export function createIntegratedManualController({BrowserWindow, session, onClos
     if (!integratedManualEligible(launch)) throw new Error('Perfil no autorizado para navegador integrado.');
     const {profile}=launch;
     const name=integratedLocalPartition(launch,scope);
+    const policy=JSON.stringify([profile.url,nativeProxyConfig(launch.connection)]);
     const existing=active.get(name);
     if(existing&&!existing.window.isDestroyed()){
+      if(existing.policy!==policy){
+        existing.reason='configuration_changed';existing.window.destroy();
+        throw new Error('La configuración del perfil cambió. Vuelve a abrirlo.');
+      }
       if(usage?.usageId&&usage.usageId!==existing.usage?.usageId)void Promise.resolve(onClosed(usage,'duplicate_open')).catch(()=>{});
       const result=await existing.ready;
       if(!existing.window.isDestroyed()){existing.window.show();existing.window.focus();}
@@ -98,7 +103,7 @@ export function createIntegratedManualController({BrowserWindow, session, onClos
       callback({cancel:details.resourceType==='mainFrame'&&!isIntegratedManualNavigation(details.url,origin)});
     });
     const window=new BrowserWindow({title:'userFLOW · '+profile.name,width:1200,height:850,show:false,autoHideMenuBar:true,backgroundColor:'#09090b',webPreferences:{session:isolated,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,devTools:false,webviewTag:false}});
-    const entry={window,usage,reason:'browser_exit',ready:null};
+    const entry={window,usage,reason:'browser_exit',ready:null,policy};
     active.set(name,entry);
     window.setMenu(null);
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
