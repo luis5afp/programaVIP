@@ -57,7 +57,7 @@ const pendingUsageCloseRequests = new Set();
 const profileImageDataCache = new Map();
 let quitAfterUsageFlush = false;
 let kaizenBrowserEngine = null;
-const integratedManual = createIntegratedManualController({BrowserWindow,session,randomUUID:()=>crypto.randomUUID(),onClosed:closeWorkspaceUsage});
+const integratedManual = createIntegratedManualController({BrowserWindow,session,onClosed:closeWorkspaceUsage});
 let initialCatalogSyncPromise = null;
 const FAST_SESSION_VERIFY_TIMEOUT_MS = 6_000;
 
@@ -919,7 +919,7 @@ async function syncClientConfiguration(payload, reason = 'server', knownCatalog 
   const previousRevision = authMeta?.client?.configRevision || null;
   const nextRevision = configRevisionFrom(payload);
   const configChanged = Boolean(previousRevision && nextRevision && previousRevision !== nextRevision);
-  if (configChanged) integratedManual.closeAll('configuration_changed');
+  if (configChanged) await integratedManual.closeAll('configuration_changed');
   mergeValidationMeta(payload);
 
   // Resolve the client id from the authoritative authenticated metadata after
@@ -1212,7 +1212,7 @@ async function returnToLogin(message = null, code = null, options = {}) {
   // Keep at least one Electron window alive during the transition back to
   // login. On Windows, closing the workspace while it is the only window emits
   // window-all-closed and can terminate the whole app before login is recreated.
-  integratedManual.closeAll('logout');
+  await integratedManual.closeAll('logout');
   await getKaizenBrowserEngine().closeAll(preserveProfiles ? 'reauthenticate' : 'logout').catch(() => null);
   await flushUsageCloseRequests();
   await clearAuth();
@@ -2077,7 +2077,11 @@ async function openProfile(profileId) {
       throw new UserflexError('La sesión de userFLOW no está disponible.', 'CLIENT_UNAUTHENTICATED', 401);
     }
     if (integratedManualEligible(launch)) {
-      return await integratedManual.open(launch, usage);
+      return await integratedManual.open(launch, usage, {
+        clientId: String(authMeta?.client?.id || ''),
+        loginEpoch: String(authMeta?.createdAt || ''),
+        configRevision: String(authMeta?.client?.configRevision || ''),
+      });
     }
     const clientId = authMeta?.client?.id || 'client';
     const engine = getKaizenBrowserEngine();
@@ -2692,11 +2696,11 @@ app.on('before-quit', (event) => {
   if (quitAfterUsageFlush) return;
   event.preventDefault();
   quitAfterUsageFlush = true;
-  integratedManual.closeAll('app_exit');
+  const integratedCleanup = integratedManual.closeAll('app_exit');
   for (const workspace of profileTabs.values()) void closeWorkspaceUsage(workspace, 'app_exit');
   void getKaizenBrowserEngine().closeAll('app_exit')
     .catch(() => null)
-    .then(() => flushUsageCloseRequests())
+    .then(() => Promise.allSettled([integratedCleanup, flushUsageCloseRequests()]))
     .finally(() => app.quit());
 });
 

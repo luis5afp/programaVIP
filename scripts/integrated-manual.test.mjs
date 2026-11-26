@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {integratedManualEligible,isIntegratedManualNavigation,createIntegratedManualController,nativeProxyConfig} from '../client-app/browser-engine/integrated-manual.js';
+import {integratedManualEligible,isIntegratedManualNavigation,createIntegratedManualController,nativeProxyConfig,integratedLocalPartition} from '../client-app/browser-engine/integrated-manual.js';
 import {EventEmitter} from 'node:events';
 const fixture={profile:{id:'test',name:'Manual',url:'https://example.test/',launchEngine:'electron-integrated-manual',runtime:{browserEngine:'chrome-native',authStrategy:'manual',extensionStrategy:'guard-only',storageStrategy:'local-persistent'},extensions:[],contentRules:[]},client:{allowExternalBrowsing:true,browserExtensionsAccess:'full'},connection:{mode:'direct',locked:false},sessionDelivery:{materialIncluded:false},credentialDelivery:null};
 assert.equal(integratedManualEligible(fixture),true);
@@ -29,32 +29,50 @@ assert.deepEqual(nativeProxyConfig(proxy),{mode:'fixed_servers',proxyRules:'http
 assert.equal(integratedManualEligible({...fixture,connection:proxy}),true);
 for(const changes of [{username:'user'},{password:'secret'},{type:'socks4'},{validationStatus:'invalid'},{host:'example.test;DIRECT'},{port:0}])assert.equal(nativeProxyConfig({...proxy,proxy:{...proxy.proxy,...changes}}),null);
 assert.equal(nativeProxyConfig({...proxy,locked:true}),null);
-let created=[],cleared=[],closed=[],options,proxyCalls=[],failProxy=false;
+const scope={clientId:'client-a',loginEpoch:'login-a',configRevision:'revision-a'};
+const name=integratedLocalPartition(fixture,scope);
+assert.match(name,/^persist:userflow-manual-v1-[a-f0-9]{64}$/);
+assert.equal(name,integratedLocalPartition(fixture,scope));
+for(const field of ['clientId','loginEpoch','configRevision']){
+ assert.notEqual(name,integratedLocalPartition(fixture,{...scope,[field]:'changed'}));
+ assert.throws(()=>integratedLocalPartition(fixture,{...scope,[field]:''}));
+}
+assert.notEqual(name,integratedLocalPartition({...fixture,profile:{...fixture.profile,id:'other'}},scope));
+assert.notEqual(name,integratedLocalPartition({...fixture,profile:{...fixture.profile,url:'https://other.test/'}},scope));
+let created=[],cleared=[],closed=[],options,proxyCalls=[],flushed=[],failProxy=false;
+const sessions=new Map();
 class Win extends EventEmitter{
  constructor(opts){super();options=opts;this.webContents=new EventEmitter();this.webContents.setWindowOpenHandler=fn=>{this.popup=fn;};created.push(this);}
- setMenu(){} isDestroyed(){return !!this.destroyed;} destroy(){this.destroyed=true;this.emit('closed');} async loadURL(){this.loaded=true;} show(){this.shown=true;}
+ setMenu(){} isDestroyed(){return !!this.destroyed;} destroy(){this.destroyed=true;this.emit('closed');} async loadURL(){this.loaded=true;} show(){this.shown=true;} focus(){this.focused=true;}
 }
-const controller=createIntegratedManualController({BrowserWindow:Win,session:{fromPartition(name){return {name,setPermissionRequestHandler(){},setPermissionCheckHandler(){},on(){},webRequest:{onBeforeRequest(){}},setProxy:async config=>{proxyCalls.push(config);if(failProxy)throw Error('proxy configuration failed');},closeAllConnections:async()=>{},clearStorageData:async()=>cleared.push(name),clearCache:async()=>{}};}},randomUUID:()=>String(created.length+1),onClosed:(usage,reason)=>closed.push([usage,reason])});
-await assert.rejects(controller.open({...fixture,profile:{...fixture.profile,launchEngine:'kaizen-external'}},{}));
-const result=await controller.open(fixture,{usageId:'one'});
-assert.equal(result.engine,'electron-integrated-manual');
+const controller=createIntegratedManualController({BrowserWindow:Win,session:{fromPartition(name){
+ if(!sessions.has(name))sessions.set(name,{name,setPermissionRequestHandler(){},setPermissionCheckHandler(){},on(){},webRequest:{onBeforeRequest(){}},setProxy:async config=>{proxyCalls.push(config);if(failProxy)throw Error('proxy configuration failed');},closeAllConnections:async()=>{},clearStorageData:async()=>cleared.push(name),clearCache:async()=>{},flushStorageData(){flushed.push(name);},cookies:{flushStore:async()=>{}}});
+ return sessions.get(name);
+}},onClosed:(usage,reason)=>closed.push([usage,reason])});
+await assert.rejects(controller.open({...fixture,profile:{...fixture.profile,launchEngine:'kaizen-external'}},{},scope));
+const [result,duplicate]=await Promise.all([controller.open(fixture,{usageId:'one'},scope),controller.open(fixture,{usageId:'duplicate'},scope)]);
+assert.equal(result.engine,'electron-integrated-manual');assert.deepEqual(result,duplicate);
+assert.equal(created.length,1);assert.equal(created[0].focused,true);
+assert.deepEqual(closed,[[{usageId:'duplicate'},'duplicate_open']]);
 assert.equal(options.webPreferences.sandbox,true);assert.equal(options.webPreferences.nodeIntegration,false);assert.equal(options.webPreferences.contextIsolation,true);assert.equal(options.webPreferences.devTools,false);
-assert.equal(options.webPreferences.session.name.startsWith('persist:'),false);
+assert.equal(options.webPreferences.session.name,name);
 assert.deepEqual(created[0].popup(),{action:'deny'});
 let prevented=false;created[0].webContents.emit('will-redirect',{preventDefault(){prevented=true;}},'https://other.test');assert.equal(prevented,true);
-controller.closeAll('logout');assert.equal(created[0].destroyed,true);assert.deepEqual(closed,[[{usageId:'one'},'logout']]);assert.equal(cleared.length,1);
+await controller.closeAll('app_exit');assert.equal(created[0].destroyed,true);assert.equal(cleared.length,0);assert.deepEqual(flushed,[name]);
 assert.deepEqual(proxyCalls[0],{mode:'direct'});
-await controller.open({...fixture,connection:proxy},{usageId:'two'});
+await controller.open({...fixture,connection:proxy},{usageId:'two'},scope);
+assert.equal(options.webPreferences.session.name,name);
 assert.deepEqual(proxyCalls[1],nativeProxyConfig(proxy));
-controller.closeAll('logout');
+await controller.closeAll('logout');assert.equal(cleared.length,1);
 failProxy=true;
-await assert.rejects(controller.open({...fixture,connection:proxy},{usageId:'three'}),/proxy configuration failed/);
+await assert.rejects(controller.open({...fixture,connection:proxy},{usageId:'three'},scope),/proxy configuration failed/);
 assert.equal(created[2].loaded,undefined);
 assert.equal(created[2].destroyed,true);
+await controller.closeAll('logout');
 const main=readFileSync(new URL('../client-app/main.js',import.meta.url),'utf8');
 assert.doesNotMatch(main,/--integrated-manual/);
 assert.match(main,/if \(integratedManualEligible\(launch\)\)/);
 assert.match(main,/integratedManual.closeAll\('logout'\)/);
 assert.match(main,/integratedManual.closeAll\('configuration_changed'\)/);
 assert.match(main,/integratedManual.closeAll\('app_exit'\)/);
-console.log('Integrated manual engine eligibility, navigation isolation and teardown: OK');
+console.log('Integrated manual engine eligibility, local partition isolation, duplicate reuse and teardown: OK');
