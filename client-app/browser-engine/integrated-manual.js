@@ -60,7 +60,7 @@ export function createIntegratedManualController({BrowserWindow, session, random
       const mainFrame=details.resourceType==='mainFrame';
       callback({cancel:mainFrame&&!isIntegratedManualNavigation(details.url,origin)});
     });
-    const window=new BrowserWindow({title:'userFLOW · '+profile.name,width:1200,height:850,show:false,autoHideMenuBar:true,webPreferences:{session:isolated,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,devTools:false,webviewTag:false}});
+    const window=new BrowserWindow({title:'userFLOW · '+profile.name,width:1200,height:850,show:false,autoHideMenuBar:true,backgroundColor:'#09090b',webPreferences:{session:isolated,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,devTools:false,webviewTag:false}});
     const entry={window,usage,reason:'browser_exit'};
     active.set(profile.id,entry);
     window.setMenu(null);

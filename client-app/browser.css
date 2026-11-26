@@ -202,3 +202,19 @@ body.catalog-mode .toolbar { display: none; }
   .network-state { display: none; }
   .toolbar { grid-template-columns: auto minmax(100px,1fr); }
 }
+
+/* Neutral titlebar palette, synchronized with the Electron window overlay. */
+:root,html,body { background:#09090b; color:#fafafa; }
+.tabs-row { border-color:#27272a; }
+.catalog-button,.new-tab-button,.new-page-button,.profile-badge,.tab,.page-tab { background:#18181b; color:#d4d4d8; border-color:#3f3f46; border-radius:7px; }
+.tab,.page-tab { border-radius:8px 8px 0 0; }
+.tab.active,.page-tab.active,.catalog-button.active { background:#27272a; border-color:#52525b; color:#fafafa; box-shadow:inset 0 2px 0 #8b7cf6; }
+.tab:hover,.page-tab:hover,.catalog-button:hover,.new-tab-button:hover,.new-page-button:hover,.nav-button:hover:not(:disabled) { background:#27272a; color:#fafafa; border-color:#52525b; }
+.address-shell,.network-state,.new-page-menu { background:#18181b; border-color:#3f3f46; border-radius:8px; color:#d4d4d8; }
+.address-url { color:#a1a1aa; }
+.address-profile,.profile-badge strong { color:#fafafa; }
+.tab-close,.page-close { color:#a1a1aa; }
+.tab-close:hover,.page-close:hover,.new-page-menu-button:hover { background:#3f3f46; color:#fff; }
+button:focus-visible { outline:2px solid #8979f0; outline-offset:-2px; }
+
+.browser-chrome { background:#09090b; border-color:#27272a; box-shadow:none; }

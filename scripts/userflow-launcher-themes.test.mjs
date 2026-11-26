@@ -18,8 +18,8 @@ assert.match(html, /role="group" aria-label="Tema de userFLOW"/);
 assert.match(script, /window\.localStorage\.setItem\(THEME_KEY, selected\)/,
   'theme should persist locally without server requests');
 assert.match(script, /window\.localStorage\.getItem\(THEME_KEY\)/);
-assert.match(script, /return AVAILABLE_THEMES\.has\(stored\) \? stored : 'gris'/,
-  'new users should start with less-dark gray theme');
+assert.match(script, /return AVAILABLE_THEMES\.has\(stored\) \? stored : 'noche'/,
+  'new users should start with neutral dark theme; saved themes remain unchanged');
 assert.match(script, /if \(launchingProfiles\.has\(profile\.id\)\) return/,
   'double clicks should not start duplicate profile launches');
 assert.match(script, /syncProfileLaunching\(profile\.id, true\)/);
@@ -39,3 +39,9 @@ assert.match(css, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/,
 assert.doesNotMatch(script, /ipcRenderer\.invoke\([^)]*theme/i,
   'local theme preferences should not call the server');
 console.log('userFLOW theme selection and double-click protection: OK');
+
+assert.match(html,/class="catalog-intro"/);
+assert.match(css,/--ui-bg:#09090b/);
+assert.match(read('browser.css'),/\.browser-chrome \{ background:#09090b/);
+assert.match(read('profile-window.css'),/\.profile-chrome \{ background:#09090b/);
+assert.match(read('main.js'),/titleBarOverlay: \{ color: '#09090b'/);
