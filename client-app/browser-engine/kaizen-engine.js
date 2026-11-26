@@ -8,6 +8,7 @@ import { kaizenProxyPublicIp, probeKaizenProxyDestination, probeKaizenProxyHttps
 import { disableNativePasswordSavingForManagedProfile } from './password-manager-policy.js';
 import { normalizeBrowserExtensionsAccess, browserStartupArgument } from './extension-ui-mode.js';
 import { prepareRestrictedManagedExtensions } from './restricted-extension-actions.js';
+import { requireExtensionManifests, removeTemporaryExtensionFiles } from './extension-lifecycle.js';
 import { startRestrictedTabbedGuard } from './restricted-window-guard.js';
 import {
   closeDevtoolsTargets,
@@ -293,8 +294,8 @@ function chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs = [], in
     '--disable-popup-blocking',
   ];
   if (proxyRules) args.push(`--proxy-server=${proxyRules}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]', '--disable-quic');
-  const validExtensionDirs = extensionDirs
-    .filter((dir) => typeof dir === 'string' && fs.existsSync(path.join(dir, 'manifest.json')));
+  // Missing required extensions are a launch error, not a reason to silently omit them.
+  const validExtensionDirs = requireExtensionManifests(extensionDirs);
   if (validExtensionDirs.length) {
     const extensionList = validExtensionDirs.join(',');
     args.push(
@@ -417,6 +418,21 @@ async function killProcessTree(proc) {
   try { proc.kill('SIGTERM'); } catch {}
 }
 
+async function temporaryExtensionPathsUnused(entry) {
+  if (entry.process?.pid && entry.process.exitCode === null && entry.process.signalCode === null) return false;
+  if (process.platform !== 'win32') return false;
+  const directories = [entry.userDataDir, ...(entry.extensionDirs || [])].filter(Boolean);
+  // Only generated validation paths are relevant; shared caches must not
+  // make other profiles part of this cleanup operation.
+  const needles = directories.filter(p => p === entry.userDataDir || p.includes(path.sep + 'browserExtensionsData' + path.sep))
+    .map(p => "'" + p.replace(/'/g, "''") + "'").join(',');
+  if (!needles) return false;
+  const script = `$ErrorActionPreference='Stop'; $needles=@(${needles}); $found=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('chrome.exe','msedge.exe','chromium.exe') -and $_.CommandLine } | Where-Object { $line=$_.CommandLine; @($needles | Where-Object { $line.IndexOf($_,[StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0 }); if ($found.Count -gt 0) { exit 2 }; exit 0`;
+  return new Promise(resolve => {
+    execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:8000},error=>resolve(!error));
+  });
+}
+
 async function browserPublicIp(debugPort) {
   const browser = await connectKaizenBrowser(debugPort);
   try {
@@ -460,7 +476,7 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
   async function prepareProfileExtension(clientId, profileId, strategy, options = {}) {
     const source = path.join(process.resourcesPath, 'browser-engine', 'extension');
     const target = profileExtensionDir(clientId, profileId);
-    if (!fs.existsSync(path.join(source, 'manifest.json'))) return null;
+    requireExtensionManifests([source]);
     await fsp.rm(target, { recursive: true, force: true });
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await fsp.cp(source, target, { recursive: true });
@@ -513,21 +529,31 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     return target;
   }
 
-  async function cleanup(entry, reason = 'closed') {
-    if (!entry || entry.cleaned) return;
+  function cleanup(entry, reason = 'closed') {
+    if (!entry) return Promise.resolve();
+    if (entry.cleanupPromise) return entry.cleanupPromise;
     entry.cleaned = true;
+    entry.cleanupPromise = Promise.resolve().then(async () => {
     if (entry.devtoolsTimer) clearInterval(entry.devtoolsTimer);
     try { await entry.windowGuard?.close(); } catch {}
     try { await entry.relay?.close(); } catch {}
-    if (processes.get(entry.key) === entry) processes.delete(entry.key);
     try { await onClosed?.(entry, reason); } catch (error) {
       log.warn?.('userFLOW KAIZEN onClosed failed:', error?.message || error);
     }
     if (entry.ephemeral === true) {
       await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
-      await fsp.rm(profileExtensionDir(entry.clientId, entry.profile.id), { recursive: true, force: true }).catch(() => null);
-      await fsp.rm(path.join(clientExtensionsDir(entry.clientId), `${safeSegment(entry.profile.id)}_backup_guard`), { recursive: true, force: true }).catch(() => null);
+      // A parent process exit does not prove all Chromium processes stopped.
+      // Keep the extension files when the OS cannot confirm they are unused.
+      const removed = await removeTemporaryExtensionFiles({
+        isUnused: () => temporaryExtensionPathsUnused(entry),
+        directories: [profileExtensionDir(entry.clientId, entry.profile.id), path.join(clientExtensionsDir(entry.clientId), `${safeSegment(entry.profile.id)}_backup_guard`)],
+      });
+      if (!removed) log.warn?.('userFLOW: limpieza de extensiones temporales aplazada; navegador activo o estado desconocido.');
     }
+    }).finally(() => {
+      if (processes.get(entry.key) === entry) processes.delete(entry.key);
+    });
+    return entry.cleanupPromise;
   }
 
   async function close(clientId, profileId, reason = 'profile_closed') {
@@ -640,7 +666,8 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     // without deleting the browser profile.
     const preserveDeviceLocalState = snapshotManaged && desiredStoragePolicy === 'netflix-local-device';
     const key = profileKey(clientId, profile.id);
-    const existing = processes.get(key);
+    let existing = processes.get(key);
+    if (existing?.cleanupPromise) { await existing.cleanupPromise; existing = processes.get(key); }
     if (existing && existing.process?.exitCode === null) {
       const generationMatches = (!snapshotManaged
         || (desiredSessionVersion > 0 && Number(existing.sessionVersion || 0) === desiredSessionVersion))
@@ -840,7 +867,13 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
     const startupUrl = snapshotManaged
       ? (sessionVersionMatches || hasPersistentBrowserState(userDataDir) ? snapshotNavigationUrl : 'about:blank')
       : profile.url;
-    const args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, initialUrl: startupUrl, browserExtensionsAccess: extensionsUiAccess });
+    let args;
+    try {
+      args = chromeArgs({ userDataDir, debugPort, proxyRules, extensionDirs, initialUrl: startupUrl, browserExtensionsAccess: extensionsUiAccess });
+    } catch (error) {
+      await relay?.close().catch(() => null);
+      throw error;
+    }
     const proc = spawn(executable, args, {
       detached: false,
       windowsHide: false,
