@@ -374,8 +374,8 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
       })) return true;
       if(document.querySelector('.cf-turnstile,[data-sitekey][data-callback],[class*="turnstile"]')) return true;
       const text=String(document.body?.innerText||'').replace(/\s+/g,' ').toLowerCase();
-      return text.includes('la verificación falló')||text.includes('verification failed')||text.includes('verificando que eres humano')||text.includes('verify you are human');
-    }catch{return false;}
+      return text.includes('la verificación falló')||text.includes('verification failed')||text.includes('verificando que eres humano')||text.includes('verifique que es un ser humano')||text.includes('verify you are a human')||text.includes('verify you are human');
+    }catch{return true;}
   };
   const autofill=()=>{
     if(!credentials||securityChallengeActive()) return;
@@ -451,7 +451,7 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse)=>{
     const button=wrap.querySelector('#userflex-session-save');
     const message=wrap.querySelector('#userflex-session-message');
     button?.addEventListener('click',async(event)=>{
-      if(!event.isTrusted||button.disabled) return;
+      if(!event.isTrusted||button.disabled||securityChallengeActive()) return;
       button.disabled=true; button.textContent='Guardando perfil...'; message.textContent='Capturando cookies, almacenamiento e IndexedDB...';
       const result=await call('save');
       if(result.ok){
@@ -1162,6 +1162,9 @@ export function createKaizenCaptureEngine({ app, log = console } = {}) {
         if (sample > 0) await new Promise((resolve) => setTimeout(resolve, 2500));
         if (active !== entry || Number(entry?.debugPort || 0) !== activeDebugPort) return false;
         const inspection = await inspectCaptureSession(activeDebugPort, profile.url, { navigateIfMissing: false }).catch(() => null);
+        if (inspection?.securityVerification === 'pending') {
+          throw new Error('Verificación de seguridad pendiente. Completa manualmente el acceso en el sitio; si se repite, contacta con el proveedor. No se guardaron cambios.');
+        }
         if (inspection?.authenticated !== true || inspection.targetOriginMatched !== true || inspection.readyState === 'loading' || !inspection.href) return false;
         if (previousUrl !== null && previousUrl !== inspection.href) return false;
         previousUrl = inspection.href;

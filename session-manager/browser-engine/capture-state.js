@@ -1,6 +1,7 @@
 import { gzipSync } from 'node:zlib';
 import { setTimeout as delay } from 'node:timers/promises';
 import puppeteer from 'puppeteer-core';
+import { securityVerificationState } from './security-verification.js';
 import { canonicalGoogleAccountsUrl, credentialAutofillAllowsUrl, credentialAutofillOrigins } from './credential-policy.js';
 
 export async function waitForDevtools(debugPort, timeoutMs = 25_000) {
@@ -638,7 +639,7 @@ export async function installCaptureAutomation({
       saveButton?.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.isTrusted || saveButton.disabled) return;
+        if (!event.isTrusted || saveButton.disabled || securityChallengeActive()) return;
         void save(saveButton, message);
       });
       return host;
@@ -660,9 +661,11 @@ export async function installCaptureAutomation({
         return bodyText.includes('la verificación falló')
           || bodyText.includes('verification failed')
           || bodyText.includes('verificando que eres humano')
+          || bodyText.includes('verifique que es un ser humano')
+          || bodyText.includes('verify you are a human')
           || bodyText.includes('verify you are human');
       } catch {
-        return false;
+        return true;
       }
     };
 
@@ -1142,6 +1145,12 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
+    // Do not treat a security challenge or unreadable page as authenticated.
+    const securityVerification = await page.evaluate(securityVerificationState).catch(() => 'unknown');
+    if (securityVerification !== 'not-detected') {
+      return { href: page.url(), authenticated: false, targetOriginMatched: false,
+        readyState: 'loading', securityVerification, loginLikeUrl: true };
+    }
     const state = await page.evaluate(() => {
       const visible = (element) => {
         try {
@@ -1278,7 +1287,8 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       && state.passwordFieldVisible !== true
       && state.loginActionVisible !== true;
 
-    const authenticated = netflixTarget
+    const securityVerificationAfter = await page.evaluate(securityVerificationState).catch(() => 'unknown');
+    const authenticated = securityVerificationAfter === 'not-detected' && (netflixTarget
       ? targetOriginMatched
         && state.meaningfulContent === true
         && state.readyState !== 'loading'
@@ -1293,7 +1303,7 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
           && state.readyState !== 'loading'
           && flowSignedOut !== true
           && flowAuthCookies === true
-        : genericAuthenticated;
+        : genericAuthenticated);
 
     return {
       ...state,
@@ -1305,6 +1315,7 @@ export async function inspectCaptureSession(debugPort, profileUrl, options = {})
       flowTarget,
       flowAuthCookies,
       flowSignedOut,
+      securityVerification: securityVerificationAfter,
       authenticated,
     };
   } finally {

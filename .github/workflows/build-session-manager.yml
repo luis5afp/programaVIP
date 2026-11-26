@@ -9,6 +9,8 @@ on:
       - 'session-manager/runtime-updater.js'
       - 'session-manager/package.json'
       - 'session-manager/build/**'
+      - 'session-manager/browser-engine/**'
+      - 'scripts/session-manager-security-verification.test.mjs'
       - '.github/workflows/build-session-manager.yml'
   push:
     branches: [main]
@@ -18,6 +20,8 @@ on:
       - 'session-manager/runtime-updater.js'
       - 'session-manager/package.json'
       - 'session-manager/build/**'
+      - 'session-manager/browser-engine/**'
+      - 'scripts/session-manager-security-verification.test.mjs'
       - '.github/workflows/build-session-manager.yml'
 
 permissions:
@@ -62,6 +66,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check browser-engine/proxy-relay.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify pending security challenge is never treated as authenticated
+        run: node ../scripts/session-manager-security-verification.test.mjs
 
       - name: Build Windows installer
         if: github.event_name != 'pull_request'
