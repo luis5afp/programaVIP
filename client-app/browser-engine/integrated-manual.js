@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 // Integrated Chromium is selected automatically by the server for authorized manual
 // access without managed sessions, credentials, mandatory extensions or content rules.
 // Native proxy support is deliberately limited to validated, unauthenticated proxies.
@@ -38,55 +39,97 @@ export function isIntegratedManualNavigation(url, origin) {
   } catch {return false;}
 }
 
-export function createIntegratedManualController({BrowserWindow, session, randomUUID, onClosed}) {
+// Stable only inside the current authorized local account and login epoch.
+export function integratedLocalPartition(launch, scope) {
+  const profile=launch?.profile;
+  const values=[scope?.clientId,scope?.loginEpoch,scope?.configRevision,profile?.id];
+  if(values.some(v=>typeof v!=='string'||!v.trim()))throw new Error('Identidad local autorizada incompleta.');
+  const origin=new URL(profile.url).origin;
+  return 'persist:userflow-manual-v1-'+createHash('sha256').update(JSON.stringify([...values,origin])).digest('hex');
+}
+
+export function createIntegratedManualController({BrowserWindow, session, onClosed}) {
   const active=new Map();
-  function close(profileId, reason) {
-    const entry=active.get(profileId);
-    if (!entry) return;
-    entry.reason=reason;
-    if (!entry.window.isDestroyed()) entry.window.destroy();
+  const downloads=new WeakSet();
+  const localSessions=new Map();
+  const pendingCleanup=new Map();
+  function cleanup(name, isolated, erase) {
+    const prior=pendingCleanup.get(name)||Promise.resolve();
+    const task=prior.catch(()=>{}).then(async()=>{
+      await isolated.closeAllConnections();
+      if(erase){await isolated.clearStorageData();await isolated.clearCache();}
+      else {isolated.flushStorageData();await isolated.cookies.flushStore();}
+    });
+    pendingCleanup.set(name,task);
+    void task.finally(()=>{if(pendingCleanup.get(name)===task)pendingCleanup.delete(name);}).catch(()=>{});
+    return task;
   }
-  function closeAll(reason) {for(const id of [...active.keys()])close(id,reason);}
-  async function open(launch, usage) {
+  function closeAll(reason) {
+    const erase=reason==='logout'||reason==='configuration_changed';
+    for(const entry of [...active.values()]){
+      entry.reason=reason;
+      if(!entry.window.isDestroyed())entry.window.destroy();
+    }
+    if(erase){
+      for(const [name,isolated] of localSessions)void cleanup(name,isolated,true).catch(()=>{});
+      localSessions.clear();
+    }
+    return Promise.allSettled([...pendingCleanup.values()]);
+  }
+  async function open(launch, usage, scope) {
     if (!integratedManualEligible(launch)) throw new Error('Perfil no autorizado para navegador integrado.');
     const {profile}=launch;
-    close(profile.id,'profile_reopened');
+    const name=integratedLocalPartition(launch,scope);
+    const policy=JSON.stringify([profile.url,nativeProxyConfig(launch.connection)]);
+    const existing=active.get(name);
+    if(existing&&!existing.window.isDestroyed()){
+      if(existing.policy!==policy){
+        existing.reason='configuration_changed';existing.window.destroy();
+        throw new Error('La configuración del perfil cambió. Vuelve a abrirlo.');
+      }
+      if(usage?.usageId&&usage.usageId!==existing.usage?.usageId)void Promise.resolve(onClosed(usage,'duplicate_open')).catch(()=>{});
+      const result=await existing.ready;
+      if(!existing.window.isDestroyed()){existing.window.show();existing.window.focus();}
+      return result;
+    }
+    // No await before reserving the window; concurrent opens reuse it.
     const origin=new URL(profile.url).origin;
-    const isolated=session.fromPartition('userflow-manual-'+randomUUID());
+    const isolated=session.fromPartition(name);
+    localSessions.set(name,isolated);
     isolated.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
     isolated.setPermissionCheckHandler(()=>false);
-    isolated.on('will-download',event=>event.preventDefault());
+    if(!downloads.has(isolated)){isolated.on('will-download',event=>event.preventDefault());downloads.add(isolated);}
     isolated.webRequest.onBeforeRequest((details,callback)=>{
-      const mainFrame=details.resourceType==='mainFrame';
-      callback({cancel:mainFrame&&!isIntegratedManualNavigation(details.url,origin)});
+      callback({cancel:details.resourceType==='mainFrame'&&!isIntegratedManualNavigation(details.url,origin)});
     });
     const window=new BrowserWindow({title:'userFLOW · '+profile.name,width:1200,height:850,show:false,autoHideMenuBar:true,backgroundColor:'#09090b',webPreferences:{session:isolated,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,devTools:false,webviewTag:false}});
-    const entry={window,usage,reason:'browser_exit'};
-    active.set(profile.id,entry);
+    const entry={window,usage,reason:'browser_exit',ready:null,policy};
+    active.set(name,entry);
     window.setMenu(null);
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
     for(const eventName of ['will-navigate','will-redirect']){
       window.webContents.on(eventName,(event,url)=>{if(!isIntegratedManualNavigation(url,origin))event.preventDefault();});
     }
     window.on('closed',()=>{
-      if(active.get(profile.id)===entry)active.delete(profile.id);
+      if(active.get(name)===entry)active.delete(name);
       void Promise.resolve(onClosed(usage,entry.reason)).catch(()=>null);
-      void isolated.closeAllConnections().catch(()=>null);
-      void isolated.clearStorageData().catch(()=>null);
-      void isolated.clearCache().catch(()=>null);
+      void cleanup(name,isolated,false).catch(()=>null);
     });
-    try {
-      // Configure before navigation; a failed proxy configuration is never
-      // retried via a direct connection.
-      const config=nativeProxyConfig(launch.connection);
-      await isolated.setProxy(config);
-      await isolated.closeAllConnections();
-      if(window.isDestroyed()||active.get(profile.id)!==entry)throw new Error('La apertura fue cancelada.');
-      await window.loadURL(profile.url);
-      if(window.isDestroyed()||active.get(profile.id)!==entry)throw new Error('La apertura fue cancelada.');
-      window.show();
-      return {ok:true,external:false,tabbed:false,engine:'electron-integrated-manual',sessionVersion:0,profileState:'manual-login'};
-    }catch(error){entry.reason='launch_failed';if(!window.isDestroyed())window.destroy();throw error;}
+    entry.ready=(async()=>{
+      try{
+        // Never retry a failed proxy setup directly.
+        await pendingCleanup.get(name);
+        if(window.isDestroyed()||active.get(name)!==entry)throw new Error('La apertura fue cancelada.');
+        await isolated.setProxy(nativeProxyConfig(launch.connection));
+        await isolated.closeAllConnections();
+        if(window.isDestroyed()||active.get(name)!==entry)throw new Error('La apertura fue cancelada.');
+        await window.loadURL(profile.url);
+        if(window.isDestroyed()||active.get(name)!==entry)throw new Error('La apertura fue cancelada.');
+        window.show();
+        return {ok:true,external:false,tabbed:false,engine:'electron-integrated-manual',sessionVersion:0,profileState:'manual-login'};
+      }catch(error){entry.reason='launch_failed';if(!window.isDestroyed())window.destroy();throw error;}
+    })();
+    return entry.ready;
   }
   return {open,closeAll};
 }

@@ -129,6 +129,9 @@ jobs:
       - name: Verify isolated integrated manual browser policy
         run: node ../scripts/integrated-manual.test.mjs
 
+      - name: Verify mandatory extension manifests and safe temporary cleanup
+        run: node ../scripts/extension-lifecycle.test.mjs
+
       - name: Verify launcher themes and launch feedback
         run: node ../scripts/userflow-launcher-themes.test.mjs
 

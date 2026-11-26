@@ -18,6 +18,17 @@ app.setPath('userData',process.env.LAB_DATA);
 app.whenReady().then(async()=>{
  const a=session.fromPartition('fixture-a'),b=session.fromPartition('fixture-b');
  const url='https://example.test/';
+ const persisted=session.fromPartition('persist:fixture-local-a'), other=session.fromPartition('persist:fixture-local-b');
+ if(process.env.LAB_PHASE==='write'){
+  await persisted.cookies.set({url,name:'restart_fixture',value:'test-only',httpOnly:true,secure:true,expirationDate:Math.floor(Date.now()/1000)+3600});
+  await persisted.cookies.flushStore();
+ }else{
+  assert.equal((await persisted.cookies.get({url,name:'restart_fixture'})).length,1);
+  assert.equal((await other.cookies.get({url,name:'restart_fixture'})).length,0);
+  await persisted.clearStorageData({storages:['cookies']});
+  assert.equal((await persisted.cookies.get({url,name:'restart_fixture'})).length,0);
+  await persisted.cookies.flushStore();
+ }
  await a.cookies.set({url,name:'local_fixture',value:'test-only',httpOnly:true,secure:true});
  assert.equal((await a.cookies.get({url,name:'local_fixture'})).length,1);
  assert.equal((await b.cookies.get({url,name:'local_fixture'})).length,0);
@@ -34,13 +45,15 @@ app.whenReady().then(async()=>{
 try{
  await writeFile(path.join(appDir,'package.json'),JSON.stringify({name:'integrated-native-test',version:'1.0.0',main:'main.cjs'}));
  await writeFile(path.join(appDir,'main.cjs'),code);
+ for(const phase of ['write','read']){
  const result=await new Promise((resolve,reject)=>{
-  const p=spawn(electron,[appDir,'--disable-gpu'],{windowsHide:true,env:{...process.env,LAB_DATA:data},stdio:['ignore','pipe','pipe']});
+  const p=spawn(electron,[appDir,'--disable-gpu'],{windowsHide:true,env:{...process.env,LAB_DATA:data,LAB_PHASE:phase},stdio:['ignore','pipe','pipe']});
   let out='',err='';p.stdout.on('data',d=>out+=String(d));p.stderr.on('data',d=>err+=String(d));
   const timer=setTimeout(()=>{p.kill();reject(Error('Native Electron test timed out'));},30000);
   p.once('error',e=>{clearTimeout(timer);reject(e);});
   p.once('close',code=>{clearTimeout(timer);resolve({code,out,err});});
  });
  assert.equal(result.code,0,result.err);assert.match(result.out,/INTEGRATED_NATIVE_SESSION_OK/);
- console.log('Native Electron fixture cookie isolation, cleanup and proxy routing: OK');
+ }
+ console.log('Native Electron fixture restart persistence, cookie isolation, cleanup and proxy routing: OK');
 }finally{await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:200}).catch(()=>{});}
