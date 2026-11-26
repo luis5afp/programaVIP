@@ -541,14 +541,14 @@ export function createKaizenBrowserEngine({ app, onClosed, log = console } = {})
       log.warn?.('userFLOW KAIZEN onClosed failed:', error?.message || error);
     }
     if (entry.ephemeral === true) {
-      await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
       // A parent process exit does not prove all Chromium processes stopped.
       // Keep the extension files when the OS cannot confirm they are unused.
       const removed = await removeTemporaryExtensionFiles({
         isUnused: () => temporaryExtensionPathsUnused(entry),
         directories: [profileExtensionDir(entry.clientId, entry.profile.id), path.join(clientExtensionsDir(entry.clientId), `${safeSegment(entry.profile.id)}_backup_guard`)],
       });
-      if (!removed) log.warn?.('userFLOW: limpieza de extensiones temporales aplazada; navegador activo o estado desconocido.');
+      if (removed) await fsp.rm(entry.userDataDir, { recursive: true, force: true }).catch(() => null);
+      else log.warn?.('userFLOW: limpieza temporal aplazada; navegador activo o estado desconocido.');
     }
     }).finally(() => {
       if (processes.get(entry.key) === entry) processes.delete(entry.key);
