@@ -19,7 +19,7 @@ assert.match(admin, /releaseBucket\(env\)/);
 assert.doesNotMatch(admin, /SUPABASE_SERVICE_ROLE_KEY/);
 assert.match(clientWorkflow, /Publish automatic updater feed to Cloudflare R2/);
 assert.match(clientWorkflow, /r2 object put/);
-assert.match(updates, /const KEEP_RELEASE_VERSIONS = 2;/);
+assert.match(updates, /const KEEP_RELEASE_VERSIONS = 3;/);
 assert.doesNotMatch(
   updates,
   /await cachePut\(request, response\.clone\(\)\)/,
@@ -31,11 +31,19 @@ assert.match(
   'edge cache population should be best-effort after the R2 manifest is ready',
 );
 assert.match(wrangler, /crons = \["0 \* \* \* \*"\]/);
-assert.match(clientWorkflow, /Keep only two Client GitHub releases/);
-assert.match(sessionWorkflow, /Keep only two Session Manager GitHub releases/);
+assert.match(clientWorkflow, /Keep only three Client GitHub releases/);
+assert.match(sessionWorkflow, /Keep only three Session Manager GitHub releases/);
 assert.match(clientWorkflow, /retention-days: 1/);
 assert.match(sessionWorkflow, /retention-days: 1/);
 assert.match(clientWorkflow, /Build Windows installer[\s\S]{0,120}github\.event_name != 'pull_request'/);
 assert.match(sessionWorkflow, /Build Windows installer[\s\S]{0,120}github\.event_name != 'pull_request'/);
 
 console.log('Cloudflare R2 updater migration: OK');
+
+assert.match(clientWorkflow, /Select-Object -Skip 3/);
+assert.match(sessionWorkflow, /Select-Object -Skip 3/);
+assert.match(updates, /const activeVersion = validateLatestManifest/);
+assert.match(updates, /previous\.slice\(Math\.max\(keep - 1, 0\)\)/);
+assert.match(updates, /UPDATE_RETENTION_ACTIVE_CHANGED/);
+const worker = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
+assert.match(worker, /pruneClientReleaseStorage\(env\)/);

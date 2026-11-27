@@ -217,7 +217,7 @@ export default {
     try {
       const result = await cleanupRuntimeState(env);
       const releaseCleanup = env.CLIENT_RELEASES
-        ? await pruneClientReleaseStorage(env, 2).catch((error) => ({
+        ? await pruneClientReleaseStorage(env).catch((error) => ({
             storage: 'cloudflare-r2',
             error: error instanceof Error ? error.message : String(error),
           }))

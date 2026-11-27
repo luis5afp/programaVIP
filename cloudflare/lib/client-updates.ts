@@ -4,7 +4,7 @@ const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const PART_RE = /^part-\d{3}\.bin$/;
 const MAX_CHUNK_BYTES = 25 * 1024 * 1024;
 const LATEST_MEMORY_TTL_MS = 30_000;
-const KEEP_RELEASE_VERSIONS = 2;
+const KEEP_RELEASE_VERSIONS = 3;
 
 let latestMemoryCache: { body: Uint8Array; contentType: string; expiresAt: number } | null = null;
 
@@ -23,7 +23,7 @@ function responseHeaders(contentType: string, cacheControl: string, length: numb
   return headers;
 }
 
-function validateLatestManifest(body: Uint8Array) {
+function validateLatestManifest(body: Uint8Array): string {
   let value: any;
   try {
     value = JSON.parse(new TextDecoder().decode(body));
@@ -56,6 +56,7 @@ function validateLatestManifest(body: Uint8Array) {
     total += chunkSize;
   }
   if (total !== size) throw new HttpError(502, 'UPDATE_MANIFEST_INVALID');
+  return version;
 }
 
 function latestCacheKey(request: Request) {
@@ -173,6 +174,11 @@ function compareVersionsDesc(a: string, b: string) {
 
 export async function pruneClientReleaseStorage(env: Env, keep = KEEP_RELEASE_VERSIONS) {
   const bucket = releaseBucket(env);
+  // Fail closed when the active release cannot be verified. A rollback or
+  // concurrent publication must never cause its active files to be pruned.
+  const latest = await bucket.get('latest.json');
+  if (!latest) throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE');
+  const activeVersion = validateLatestManifest(new Uint8Array(await latest.arrayBuffer()));
   const keys: string[] = [];
   let cursor: string | undefined;
   do {
@@ -187,16 +193,22 @@ export async function pruneClientReleaseStorage(env: Env, keep = KEEP_RELEASE_VE
       .filter((version) => VERSION_RE.test(version)),
   )).sort(compareVersionsDesc);
 
-  const removeVersions = versions.slice(Math.max(keep, 1));
+  if (!versions.includes(activeVersion)) throw new HttpError(503, 'UPDATE_STORAGE_UNAVAILABLE');
+  const previous = versions.filter(version => compareVersionsDesc(version, activeVersion) > 0);
+  const removeVersions = previous.slice(Math.max(keep - 1, 0));
   const removeKeys = keys.filter((key) => removeVersions.includes(key.split('/')[1] || ''));
 
   for (let index = 0; index < removeKeys.length; index += 1000) {
+    const current = await bucket.get('latest.json');
+    if (!current || validateLatestManifest(new Uint8Array(await current.arrayBuffer())) !== activeVersion) {
+      throw new HttpError(409, 'UPDATE_RETENTION_ACTIVE_CHANGED');
+    }
     await bucket.delete(removeKeys.slice(index, index + 1000));
   }
 
   return {
     storage: 'cloudflare-r2',
-    keepVersions: versions.slice(0, Math.max(keep, 1)),
+    keepVersions: versions.filter(version => !removeVersions.includes(version)),
     removedVersions: removeVersions,
     removedObjects: removeKeys.length,
   };
