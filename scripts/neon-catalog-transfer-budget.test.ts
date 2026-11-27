@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {friendlyApiError} from '../src/error-messages.ts';
+const read=(path:string)=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+const source=read('cloudflare/lib/profile-sessions.ts');
+const a=source.indexOf("if (path === '/api/profile-session-states'");
+const b=source.indexOf("if (path === '/api/profile-session-alerts'",a);
+assert.ok(a>=0&&b>a);
+const listing=source.slice(a,b);
+assert.doesNotMatch(listing,/material_ciphertext|material_iv|decryptProxy|cookieExpirySummary/);
+assert.match(listing,/userflex_profile_session_versions\?select=profile_id,session_version,expected_egress_ip,captured_at,validated_at/);
+assert.match(listing,/status: 'not_checked'/);
+assert.match(read('src/views/ProfilesView.tsx'),/expiry.status === 'not_checked'/);
+assert.match(read('cloudflare/lib/core.ts'),/DATABASE_QUOTA_EXCEEDED/);
+assert.match(friendlyApiError({path:'/api/profiles',method:'GET',status:503,code:'DATABASE_QUOTA_EXCEEDED'}),/cuota de uso/);
+console.log('Metadata-only catalog and quota error: OK');
