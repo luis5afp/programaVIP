@@ -101,6 +101,10 @@ const reasons: Record<string, { cause: string; action: string }> = {
     cause: 'La suscripción del cliente no está activa o ya venció.',
     action: 'Revisa las fechas y el estado de su suscripción.',
   },
+  DATABASE_QUOTA_EXCEEDED: {
+    cause: 'Neon ha alcanzado la cuota de uso de la cuenta o proyecto.',
+    action: 'Revisa Billing y Usage en Neon Console. Restablece el acceso antes de reintentar; los datos no se declaran eliminados.',
+  },
   DATABASE_UNAVAILABLE: {
     cause: 'La base de datos no respondió a tiempo.',
     action: 'Comprueba la conexión del servidor. Si estabas guardando información, verifica primero si se registró antes de reintentar.',

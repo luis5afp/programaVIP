@@ -192,7 +192,7 @@ export interface ProfileSessionState {
   validated_at: string | null;
   updated_at: string | null;
   cookie_expiry: {
-    status: 'valid' | 'expired' | 'mixed' | 'no_expiry' | 'none';
+    status: 'valid' | 'expired' | 'mixed' | 'no_expiry' | 'none' | 'not_checked';
     expires_at: string | null;
     checked_cookies: number;
   };

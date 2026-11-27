@@ -254,6 +254,13 @@ function cookieTokenBadge(session: ProfileSessionState | null) {
       detail: 'No hay cookies con información suficiente para revisar una fecha de vencimiento.',
     };
   }
+  if (expiry.status === 'not_checked') {
+    return {
+      tone: 'neutral' as const,
+      compact: '⚪ Token: no revisado',
+      detail: 'La lista consulta solo metadatos. No se inspeccionaron las fechas de las cookies ni se confirmó el acceso.',
+    };
+  }
   if (expiry.status === 'expired') {
     return {
       tone: 'bad' as const,

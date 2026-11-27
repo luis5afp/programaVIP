@@ -39,6 +39,8 @@ jobs:
         run: node --experimental-strip-types scripts/r2-updater-migration.test.ts
       - name: Test Neon database adapter
         run: node --experimental-strip-types scripts/neon-database-adapter.test.ts
+      - name: Verify Neon catalog transfer budget
+        run: node --experimental-strip-types scripts/neon-catalog-transfer-budget.test.ts
       - name: Test managed extension policy
         run: node --experimental-strip-types scripts/managed-extension-policy.test.ts
       - name: Test per-profile EX1/EX2 selection

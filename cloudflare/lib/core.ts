@@ -138,6 +138,9 @@ export async function db(env: Env, path: string, init: RequestInit = {}): Promis
     }
     if (code === '23505') throw new HttpError(409, 'CONFLICT', 'Ya existe un registro con esos datos.');
     if (code === '23503') throw new HttpError(409, 'IN_USE', 'El registro todavía está siendo utilizado.');
+    if (/exceeded (?:the )?quota|quota exceeded|HTTP status 402|HTTP 402|payment required/i.test(normalized) || Number(error?.status) === 402) {
+      throw new HttpError(503, 'DATABASE_QUOTA_EXCEEDED', 'Neon ha alcanzado su cuota de uso. Revisa el consumo y el plan de la cuenta.');
+    }
     if (/timeout|fetch failed|connection|network|ECONN/i.test(normalized)) {
       throw new HttpError(503, 'DATABASE_UNAVAILABLE', 'La base de datos no respondió a tiempo. Intenta nuevamente.');
     }
